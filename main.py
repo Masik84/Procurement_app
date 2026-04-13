@@ -6,11 +6,13 @@ from config import APP_NAME
 
 def test_connection() -> None:
     with engine.connect() as connection:
-        result = connection.execute(text("SELECT current_database();"))
-        db_name = result.scalar()
-        print(f"Connected to database: {db_name}")
+        current_db = connection.execute(text("SELECT current_database();")).scalar()
+        current_user = connection.execute(text("SELECT current_user;")).scalar()
+
+        print(f"Application: {APP_NAME}")
+        print(f"Connected to database: {current_db}")
+        print(f"Connected as user: {current_user}")
 
 
 if __name__ == "__main__":
-    print(f"Starting {APP_NAME}")
     test_connection()

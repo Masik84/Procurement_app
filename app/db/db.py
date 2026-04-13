@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, MetaData
+from sqlalchemy import MetaData, create_engine
 from sqlalchemy.orm import declarative_base, scoped_session, sessionmaker
 
 from config import SQLALCHEMY_DATABASE_URI
@@ -18,7 +18,7 @@ Base = declarative_base(metadata=metadata)
 engine = create_engine(
     SQLALCHEMY_DATABASE_URI,
     pool_pre_ping=True,
-    future=True
+    future=True,
 )
 
 SessionLocal = scoped_session(
@@ -26,7 +26,7 @@ SessionLocal = scoped_session(
         bind=engine,
         autoflush=False,
         autocommit=False,
-        expire_on_commit=False
+        expire_on_commit=False,
     )
 )
 

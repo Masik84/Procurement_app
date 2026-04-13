@@ -1,3 +1,481 @@
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Index,
+)
+from sqlalchemy.orm import relationship
+
 from app.db.db import Base
 
-# Полные модели добавим следующим этапом
+
+# ============================================================
+# MASTER TABLES
+# ============================================================
+
+class Product(Base):
+    __tablename__ = "products"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    brand = Column(String(255), nullable=False, index=True)
+    name = Column(String(500), nullable=False, unique=True, index=True)
+    family = Column(String(500), nullable=True, index=True)
+    pack = Column(Float, nullable=False)
+    is_excise = Column(Boolean, nullable=False, default=False)
+
+    articles = relationship("ProductArticle", back_populates="product")
+    price_history = relationship("PriceHistory", back_populates="product")
+    current_prices = relationship("CurrentSupplierPrice", back_populates="product")
+    price_calculations = relationship("SupplierPriceCalculation", back_populates="product")
+    stock = relationship("ProductStock", back_populates="product", uselist=False)
+
+    temp_price_import_rows = relationship("TempPriceImport", back_populates="selected_product")
+    temp_customer_cost_rows = relationship("TempCustomerCostImport", back_populates="selected_product")
+    temp_customer_cost_options = relationship("TempCustomerCostOption", back_populates="product")
+    temp_stock_import_rows = relationship("TempStockImport", back_populates="selected_product")
+    temp_supplier_orders_rows = relationship("TempSupplierOrdersImport", back_populates="selected_product")
+    temp_is_rows = relationship("TempIsImport", back_populates="selected_product")
+
+
+class Supplier(Base):
+    __tablename__ = "suppliers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(255), nullable=False, unique=True, index=True)
+
+    base_currency = Column(String(10), nullable=False)
+    transport_cost_per_l = Column(Float, nullable=False, default=0)
+    reexport_percent = Column(Float, nullable=False, default=0)
+    fx_rate_markup = Column(Float, nullable=False, default=0)
+
+    is_via_novo = Column(Boolean, nullable=False, default=False)
+    has_import_duty = Column(Boolean, nullable=False, default=False)
+    rating_calc = Column(Boolean, nullable=False, default=True)
+    marks_for_us = Column(Boolean, nullable=False, default=False)
+    is_rf = Column(Boolean, nullable=False, default=False)
+
+    price_history = relationship("PriceHistory", back_populates="supplier")
+    current_prices = relationship("CurrentSupplierPrice", back_populates="supplier")
+    price_calculations = relationship("SupplierPriceCalculation", back_populates="supplier")
+    temp_price_import_rows = relationship("TempPriceImport", back_populates="supplier")
+    temp_customer_cost_options = relationship("TempCustomerCostOption", back_populates="supplier")
+
+
+class ProductArticle(Base):
+    __tablename__ = "product_articles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    article = Column(String(255), nullable=True, index=True)
+    name = Column(String(500), nullable=True, index=True)
+
+    product = relationship("Product", back_populates="articles")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "product_id",
+            "article",
+            "name",
+            name="uq_prod_articles_main",
+        ),
+        Index("ix_prod_articles_article_name", "article", "name"),
+    )
+
+
+class ExchangeRate(Base):
+    __tablename__ = "exchange_rates"
+
+    currency_code = Column(String(10), primary_key=True)
+    rate_to_rub = Column(Float, nullable=False)
+
+
+class FixedCosts(Base):
+    __tablename__ = "fixed_costs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    customs_clearance = Column(Float, nullable=False, default=0)
+    additional_customs = Column(Float, nullable=False, default=0)
+    excise = Column(Float, nullable=False, default=0)
+    eco_fee = Column(Float, nullable=False, default=0)
+    vat = Column(Float, nullable=False, default=0)
+    customs_fee = Column(Float, nullable=False, default=0)
+    bank_fee = Column(Float, nullable=False, default=0)
+    money = Column(Float, nullable=False, default=0)
+    storage = Column(Float, nullable=False, default=0)
+    move_novo_tamozh = Column(Float, nullable=False, default=0)
+    move_tamozh_chekhov = Column(Float, nullable=False, default=0)
+
+
+class PackType(Base):
+    __tablename__ = "pack_types"
+
+    name = Column(String(100), primary_key=True)
+    volume = Column(Float, nullable=False, unique=True, index=True)
+
+
+class MarkingRate(Base):
+    __tablename__ = "marking_rates"
+
+    pack_type = Column(String(100), ForeignKey("pack_types.name"), primary_key=True)
+    cost_per_l = Column(Float, nullable=False)
+
+    pack_type_ref = relationship("PackType")
+
+
+# ============================================================
+# PRICE TABLES
+# ============================================================
+
+class PriceHistory(Base):
+    __tablename__ = "price_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+
+    price_date = Column(DateTime, nullable=False, index=True)
+    price = Column(Float, nullable=False)
+    currency = Column(String(10), nullable=False)
+
+    supplier = relationship("Supplier", back_populates="price_history")
+    product = relationship("Product", back_populates="price_history")
+
+
+class CurrentSupplierPrice(Base):
+    __tablename__ = "current_supplier_prices"
+
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), primary_key=True)
+    product_id = Column(Integer, ForeignKey("products.id"), primary_key=True)
+
+    price = Column(Float, nullable=False)
+    currency = Column(String(10), nullable=False)
+    last_update = Column(DateTime, nullable=False)
+
+    supplier = relationship("Supplier", back_populates="current_prices")
+    product = relationship("Product", back_populates="current_prices")
+
+
+class SupplierPriceCalculation(Base):
+    __tablename__ = "supplier_price_calculations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    calc_date = Column(DateTime, nullable=False)
+    batch_id = Column(String(64), nullable=False, index=True)
+    imported_by = Column(String(255), nullable=False, index=True)
+
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+
+    supplier_article = Column(String(255), nullable=True)
+    supplier_product_name = Column(String(500), nullable=True)
+
+    supplier_price = Column(Float, nullable=False)
+    cost_novo_wvat = Column(Float, nullable=False)
+    full_cost_msk = Column(Float, nullable=False)
+
+    currency_code = Column(String(10), nullable=False)
+    fx_rate_used = Column(Float, nullable=False)
+    fx_markup_used = Column(Float, nullable=False)
+    transport_used = Column(Float, nullable=False)
+    reexport_used = Column(Float, nullable=False)
+
+    has_customs_used = Column(Boolean, nullable=False)
+    via_novo_used = Column(Boolean, nullable=False)
+    bank_fee_used = Column(Float, nullable=False)
+    customs_fee_used = Column(Float, nullable=False)
+    move_novo_used = Column(Float, nullable=False)
+    move_msk_used = Column(Float, nullable=False)
+    is_excise_used = Column(Boolean, nullable=False)
+    additional_customs_used = Column(Float, nullable=False)
+    storage_used = Column(Float, nullable=False)
+    marking_used = Column(Float, nullable=False)
+
+    supplier = relationship("Supplier", back_populates="price_calculations")
+    product = relationship("Product", back_populates="price_calculations")
+
+
+# ============================================================
+# STOCK / ORDERS / IS
+# ============================================================
+
+class ProductStock(Base):
+    __tablename__ = "product_stock"
+
+    product_id = Column(Integer, ForeignKey("products.id"), primary_key=True)
+
+    product_name = Column(String(500), nullable=False)
+
+    stock_update_date = Column(DateTime, nullable=True)
+    supplier_orders_update_date = Column(DateTime, nullable=True)
+    is_update_date = Column(DateTime, nullable=True)
+
+    stock_qty = Column(Float, nullable=False, default=0)
+    markdown_qty = Column(Float, nullable=False, default=0)
+    reserve_qty = Column(Float, nullable=False, default=0)
+
+    lpc = Column(Float, nullable=False, default=0)
+    landed_cost = Column(Float, nullable=False, default=0)
+    distr_price = Column(Float, nullable=False, default=0)
+    promo_price = Column(Float, nullable=False, default=0)
+
+    transit_qty = Column(Float, nullable=False, default=0)
+    order_qty = Column(Float, nullable=False, default=0)
+
+    is_order_qty = Column(Float, nullable=False, default=0)
+    is_confirmed_order_qty = Column(Float, nullable=False, default=0)
+    is_stock_qty = Column(Float, nullable=False, default=0)
+
+    product = relationship("Product", back_populates="stock")
+
+
+# ============================================================
+# TEMP / STAGING TABLES
+# ============================================================
+
+class TempPriceImport(Base):
+    __tablename__ = "temp_price_import"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    supplier_article = Column(String(255), nullable=True)
+    product_name = Column(String(500), nullable=True)
+
+    price = Column(Float, nullable=True)
+    price_pack = Column(Float, nullable=True)
+
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False, index=True)
+
+    import_date = Column(DateTime, nullable=False)
+    batch_id = Column(String(64), nullable=False, index=True)
+    imported_by = Column(String(255), nullable=False, index=True)
+
+    selected_product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
+
+    import_row_no = Column(Integer, nullable=True)
+
+    new_product_name = Column(String(500), nullable=True)
+    new_brand = Column(String(255), nullable=True)
+    new_pack = Column(Float, nullable=True)
+    new_is_excise = Column(Boolean, nullable=True)
+
+    supplier = relationship("Supplier", back_populates="temp_price_import_rows")
+    selected_product = relationship("Product", back_populates="temp_price_import_rows")
+
+    __table_args__ = (
+        Index("ix_temp_price_batch_user", "batch_id", "imported_by"),
+    )
+
+
+class TempCustomerCostImport(Base):
+    __tablename__ = "temp_customer_cost_import"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    batch_id = Column(String(64), nullable=False, index=True)
+    imported_by = Column(String(255), nullable=False, index=True)
+    import_row_no = Column(Integer, nullable=True)
+    import_date = Column(DateTime, nullable=False)
+
+    request_date = Column(DateTime, nullable=True)
+    manager_name = Column(String(255), nullable=True)
+    customer_name = Column(String(255), nullable=True)
+
+    supplier_article = Column(String(255), nullable=True)
+    product_name = Column(String(500), nullable=True)
+
+    pack = Column(Float, nullable=True)
+    qty_pcs = Column(Float, nullable=True)
+    volume_l = Column(Float, nullable=True)
+
+    purchase_type = Column(String(255), nullable=True)
+    payment_terms = Column(String(255), nullable=True)
+    comments = Column(Text, nullable=True)
+
+    selected_product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
+
+    selected_option_id = Column(Integer, nullable=True)
+
+    new_product_name = Column(String(500), nullable=True)
+    new_brand = Column(String(255), nullable=True)
+    new_pack = Column(Float, nullable=True)
+    new_is_excise = Column(Boolean, nullable=True)
+
+    selected_product = relationship("Product", back_populates="temp_customer_cost_rows")
+
+    options = relationship(
+        "TempCustomerCostOption",
+        back_populates="temp_import",
+        foreign_keys="TempCustomerCostOption.temp_import_id",
+    )
+
+    __table_args__ = (
+        Index("ix_temp_cc_import_batch_user", "batch_id", "imported_by"),
+    )
+
+
+class TempCustomerCostOption(Base):
+    __tablename__ = "temp_customer_cost_options"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    temp_import_id = Column(Integer, ForeignKey("temp_customer_cost_import.id"), nullable=False, index=True)
+
+    batch_id = Column(String(64), nullable=False, index=True)
+    imported_by = Column(String(255), nullable=False, index=True)
+    calc_date = Column(DateTime, nullable=False)
+
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+
+    supplier_name = Column(String(255), nullable=False)
+    supplier_article = Column(String(255), nullable=True)
+    supplier_product_name = Column(String(500), nullable=True)
+
+    supplier_price = Column(Float, nullable=False)
+    price_date_used = Column(DateTime, nullable=True)
+
+    cost_novo_wvat = Column(Float, nullable=False)
+    full_cost_msk = Column(Float, nullable=False)
+
+    currency_code = Column(String(10), nullable=False)
+    fx_rate_used = Column(Float, nullable=False)
+    fx_markup_used = Column(Float, nullable=False)
+    transport_used = Column(Float, nullable=False)
+    reexport_used = Column(Float, nullable=False)
+
+    has_customs_used = Column(Boolean, nullable=False)
+    via_novo_used = Column(Boolean, nullable=False)
+    bank_fee_used = Column(Float, nullable=False)
+    customs_fee_used = Column(Float, nullable=False)
+    move_novo_used = Column(Float, nullable=False)
+    move_msk_used = Column(Float, nullable=False)
+    is_excise_used = Column(Boolean, nullable=False)
+    additional_customs_used = Column(Float, nullable=False)
+    storage_used = Column(Float, nullable=False)
+    marking_used = Column(Float, nullable=False)
+
+    opt_rank = Column(Integer, nullable=True)
+
+    temp_import = relationship(
+        "TempCustomerCostImport",
+        back_populates="options",
+        foreign_keys=[temp_import_id],
+    )
+    supplier = relationship("Supplier", back_populates="temp_customer_cost_options")
+    product = relationship("Product", back_populates="temp_customer_cost_options")
+
+    __table_args__ = (
+        Index("ix_temp_cc_options_batch_user", "batch_id", "imported_by"),
+    )
+
+
+class TempStockImport(Base):
+    __tablename__ = "temp_stock_import"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    batch_id = Column(String(64), nullable=False, index=True)
+    imported_by = Column(String(255), nullable=False, index=True)
+    import_date = Column(DateTime, nullable=False)
+    import_row_no = Column(Integer, nullable=True)
+
+    source_article = Column(String(255), nullable=True)
+    source_sku = Column(String(255), nullable=True)
+    source_product_name = Column(String(500), nullable=True)
+    source_origin = Column(String(255), nullable=True)
+    source_brand_group = Column(String(255), nullable=True)
+
+    lpc = Column(Float, nullable=True)
+    landed_cost = Column(Float, nullable=True)
+    distr_price = Column(Float, nullable=True)
+    promo_price = Column(Float, nullable=True)
+
+    stock_qty = Column(Float, nullable=False, default=0)
+    markdown_qty = Column(Float, nullable=False, default=0)
+    reserve_qty = Column(Float, nullable=False, default=0)
+
+    selected_product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
+
+    has_lpc_warning = Column(Boolean, nullable=False, default=False)
+
+    new_product_name = Column(String(500), nullable=True)
+    new_brand = Column(String(255), nullable=True)
+    new_pack = Column(Float, nullable=True)
+    new_is_excise = Column(Boolean, nullable=True)
+
+    selected_product = relationship("Product", back_populates="temp_stock_import_rows")
+
+    __table_args__ = (
+        Index("ix_temp_stock_batch_user", "batch_id", "imported_by"),
+    )
+
+
+class TempSupplierOrdersImport(Base):
+    __tablename__ = "temp_supplier_orders_import"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    batch_id = Column(String(64), nullable=False, index=True)
+    imported_by = Column(String(255), nullable=False, index=True)
+    import_date = Column(DateTime, nullable=False)
+    import_row_no = Column(Integer, nullable=True)
+
+    source_article = Column(String(255), nullable=True)
+    source_product_name = Column(String(500), nullable=True)
+
+    transit_qty = Column(Float, nullable=False, default=0)
+    order_qty = Column(Float, nullable=False, default=0)
+
+    selected_product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
+
+    new_product_name = Column(String(500), nullable=True)
+    new_brand = Column(String(255), nullable=True)
+    new_pack = Column(Float, nullable=True)
+    new_is_excise = Column(Boolean, nullable=True)
+
+    selected_product = relationship("Product", back_populates="temp_supplier_orders_rows")
+
+    __table_args__ = (
+        Index("ix_temp_so_batch_user", "batch_id", "imported_by"),
+    )
+
+
+class TempIsImport(Base):
+    __tablename__ = "temp_is_import"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    batch_id = Column(String(64), nullable=False, index=True)
+    imported_by = Column(String(255), nullable=False, index=True)
+    import_date = Column(DateTime, nullable=False)
+    import_row_no = Column(Integer, nullable=True)
+
+    source_article = Column(String(255), nullable=True)
+    source_product_name = Column(String(500), nullable=True)
+
+    confirmed_qty = Column(Float, nullable=False, default=0)
+    remains_qty = Column(Float, nullable=False, default=0)
+    stock_qty = Column(Float, nullable=False, default=0)
+
+    selected_product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
+
+    new_product_name = Column(String(500), nullable=True)
+    new_brand = Column(String(255), nullable=True)
+    new_pack = Column(Float, nullable=True)
+    new_is_excise = Column(Boolean, nullable=True)
+
+    selected_product = relationship("Product", back_populates="temp_is_rows")
+
+    __table_args__ = (
+        Index("ix_temp_is_batch_user", "batch_id", "imported_by"),
+    )
