@@ -1,0 +1,16 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+.env
+.vscode/
+
+dist/
+build/
+*.spec
+
+alembic/versions/__pycache__/
+
+*.log
