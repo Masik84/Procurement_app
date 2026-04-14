@@ -6,14 +6,10 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.db.models import (
-    CurrentSupplierPrice,
-    PriceHistory,
-    SupplierPriceCalculation,
-    TempPriceImport,
-)
-from app.services.cost_calculation_service import CostCalculationService
-from app.services.product_matching_service import ProductMatchingService
+from app.db.models import SupplierPriceCalculation, TempPriceImport
+from app.services.cost_calculation import CostCalculationService
+from app.services.price_repository import PriceRepository
+from app.services.product_matching import ProductMatchingService
 from app.utils.batch import generate_import_batch_id
 
 
@@ -22,6 +18,7 @@ class SupplierPriceImportService:
         self.session = session
         self.product_matching_service = ProductMatchingService(session)
         self.cost_calculation_service = CostCalculationService(session)
+        self.price_repository = PriceRepository(session)
 
     @staticmethod
     def _to_decimal(value: object) -> Decimal:
@@ -146,19 +143,13 @@ class SupplierPriceImportService:
                 continue
 
             if row.new_is_excise is None:
-                raise ValueError(
-                    f"Для нового продукта '{row.new_product_name}' не заполнено поле new_is_excise."
-                )
+                raise ValueError(f"Для нового продукта '{row.new_product_name}' не заполнено поле new_is_excise.")
 
             if row.new_brand is None or not str(row.new_brand).strip():
-                raise ValueError(
-                    f"Для нового продукта '{row.new_product_name}' не заполнен new_brand."
-                )
+                raise ValueError(f"Для нового продукта '{row.new_product_name}' не заполнен new_brand.")
 
             if row.new_pack is None:
-                raise ValueError(
-                    f"Для нового продукта '{row.new_product_name}' не заполнен new_pack."
-                )
+                raise ValueError(f"Для нового продукта '{row.new_product_name}' не заполнен new_pack.")
 
     def create_products_from_temp(self, batch_id: str, imported_by: str) -> int:
         rows = (
@@ -245,22 +236,7 @@ class SupplierPriceImportService:
         self.session.flush()
         return filled_count
 
-    def get_current_supplier_price(self, supplier_id: int, product_id: int) -> Optional[CurrentSupplierPrice]:
-        return (
-            self.session.query(CurrentSupplierPrice)
-            .filter(
-                CurrentSupplierPrice.supplier_id == supplier_id,
-                CurrentSupplierPrice.product_id == product_id,
-            )
-            .first()
-        )
-
-    def save_prices_to_history_and_current(
-        self,
-        batch_id: str,
-        imported_by: str,
-        currency_code: str,
-    ) -> int:
+    def save_prices_to_history_and_current(self, batch_id: str, imported_by: str, currency_code: str) -> int:
         rows = (
             self.session.query(TempPriceImport)
             .filter(
@@ -276,47 +252,19 @@ class SupplierPriceImportService:
         saved_count = 0
 
         for row in rows:
-            history_row = PriceHistory(
+            self.price_repository.save_supplier_price(
                 supplier_id=row.supplier_id,
                 product_id=row.selected_product_id,
+                price=row.price,
+                currency_code=currency_code,
                 price_date=row.import_date,
-                price=self._to_decimal(row.price),
-                currency=currency_code,
             )
-            self.session.add(history_row)
-
-            current_row = self.get_current_supplier_price(
-                supplier_id=row.supplier_id,
-                product_id=row.selected_product_id,
-            )
-
-            if current_row is None:
-                current_row = CurrentSupplierPrice(
-                    supplier_id=row.supplier_id,
-                    product_id=row.selected_product_id,
-                    price=self._to_decimal(row.price),
-                    currency=currency_code,
-                    last_update=row.import_date,
-                )
-                self.session.add(current_row)
-            else:
-                if current_row.last_update is None or current_row.last_update <= row.import_date:
-                    current_row.price = self._to_decimal(row.price)
-                    current_row.currency = currency_code
-                    current_row.last_update = row.import_date
-
             saved_count += 1
 
         self.session.flush()
         return saved_count
 
-    def save_supplier_price_calculations(
-        self,
-        batch_id: str,
-        imported_by: str,
-        fx_rate: Decimal,
-        currency_code: str,
-    ) -> int:
+    def save_supplier_price_calculations(self, batch_id: str, imported_by: str, fx_rate: Decimal, currency_code: str) -> int:
         rows = (
             self.session.query(TempPriceImport)
             .filter(

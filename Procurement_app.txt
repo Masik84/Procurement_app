@@ -1,0 +1,42 @@
+Procurement_app/
+	· .git/
+	· __pycache__/
+	· alembic/
+	· venv/
+	· app/
+		○ db/
+			§ __init__.py
+			§ db.py
+			§ models.py
+			
+		○ exports/
+			§ __init__.py
+			
+		○ imports/
+			§ __init__.py
+			§ supplier_price_importer.py
+			
+		○ services/
+			§ __init__.py
+			§ cost_calculation_service.py
+			§ product_matching_service.py
+			§ supplier_price_import_service.py
+			§ supplier_price_pipeline.py
+			§ supplier_service.py
+			
+		○ ui/
+			§ forms/
+			
+			§ windows/
+				□ __init__.py
+			§ __init__.py
+			
+		○ utils/
+			§ batch.py
+			§ parsers.py
+			§ text.py
+		
+	· .env
+	· .gitignore
+	· config.py
+	· main.py

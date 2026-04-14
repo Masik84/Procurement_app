@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 
 import pandas as pd
@@ -9,18 +7,6 @@ from app.utils.text import clean_multi_spaces
 
 
 class SupplierPriceImporter:
-    """
-    Expected file layout:
-        column A -> supplier_article
-        column B -> product_name
-        column C -> price
-        column D -> price_pack
-
-    Data starts from row 2 in Excel, so header=0.
-    Import stops logically on rows where product_name is empty:
-    such rows are simply dropped.
-    """
-
     def read_excel(self, file_path: str | Path) -> list[dict]:
         file_path = Path(file_path)
 
@@ -46,7 +32,8 @@ class SupplierPriceImporter:
         df = df[df["product_name"] != ""].copy()
         df = df.reset_index(drop=True)
 
-        # Excel row numbers: header is row 1, data starts from row 2
+        df = df.where(pd.notna(df), None)
+
         df["import_row_no"] = df.index + 2
 
         rows = df.to_dict(orient="records")

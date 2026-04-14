@@ -8,12 +8,12 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.imports.supplier_price_importer import SupplierPriceImporter
-from app.services.supplier_price_import_service import SupplierPriceImportService
-from app.services.supplier_service import SupplierService, SupplierUpsertData
+from app.services.supplier import SupplierService, SupplierUpsertData
+from app.services.supplier_price_import import SupplierPriceImportService
 
 
 @dataclass(slots=True)
-class SupplierPricePipelineResult:
+class SupplierPriceImportResult:
     supplier_id: int
     supplier_name: str
     batch_id: str
@@ -28,7 +28,7 @@ class SupplierPricePipelineResult:
     saved_calculations_count: int
 
 
-class SupplierPricePipeline:
+class SupplierPriceImportRun:
     def __init__(self, session: Session) -> None:
         self.session = session
         self.supplier_service = SupplierService(session)
@@ -45,28 +45,20 @@ class SupplierPricePipeline:
         import_date: Optional[datetime] = None,
         save_exchange_rate: bool = False,
         explicit_fx_rate: Optional[float] = None,
-    ) -> SupplierPricePipelineResult:
-        supplier = self.supplier_service.ensure_supplier(
-            supplier_id=supplier_id,
-            data=supplier_data,
-        )
-
+    ) -> SupplierPriceImportResult:
+        supplier = self.supplier_service.ensure_supplier(supplier_id=supplier_id, data=supplier_data)
         currency_code = supplier.base_currency
-
         fx_rate: Optional[float] = None
 
         if explicit_fx_rate is not None:
             fx_rate = float(explicit_fx_rate)
-
             if save_exchange_rate:
                 self.supplier_service.save_exchange_rate(currency_code, fx_rate)
         else:
             fx_rate = self.supplier_service.get_rate_to_rub(currency_code)
 
         if fx_rate is None or float(fx_rate) == 0:
-            raise ValueError(
-                f"Для валюты '{currency_code}' не найден корректный курс rate_to_rub."
-            )
+            raise ValueError(f"Для валюты '{currency_code}' не найден корректный курс rate_to_rub.")
 
         rows = self.importer.read_excel(file_path)
         batch_id = self.import_service.start_batch()
@@ -82,7 +74,7 @@ class SupplierPricePipeline:
             replace_existing_batch_rows=True,
         )
 
-        return SupplierPricePipelineResult(
+        return SupplierPriceImportResult(
             supplier_id=supplier.id,
             supplier_name=supplier.name,
             batch_id=batch_id,

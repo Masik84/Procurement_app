@@ -59,7 +59,7 @@ class Supplier(Base):
     rating_calc = Column(Boolean, nullable=False, default=True)
     marks_for_us = Column(Boolean, nullable=False, default=False)
     is_rf = Column(Boolean, nullable=False, default=False)
-    country = Column(String(50), nullable=False)
+    country = Column(String(50))
 
     price_history = relationship("PriceHistory", back_populates="supplier")
     current_prices = relationship("CurrentSupplierPrice", back_populates="supplier")
@@ -479,3 +479,57 @@ class TempIsImport(Base):
     __table_args__ = (
         Index("ix_temp_is_batch_user", "batch_id", "imported_by"),
     )
+    
+
+class CustomerPriceCalculation(Base):
+    __tablename__ = "customer_price_calculations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    calc_date = Column(DateTime, nullable=False)
+    batch_id = Column(String(64), nullable=False, index=True)
+    imported_by = Column(String(255), nullable=False, index=True)
+
+    manager_name = Column(String(255), nullable=True)
+    customer_name = Column(String(255), nullable=True)
+    request_date = Column(DateTime, nullable=True)
+
+    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False, index=True)
+    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+
+    supplier_article = Column(String(255), nullable=True)
+    supplier_product_name = Column(String(500), nullable=True)
+
+    pack = Column(Numeric, nullable=True)
+    qty_pcs = Column(Numeric, nullable=True)
+    volume_l = Column(Numeric, nullable=True)
+    comments = Column(Text, nullable=True)
+
+    supplier_price = Column(Numeric, nullable=False)
+    cost_novo_wvat = Column(Numeric, nullable=False)
+    full_cost_msk = Column(Numeric, nullable=False)
+
+    currency_code = Column(String(10), nullable=False)
+    fx_rate_used = Column(Numeric, nullable=False)
+    fx_markup_used = Column(Numeric, nullable=False)
+    transport_used = Column(Numeric, nullable=False)
+    reexport_used = Column(Numeric, nullable=False)
+
+    has_customs_used = Column(Boolean, nullable=False)
+    via_novo_used = Column(Boolean, nullable=False)
+    bank_fee_used = Column(Numeric, nullable=False)
+    customs_fee_used = Column(Numeric, nullable=False)
+    additional_customs_used = Column(Numeric, nullable=False)
+    storage_used = Column(Numeric, nullable=False)
+    move_novo_used = Column(Numeric, nullable=False)
+    move_msk_used = Column(Numeric, nullable=False)
+    marking_used = Column(Numeric, nullable=False)
+    is_excise_used = Column(Boolean, nullable=False)
+
+    price_date_used = Column(DateTime, nullable=True)
+    import_row_no = Column(Integer, nullable=True)        
+
+    
+    
+    
+    
