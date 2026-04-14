@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional
+from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
@@ -13,9 +14,9 @@ from app.utils.text import clean_multi_spaces
 class SupplierUpsertData:
     name: str
     base_currency: str
-    transport_cost_per_l: float = 0.0
-    reexport_percent: float = 0.0
-    fx_rate_markup: float = 0.0
+    transport_cost_per_l: Decimal = Decimal("0")
+    reexport_percent: Decimal = Decimal("0")
+    fx_rate_markup: Decimal = Decimal("0")
     is_via_novo: bool = False
     has_import_duty: bool = False
     rating_calc: bool = True
@@ -60,7 +61,7 @@ class SupplierService:
         rate = self.get_exchange_rate(currency_code)
         if rate is None:
             return None
-        return float(rate.rate_to_rub)
+        return rate.rate_to_rub
 
     @staticmethod
     def normalize_supplier_name(value: object) -> str:
@@ -83,9 +84,9 @@ class SupplierService:
         return SupplierUpsertData(
             name=name,
             base_currency=currency,
-            transport_cost_per_l=float(data.transport_cost_per_l),
-            reexport_percent=float(data.reexport_percent),
-            fx_rate_markup=float(data.fx_rate_markup),
+            transport_cost_per_l=Decimal(str(data.transport_cost_per_l)),
+            reexport_percent=Decimal(str(data.reexport_percent)),
+            fx_rate_markup=Decimal(str(data.fx_rate_markup)),
             is_via_novo=bool(data.is_via_novo),
             has_import_duty=bool(data.has_import_duty),
             rating_calc=bool(data.rating_calc),
@@ -98,7 +99,7 @@ class SupplierService:
         if not code:
             raise ValueError("Currency code is required.")
 
-        rate_value = float(rate_to_rub)
+        rate_value = Decimal(str(rate_to_rub))
         row = self.get_exchange_rate(code)
 
         if row is None:
@@ -191,9 +192,9 @@ class SupplierService:
         return SupplierUpsertData(
             name=supplier.name,
             base_currency=supplier.base_currency,
-            transport_cost_per_l=float(supplier.transport_cost_per_l),
-            reexport_percent=float(supplier.reexport_percent),
-            fx_rate_markup=float(supplier.fx_rate_markup),
+            transport_cost_per_l=supplier.transport_cost_per_l,
+            reexport_percent=supplier.reexport_percent,
+            fx_rate_markup=supplier.fx_rate_markup,
             is_via_novo=bool(supplier.is_via_novo),
             has_import_duty=bool(supplier.has_import_duty),
             rating_calc=bool(supplier.rating_calc),

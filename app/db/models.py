@@ -2,7 +2,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
-    Float,
+    Numeric,
     ForeignKey,
     Integer,
     String,
@@ -26,7 +26,7 @@ class Product(Base):
     brand = Column(String(255), nullable=False, index=True)
     name = Column(String(500), nullable=False, unique=True, index=True)
     family = Column(String(500), nullable=True, index=True)
-    pack = Column(Float, nullable=False)
+    pack = Column(Numeric, nullable=False)
     is_excise = Column(Boolean, nullable=False, default=False)
 
     articles = relationship("ProductArticle", back_populates="product")
@@ -50,15 +50,16 @@ class Supplier(Base):
     name = Column(String(255), nullable=False, unique=True, index=True)
 
     base_currency = Column(String(10), nullable=False)
-    transport_cost_per_l = Column(Float, nullable=False, default=0)
-    reexport_percent = Column(Float, nullable=False, default=0)
-    fx_rate_markup = Column(Float, nullable=False, default=0)
+    transport_cost_per_l = Column(Numeric, nullable=False, default=0)
+    reexport_percent = Column(Numeric, nullable=False, default=0)
+    fx_rate_markup = Column(Numeric, nullable=False, default=0)
 
     is_via_novo = Column(Boolean, nullable=False, default=False)
     has_import_duty = Column(Boolean, nullable=False, default=False)
     rating_calc = Column(Boolean, nullable=False, default=True)
     marks_for_us = Column(Boolean, nullable=False, default=False)
     is_rf = Column(Boolean, nullable=False, default=False)
+    country = Column(String(50), nullable=False)
 
     price_history = relationship("PriceHistory", back_populates="supplier")
     current_prices = relationship("CurrentSupplierPrice", back_populates="supplier")
@@ -93,7 +94,7 @@ class ExchangeRate(Base):
     __tablename__ = "exchange_rates"
 
     currency_code = Column(String(10), primary_key=True)
-    rate_to_rub = Column(Float, nullable=False)
+    rate_to_rub = Column(Numeric, nullable=False)
 
 
 class FixedCosts(Base):
@@ -101,33 +102,32 @@ class FixedCosts(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
 
-    customs_clearance = Column(Float, nullable=False, default=0)
-    additional_customs = Column(Float, nullable=False, default=0)
-    excise = Column(Float, nullable=False, default=0)
-    eco_fee = Column(Float, nullable=False, default=0)
-    vat = Column(Float, nullable=False, default=0)
-    customs_fee = Column(Float, nullable=False, default=0)
-    bank_fee = Column(Float, nullable=False, default=0)
-    money = Column(Float, nullable=False, default=0)
-    storage = Column(Float, nullable=False, default=0)
-    move_novo_tamozh = Column(Float, nullable=False, default=0)
-    move_tamozh_chekhov = Column(Float, nullable=False, default=0)
+    customs_clearance = Column(Numeric, nullable=False, default=0)
+    additional_customs = Column(Numeric, nullable=False, default=0)
+    excise = Column(Numeric, nullable=False, default=0)
+    eco_fee = Column(Numeric, nullable=False, default=0)
+    vat = Column(Numeric, nullable=False, default=0)
+    customs_fee = Column(Numeric, nullable=False, default=0)
+    bank_fee = Column(Numeric, nullable=False, default=0)
+    money = Column(Numeric, nullable=False, default=0)
+    storage = Column(Numeric, nullable=False, default=0)
+    move_novo_tamozh = Column(Numeric, nullable=False, default=0)
+    move_tamozh_chekhov = Column(Numeric, nullable=False, default=0)
 
 
 class PackType(Base):
     __tablename__ = "pack_types"
 
-    name = Column(String(100), primary_key=True)
-    volume = Column(Float, nullable=False, unique=True, index=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False, index=True)
+    volume = Column(Numeric, nullable=False, unique=True, index=True)
 
 
 class MarkingRate(Base):
     __tablename__ = "marking_rates"
 
-    pack_type = Column(String(100), ForeignKey("pack_types.name"), primary_key=True)
-    cost_per_l = Column(Float, nullable=False)
-
-    pack_type_ref = relationship("PackType")
+    pack_type = Column(String(100), primary_key=True)
+    cost_per_l = Column(Numeric, nullable=False)
 
 
 # ============================================================
@@ -143,7 +143,7 @@ class PriceHistory(Base):
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
 
     price_date = Column(DateTime, nullable=False, index=True)
-    price = Column(Float, nullable=False)
+    price = Column(Numeric, nullable=False)
     currency = Column(String(10), nullable=False)
 
     supplier = relationship("Supplier", back_populates="price_history")
@@ -156,7 +156,7 @@ class CurrentSupplierPrice(Base):
     supplier_id = Column(Integer, ForeignKey("suppliers.id"), primary_key=True)
     product_id = Column(Integer, ForeignKey("products.id"), primary_key=True)
 
-    price = Column(Float, nullable=False)
+    price = Column(Numeric, nullable=False)
     currency = Column(String(10), nullable=False)
     last_update = Column(DateTime, nullable=False)
 
@@ -179,26 +179,26 @@ class SupplierPriceCalculation(Base):
     supplier_article = Column(String(255), nullable=True)
     supplier_product_name = Column(String(500), nullable=True)
 
-    supplier_price = Column(Float, nullable=False)
-    cost_novo_wvat = Column(Float, nullable=False)
-    full_cost_msk = Column(Float, nullable=False)
+    supplier_price = Column(Numeric, nullable=False)
+    cost_novo_wvat = Column(Numeric, nullable=False)
+    full_cost_msk = Column(Numeric, nullable=False)
 
     currency_code = Column(String(10), nullable=False)
-    fx_rate_used = Column(Float, nullable=False)
-    fx_markup_used = Column(Float, nullable=False)
-    transport_used = Column(Float, nullable=False)
-    reexport_used = Column(Float, nullable=False)
+    fx_rate_used = Column(Numeric, nullable=False)
+    fx_markup_used = Column(Numeric, nullable=False)
+    transport_used = Column(Numeric, nullable=False)
+    reexport_used = Column(Numeric, nullable=False)
 
     has_customs_used = Column(Boolean, nullable=False)
     via_novo_used = Column(Boolean, nullable=False)
-    bank_fee_used = Column(Float, nullable=False)
-    customs_fee_used = Column(Float, nullable=False)
-    move_novo_used = Column(Float, nullable=False)
-    move_msk_used = Column(Float, nullable=False)
+    bank_fee_used = Column(Numeric, nullable=False)
+    customs_fee_used = Column(Numeric, nullable=False)
+    move_novo_used = Column(Numeric, nullable=False)
+    move_msk_used = Column(Numeric, nullable=False)
     is_excise_used = Column(Boolean, nullable=False)
-    additional_customs_used = Column(Float, nullable=False)
-    storage_used = Column(Float, nullable=False)
-    marking_used = Column(Float, nullable=False)
+    additional_customs_used = Column(Numeric, nullable=False)
+    storage_used = Column(Numeric, nullable=False)
+    marking_used = Column(Numeric, nullable=False)
 
     supplier = relationship("Supplier", back_populates="price_calculations")
     product = relationship("Product", back_populates="price_calculations")
@@ -219,21 +219,21 @@ class ProductStock(Base):
     supplier_orders_update_date = Column(DateTime, nullable=True)
     is_update_date = Column(DateTime, nullable=True)
 
-    stock_qty = Column(Float, nullable=False, default=0)
-    markdown_qty = Column(Float, nullable=False, default=0)
-    reserve_qty = Column(Float, nullable=False, default=0)
+    stock_qty = Column(Numeric, nullable=False, default=0)
+    markdown_qty = Column(Numeric, nullable=False, default=0)
+    reserve_qty = Column(Numeric, nullable=False, default=0)
 
-    lpc = Column(Float, nullable=False, default=0)
-    landed_cost = Column(Float, nullable=False, default=0)
-    distr_price = Column(Float, nullable=False, default=0)
-    promo_price = Column(Float, nullable=False, default=0)
+    lpc = Column(Numeric, nullable=False, default=0)
+    landed_cost = Column(Numeric, nullable=False, default=0)
+    distr_price = Column(Numeric, nullable=False, default=0)
+    promo_price = Column(Numeric, nullable=False, default=0)
 
-    transit_qty = Column(Float, nullable=False, default=0)
-    order_qty = Column(Float, nullable=False, default=0)
+    transit_qty = Column(Numeric, nullable=False, default=0)
+    order_qty = Column(Numeric, nullable=False, default=0)
 
-    is_order_qty = Column(Float, nullable=False, default=0)
-    is_confirmed_order_qty = Column(Float, nullable=False, default=0)
-    is_stock_qty = Column(Float, nullable=False, default=0)
+    is_order_qty = Column(Numeric, nullable=False, default=0)
+    is_confirmed_order_qty = Column(Numeric, nullable=False, default=0)
+    is_stock_qty = Column(Numeric, nullable=False, default=0)
 
     product = relationship("Product", back_populates="stock")
 
@@ -250,8 +250,8 @@ class TempPriceImport(Base):
     supplier_article = Column(String(255), nullable=True)
     product_name = Column(String(500), nullable=True)
 
-    price = Column(Float, nullable=True)
-    price_pack = Column(Float, nullable=True)
+    price = Column(Numeric, nullable=True)
+    price_pack = Column(Numeric, nullable=True)
 
     supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False, index=True)
 
@@ -265,7 +265,7 @@ class TempPriceImport(Base):
 
     new_product_name = Column(String(500), nullable=True)
     new_brand = Column(String(255), nullable=True)
-    new_pack = Column(Float, nullable=True)
+    new_pack = Column(Numeric, nullable=True)
     new_is_excise = Column(Boolean, nullable=True)
 
     supplier = relationship("Supplier", back_populates="temp_price_import_rows")
@@ -293,9 +293,9 @@ class TempCustomerCostImport(Base):
     supplier_article = Column(String(255), nullable=True)
     product_name = Column(String(500), nullable=True)
 
-    pack = Column(Float, nullable=True)
-    qty_pcs = Column(Float, nullable=True)
-    volume_l = Column(Float, nullable=True)
+    pack = Column(Numeric, nullable=True)
+    qty_pcs = Column(Numeric, nullable=True)
+    volume_l = Column(Numeric, nullable=True)
 
     purchase_type = Column(String(255), nullable=True)
     payment_terms = Column(String(255), nullable=True)
@@ -307,7 +307,7 @@ class TempCustomerCostImport(Base):
 
     new_product_name = Column(String(500), nullable=True)
     new_brand = Column(String(255), nullable=True)
-    new_pack = Column(Float, nullable=True)
+    new_pack = Column(Numeric, nullable=True)
     new_is_excise = Column(Boolean, nullable=True)
 
     selected_product = relationship("Product", back_populates="temp_customer_cost_rows")
@@ -341,28 +341,28 @@ class TempCustomerCostOption(Base):
     supplier_article = Column(String(255), nullable=True)
     supplier_product_name = Column(String(500), nullable=True)
 
-    supplier_price = Column(Float, nullable=False)
+    supplier_price = Column(Numeric, nullable=False)
     price_date_used = Column(DateTime, nullable=True)
 
-    cost_novo_wvat = Column(Float, nullable=False)
-    full_cost_msk = Column(Float, nullable=False)
+    cost_novo_wvat = Column(Numeric, nullable=False)
+    full_cost_msk = Column(Numeric, nullable=False)
 
     currency_code = Column(String(10), nullable=False)
-    fx_rate_used = Column(Float, nullable=False)
-    fx_markup_used = Column(Float, nullable=False)
-    transport_used = Column(Float, nullable=False)
-    reexport_used = Column(Float, nullable=False)
+    fx_rate_used = Column(Numeric, nullable=False)
+    fx_markup_used = Column(Numeric, nullable=False)
+    transport_used = Column(Numeric, nullable=False)
+    reexport_used = Column(Numeric, nullable=False)
 
     has_customs_used = Column(Boolean, nullable=False)
     via_novo_used = Column(Boolean, nullable=False)
-    bank_fee_used = Column(Float, nullable=False)
-    customs_fee_used = Column(Float, nullable=False)
-    move_novo_used = Column(Float, nullable=False)
-    move_msk_used = Column(Float, nullable=False)
+    bank_fee_used = Column(Numeric, nullable=False)
+    customs_fee_used = Column(Numeric, nullable=False)
+    move_novo_used = Column(Numeric, nullable=False)
+    move_msk_used = Column(Numeric, nullable=False)
     is_excise_used = Column(Boolean, nullable=False)
-    additional_customs_used = Column(Float, nullable=False)
-    storage_used = Column(Float, nullable=False)
-    marking_used = Column(Float, nullable=False)
+    additional_customs_used = Column(Numeric, nullable=False)
+    storage_used = Column(Numeric, nullable=False)
+    marking_used = Column(Numeric, nullable=False)
 
     opt_rank = Column(Integer, nullable=True)
 
@@ -395,14 +395,14 @@ class TempStockImport(Base):
     source_origin = Column(String(255), nullable=True)
     source_brand_group = Column(String(255), nullable=True)
 
-    lpc = Column(Float, nullable=True)
-    landed_cost = Column(Float, nullable=True)
-    distr_price = Column(Float, nullable=True)
-    promo_price = Column(Float, nullable=True)
+    lpc = Column(Numeric, nullable=True)
+    landed_cost = Column(Numeric, nullable=True)
+    distr_price = Column(Numeric, nullable=True)
+    promo_price = Column(Numeric, nullable=True)
 
-    stock_qty = Column(Float, nullable=False, default=0)
-    markdown_qty = Column(Float, nullable=False, default=0)
-    reserve_qty = Column(Float, nullable=False, default=0)
+    stock_qty = Column(Numeric, nullable=False, default=0)
+    markdown_qty = Column(Numeric, nullable=False, default=0)
+    reserve_qty = Column(Numeric, nullable=False, default=0)
 
     selected_product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
 
@@ -410,7 +410,7 @@ class TempStockImport(Base):
 
     new_product_name = Column(String(500), nullable=True)
     new_brand = Column(String(255), nullable=True)
-    new_pack = Column(Float, nullable=True)
+    new_pack = Column(Numeric, nullable=True)
     new_is_excise = Column(Boolean, nullable=True)
 
     selected_product = relationship("Product", back_populates="temp_stock_import_rows")
@@ -433,14 +433,14 @@ class TempSupplierOrdersImport(Base):
     source_article = Column(String(255), nullable=True)
     source_product_name = Column(String(500), nullable=True)
 
-    transit_qty = Column(Float, nullable=False, default=0)
-    order_qty = Column(Float, nullable=False, default=0)
+    transit_qty = Column(Numeric, nullable=False, default=0)
+    order_qty = Column(Numeric, nullable=False, default=0)
 
     selected_product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
 
     new_product_name = Column(String(500), nullable=True)
     new_brand = Column(String(255), nullable=True)
-    new_pack = Column(Float, nullable=True)
+    new_pack = Column(Numeric, nullable=True)
     new_is_excise = Column(Boolean, nullable=True)
 
     selected_product = relationship("Product", back_populates="temp_supplier_orders_rows")
@@ -463,15 +463,15 @@ class TempIsImport(Base):
     source_article = Column(String(255), nullable=True)
     source_product_name = Column(String(500), nullable=True)
 
-    confirmed_qty = Column(Float, nullable=False, default=0)
-    remains_qty = Column(Float, nullable=False, default=0)
-    stock_qty = Column(Float, nullable=False, default=0)
+    confirmed_qty = Column(Numeric, nullable=False, default=0)
+    remains_qty = Column(Numeric, nullable=False, default=0)
+    stock_qty = Column(Numeric, nullable=False, default=0)
 
     selected_product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
 
     new_product_name = Column(String(500), nullable=True)
     new_brand = Column(String(255), nullable=True)
-    new_pack = Column(Float, nullable=True)
+    new_pack = Column(Numeric, nullable=True)
     new_is_excise = Column(Boolean, nullable=True)
 
     selected_product = relationship("Product", back_populates="temp_is_rows")

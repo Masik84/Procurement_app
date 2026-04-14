@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable, Optional
+from decimal import Decimal, ROUND_HALF_UP
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -14,35 +14,32 @@ from app.db.models import (
 )
 from app.services.cost_calculation_service import CostCalculationService
 from app.services.product_matching_service import ProductMatchingService
-from app.services.supplier_service import SupplierService
 from app.utils.batch import generate_import_batch_id
-
-
-@dataclass(slots=True)
-class SupplierPriceImportRowData:
-    supplier_article: Optional[str] = None
-    product_name: Optional[str] = None
-    price: Optional[float] = None
-    price_pack: Optional[float] = None
-    import_row_no: Optional[int] = None
 
 
 class SupplierPriceImportService:
     def __init__(self, session: Session) -> None:
         self.session = session
         self.product_matching_service = ProductMatchingService(session)
-        self.supplier_service = SupplierService(session)
         self.cost_calculation_service = CostCalculationService(session)
 
-    # =========================================================
-    # Batch / temp helpers
-    # =========================================================
+    @staticmethod
+    def _to_decimal(value: object) -> Decimal:
+        if value is None:
+            return Decimal("0")
+        if isinstance(value, Decimal):
+            return value
+        return Decimal(str(value))
+
+    @staticmethod
+    def _round4(value: Decimal) -> Decimal:
+        return value.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
 
     def start_batch(self) -> str:
         return generate_import_batch_id()
 
-    def delete_temp_rows(self, batch_id: str, imported_by: str) -> None:
-        (
+    def delete_temp_rows(self, batch_id: str, imported_by: str) -> int:
+        deleted_count = (
             self.session.query(TempPriceImport)
             .filter(
                 TempPriceImport.batch_id == batch_id,
@@ -51,6 +48,7 @@ class SupplierPriceImportService:
             .delete(synchronize_session=False)
         )
         self.session.flush()
+        return int(deleted_count or 0)
 
     def get_temp_rows(self, batch_id: str, imported_by: str) -> list[TempPriceImport]:
         return (
@@ -63,71 +61,47 @@ class SupplierPriceImportService:
             .all()
         )
 
-    # =========================================================
-    # Import into temp
-    # =========================================================
-
-    def add_temp_row(
-        self,
-        *,
-        supplier_id: int,
-        batch_id: str,
-        imported_by: str,
-        import_date: datetime,
-        row_data: SupplierPriceImportRowData,
-    ) -> TempPriceImport:
-        row = TempPriceImport(
-            supplier_article=row_data.supplier_article,
-            product_name=row_data.product_name,
-            price=row_data.price,
-            price_pack=row_data.price_pack,
-            supplier_id=supplier_id,
-            import_date=import_date,
-            batch_id=batch_id,
-            imported_by=imported_by,
-            import_row_no=row_data.import_row_no,
-            selected_product_id=None,
-            new_product_name=None,
-            new_brand=None,
-            new_pack=None,
-            new_is_excise=None,
-        )
-        self.session.add(row)
-        self.session.flush()
-        return row
-
     def import_rows_to_temp(
         self,
-        *,
         supplier_id: int,
         batch_id: str,
         imported_by: str,
-        rows: Iterable[SupplierPriceImportRowData],
+        rows: list[dict],
         import_date: Optional[datetime] = None,
         replace_existing_batch_rows: bool = True,
-    ) -> list[TempPriceImport]:
-        dt = import_date or datetime.now()
+    ) -> int:
+        if import_date is None:
+            import_date = datetime.now()
 
         if replace_existing_batch_rows:
             self.delete_temp_rows(batch_id, imported_by)
 
-        created_rows: list[TempPriceImport] = []
+        created_rows = []
 
-        for row_data in rows:
-            created_row = self.add_temp_row(
+        for row in rows:
+            temp_row = TempPriceImport(
+                supplier_article=row.get("supplier_article") or None,
+                product_name=row.get("product_name") or None,
+                price=row.get("price"),
+                price_pack=row.get("price_pack"),
                 supplier_id=supplier_id,
+                import_date=import_date,
                 batch_id=batch_id,
                 imported_by=imported_by,
-                import_date=dt,
-                row_data=row_data,
+                import_row_no=row.get("import_row_no"),
+                selected_product_id=None,
+                new_product_name=None,
+                new_brand=None,
+                new_pack=None,
+                new_is_excise=None,
             )
-            created_rows.append(created_row)
+            created_rows.append(temp_row)
 
-        return created_rows
+        if created_rows:
+            self.session.add_all(created_rows)
 
-    # =========================================================
-    # Matching
-    # =========================================================
+        self.session.flush()
+        return len(created_rows)
 
     def automatch_temp_rows(self, batch_id: str, imported_by: str) -> int:
         rows = (
@@ -154,10 +128,6 @@ class SupplierPriceImportService:
 
         self.session.flush()
         return matched_count
-
-    # =========================================================
-    # New products from temp
-    # =========================================================
 
     def validate_new_products_before_save(self, batch_id: str, imported_by: str) -> None:
         rows = (
@@ -221,10 +191,6 @@ class SupplierPriceImportService:
         self.session.flush()
         return created_count
 
-    # =========================================================
-    # ProductArticle sync
-    # =========================================================
-
     def create_or_update_product_articles(self, batch_id: str, imported_by: str) -> int:
         rows = (
             self.session.query(TempPriceImport)
@@ -250,10 +216,6 @@ class SupplierPriceImportService:
         self.session.flush()
         return processed_count
 
-    # =========================================================
-    # Price helpers
-    # =========================================================
-
     def fill_price_from_price_pack(self, batch_id: str, imported_by: str) -> int:
         rows = (
             self.session.query(TempPriceImport)
@@ -270,30 +232,20 @@ class SupplierPriceImportService:
         filled_count = 0
 
         for row in rows:
-            product = (
-                self.session.query(TempPriceImport)
-                .filter(TempPriceImport.id == row.id)
-                .first()
-            )
-            if product is None or product.selected_product is None:
+            if row.selected_product is None:
                 continue
 
-            pack = float(product.selected_product.pack)
-            if pack == 0:
+            pack = self._to_decimal(row.selected_product.pack)
+            if pack == Decimal("0"):
                 continue
 
-            row.price = round(float(row.price_pack) / pack, 4)
+            row.price = self._round4(self._to_decimal(row.price_pack) / pack)
             filled_count += 1
 
         self.session.flush()
         return filled_count
 
-    def get_current_supplier_price(
-        self,
-        *,
-        supplier_id: int,
-        product_id: int,
-    ) -> Optional[CurrentSupplierPrice]:
+    def get_current_supplier_price(self, supplier_id: int, product_id: int) -> Optional[CurrentSupplierPrice]:
         return (
             self.session.query(CurrentSupplierPrice)
             .filter(
@@ -303,13 +255,8 @@ class SupplierPriceImportService:
             .first()
         )
 
-    # =========================================================
-    # Save prices
-    # =========================================================
-
     def save_prices_to_history_and_current(
         self,
-        *,
         batch_id: str,
         imported_by: str,
         currency_code: str,
@@ -333,7 +280,7 @@ class SupplierPriceImportService:
                 supplier_id=row.supplier_id,
                 product_id=row.selected_product_id,
                 price_date=row.import_date,
-                price=float(row.price),
+                price=self._to_decimal(row.price),
                 currency=currency_code,
             )
             self.session.add(history_row)
@@ -347,14 +294,14 @@ class SupplierPriceImportService:
                 current_row = CurrentSupplierPrice(
                     supplier_id=row.supplier_id,
                     product_id=row.selected_product_id,
-                    price=float(row.price),
+                    price=self._to_decimal(row.price),
                     currency=currency_code,
                     last_update=row.import_date,
                 )
                 self.session.add(current_row)
             else:
                 if current_row.last_update is None or current_row.last_update <= row.import_date:
-                    current_row.price = float(row.price)
+                    current_row.price = self._to_decimal(row.price)
                     current_row.currency = currency_code
                     current_row.last_update = row.import_date
 
@@ -363,16 +310,11 @@ class SupplierPriceImportService:
         self.session.flush()
         return saved_count
 
-    # =========================================================
-    # Save calculations
-    # =========================================================
-
     def save_supplier_price_calculations(
         self,
-        *,
         batch_id: str,
         imported_by: str,
-        fx_rate: float,
+        fx_rate: Decimal,
         currency_code: str,
     ) -> int:
         rows = (
@@ -393,8 +335,8 @@ class SupplierPriceImportService:
             calc_result = self.cost_calculation_service.calculate_supplier_costs(
                 supplier_id=row.supplier_id,
                 product_id=row.selected_product_id,
-                supplier_price=float(row.price),
-                fx_rate=float(fx_rate),
+                supplier_price=self._to_decimal(row.price),
+                fx_rate=self._to_decimal(fx_rate),
                 currency_code=currency_code,
             )
 
@@ -431,23 +373,18 @@ class SupplierPriceImportService:
         self.session.flush()
         return saved_count
 
-    # =========================================================
-    # Full pipeline
-    # =========================================================
-
     def run_full_import_pipeline(
         self,
-        *,
         supplier_id: int,
         batch_id: str,
         imported_by: str,
-        rows: Iterable[SupplierPriceImportRowData],
+        rows: list[dict],
         currency_code: str,
-        fx_rate: float,
+        fx_rate: Decimal,
         import_date: Optional[datetime] = None,
         replace_existing_batch_rows: bool = True,
     ) -> dict:
-        self.import_rows_to_temp(
+        imported_count = self.import_rows_to_temp(
             supplier_id=supplier_id,
             batch_id=batch_id,
             imported_by=imported_by,
@@ -474,6 +411,7 @@ class SupplierPriceImportService:
         )
 
         return {
+            "imported_count": imported_count,
             "matched_count": matched_count,
             "created_products_count": created_products_count,
             "product_articles_count": product_articles_count,

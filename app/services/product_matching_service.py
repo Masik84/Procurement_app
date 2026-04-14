@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Optional
+from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
@@ -329,7 +330,7 @@ class ProductMatchingService:
             name=clean_name,
             brand=clean_brand,
             family=family,
-            pack=float(pack_num),
+            pack=pack_num,
             is_excise=bool(is_excise),
         )
         self.session.add(product)

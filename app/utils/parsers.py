@@ -3,37 +3,33 @@ from __future__ import annotations
 import re
 from datetime import date, datetime
 from typing import Optional
+from decimal import Decimal, InvalidOperation
 
 
 _NON_NUMERIC_RE = re.compile(r"[^0-9,.\-]")
 
 
-def parse_loose_number(value: object) -> Optional[float]:
+def parse_loose_number(value: object) -> Optional[Decimal]:
     """
     Parses numbers written in a loose human/Excel format.
 
-    Supported examples:
-    - 123
-    - 123.45
-    - 123,45
-    - 1 234,56
-    - 1,234.56
-    - 1.234,56
-    - "$1 234,56"
-    - "  123  "
-    - None -> None
-
     Returns:
-        float | None
+        Decimal | None
     """
     if value is None:
         return None
 
     if isinstance(value, bool):
-        return float(value)
+        return Decimal(int(value))
 
-    if isinstance(value, (int, float)):
-        return float(value)
+    if isinstance(value, Decimal):
+        return value
+
+    if isinstance(value, int):
+        return Decimal(value)
+
+    if isinstance(value, float):
+        return Decimal(str(value))
 
     s = str(value)
     s = s.replace("\xa0", " ")
@@ -58,10 +54,9 @@ def parse_loose_number(value: object) -> Optional[float]:
         s = s.replace(",", ".")
 
     try:
-        return float(s)
-    except ValueError:
+        return Decimal(s)
+    except (InvalidOperation, ValueError):
         return None
-
 
 def parse_flexible_date(value: object, default_to_today: bool = True) -> Optional[date]:
     """
