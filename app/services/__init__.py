@@ -9,6 +9,8 @@ from app.services.customer_cost_import import CustomerCostService
 from app.services.customer_cost_run import CustomerCostPipeline
 from app.services.customer_cost_import import CustomerCostImportService
 from app.services.customer_cost_run import CustomerCostImportRun
+from app.services.product_stock_import import ProductStockImportService
+from app.services.product_stock_run import ProductStockImportRun
 
 
 __all__ = [
@@ -29,4 +31,6 @@ __all__ = [
     "CustomerCostPipeline",
     "CustomerCostImportService",
     "CustomerCostImportRun",
+    "ProductStockImportService",
+    "ProductStockImportRun",
 ]

@@ -7,6 +7,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.exports.supplier_price_export import SupplierPriceExport
 from app.imports.supplier_price_importer import SupplierPriceImporter
 from app.services.supplier import SupplierService, SupplierUpsertData
 from app.services.supplier_price_import import SupplierPriceImportService
@@ -34,6 +35,7 @@ class SupplierPriceImportRun:
         self.supplier_service = SupplierService(session)
         self.import_service = SupplierPriceImportService(session)
         self.importer = SupplierPriceImporter()
+        self.exporter = SupplierPriceExport(session)
 
     def run_from_excel(
         self,
@@ -87,4 +89,12 @@ class SupplierPriceImportRun:
             filled_prices_count=stats["filled_prices_count"],
             saved_prices_count=stats["saved_prices_count"],
             saved_calculations_count=stats["saved_calculations_count"],
+        )
+
+    def export_calculated(self, batch_id: str, imported_by: str, supplier_id: int, output_path: str | Path | None = None) -> Path:
+        return self.exporter.export_calculated(
+            batch_id=batch_id,
+            imported_by=imported_by,
+            supplier_id=supplier_id,
+            output_path=output_path,
         )

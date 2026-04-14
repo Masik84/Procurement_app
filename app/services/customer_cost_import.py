@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime
 from decimal import Decimal
 from sqlalchemy.orm import Session
@@ -25,14 +27,20 @@ class CustomerCostImportService:
             return value
         return Decimal(str(value))
 
+    def delete_temp_options(self, batch_id: str, imported_by: str) -> int:
+        deleted_count = self.session.query(TempCustomerCostOption).filter(
+            TempCustomerCostOption.batch_id == batch_id,
+            TempCustomerCostOption.imported_by == imported_by,
+        ).delete(synchronize_session=False)
+        self.session.flush()
+        return int(deleted_count or 0)
+
     def delete_temp_rows(self, batch_id: str, imported_by: str) -> int:
         self.delete_temp_options(batch_id, imported_by)
-
         deleted_count = self.session.query(TempCustomerCostImport).filter(
             TempCustomerCostImport.batch_id == batch_id,
             TempCustomerCostImport.imported_by == imported_by,
         ).delete(synchronize_session=False)
-
         self.session.flush()
         return int(deleted_count or 0)
 
@@ -41,7 +49,6 @@ class CustomerCostImportService:
             self.delete_temp_rows(batch_id, imported_by)
 
         count = 0
-
         for r in rows:
             row = TempCustomerCostImport(
                 batch_id=batch_id,
@@ -86,7 +93,6 @@ class CustomerCostImportService:
         ).order_by(TempCustomerCostImport.import_row_no.asc(), TempCustomerCostImport.id.asc()).all()
 
         matched_count = 0
-
         for row in rows:
             product = self.product_matching.find_customer_product(
                 supplier_article=row.supplier_article,
@@ -130,7 +136,6 @@ class CustomerCostImportService:
         ).order_by(TempCustomerCostImport.import_row_no.asc(), TempCustomerCostImport.id.asc()).all()
 
         created_count = 0
-
         for row in rows:
             product = self.product_matching.get_or_create_product(
                 name=row.new_product_name,
@@ -152,7 +157,6 @@ class CustomerCostImportService:
         ).order_by(TempCustomerCostImport.import_row_no.asc(), TempCustomerCostImport.id.asc()).all()
 
         processed_count = 0
-
         for row in rows:
             self.product_matching.save_product_articles_by_split_articles(
                 product_id=row.selected_product_id,
@@ -163,15 +167,6 @@ class CustomerCostImportService:
 
         self.session.flush()
         return processed_count
-
-    def delete_temp_options(self, batch_id: str, imported_by: str) -> int:
-        deleted_count = self.session.query(TempCustomerCostOption).filter(
-            TempCustomerCostOption.batch_id == batch_id,
-            TempCustomerCostOption.imported_by == imported_by,
-        ).delete(synchronize_session=False)
-
-        self.session.flush()
-        return int(deleted_count or 0)
 
     def _get_fx_rate_for_currency(self, currency_code: str) -> Decimal:
         rate = self.supplier_service.get_rate_to_rub(currency_code)
@@ -189,54 +184,27 @@ class CustomerCostImportService:
         ).order_by(TempCustomerCostImport.import_row_no.asc(), TempCustomerCostImport.id.asc()).all()
 
         created_count = 0
-
         for row in rows:
-            suppliers = self.price_repository.get_suppliers_with_current_prices_for_product(
+            seen_supplier_ids: set[int] = set()
+
+            current_prices = self.price_repository.get_suppliers_with_current_prices_for_product(
                 product_id=row.selected_product_id,
                 only_rating_calc=True,
             )
+            for supplier_price in current_prices:
+                self._create_option_from_snapshot(row, batch_id, imported_by, supplier_price)
+                seen_supplier_ids.add(supplier_price.supplier_id)
+                created_count += 1
 
-            for supplier_price in suppliers:
-                calc = self.cost_calculation.calculate_supplier_costs(
-                    supplier_id=supplier_price.supplier_id,
-                    product_id=row.selected_product_id,
-                    supplier_price=supplier_price.price,
-                    fx_rate=self._get_fx_rate_for_currency(supplier_price.currency_code),
-                    currency_code=supplier_price.currency_code,
-                )
-
-                option = TempCustomerCostOption(
-                    temp_import_id=row.id,
-                    batch_id=batch_id,
-                    imported_by=imported_by,
-                    calc_date=datetime.utcnow(),
-                    supplier_id=supplier_price.supplier_id,
-                    product_id=row.selected_product_id,
-                    supplier_name=supplier_price.supplier_name,
-                    supplier_article=row.supplier_article,
-                    supplier_product_name=row.product_name,
-                    supplier_price=calc.supplier_price,
-                    price_date_used=supplier_price.price_date,
-                    cost_novo_wvat=calc.cost_novo_wvat,
-                    full_cost_msk=calc.full_cost_msk,
-                    currency_code=calc.currency_code,
-                    fx_rate_used=calc.fx_rate_used,
-                    fx_markup_used=calc.fx_markup_used,
-                    transport_used=calc.transport_used,
-                    reexport_used=calc.reexport_used,
-                    has_customs_used=calc.has_customs_used,
-                    via_novo_used=calc.via_novo_used,
-                    bank_fee_used=calc.bank_fee_used,
-                    customs_fee_used=calc.customs_fee_used,
-                    move_novo_used=calc.move_novo_used,
-                    move_msk_used=calc.move_msk_used,
-                    is_excise_used=calc.is_excise_used,
-                    additional_customs_used=calc.additional_customs_used,
-                    storage_used=calc.storage_used,
-                    marking_used=calc.marking_used,
-                    opt_rank=None,
-                )
-                self.session.add(option)
+            latest_history = self.price_repository.get_latest_history_prices_for_product(
+                product_id=row.selected_product_id,
+                only_rating_calc=True,
+            )
+            for supplier_price in latest_history:
+                if supplier_price.supplier_id in seen_supplier_ids:
+                    continue
+                self._create_option_from_snapshot(row, batch_id, imported_by, supplier_price)
+                seen_supplier_ids.add(supplier_price.supplier_id)
                 created_count += 1
 
         self.session.flush()
@@ -244,12 +212,52 @@ class CustomerCostImportService:
         self.select_best_options(batch_id, imported_by)
         return created_count
 
+    def _create_option_from_snapshot(self, row: TempCustomerCostImport, batch_id: str, imported_by: str, supplier_price) -> None:
+        calc = self.cost_calculation.calculate_supplier_costs(
+            supplier_id=supplier_price.supplier_id,
+            product_id=row.selected_product_id,
+            supplier_price=supplier_price.price,
+            fx_rate=self._get_fx_rate_for_currency(supplier_price.currency_code),
+            currency_code=supplier_price.currency_code,
+        )
+        option = TempCustomerCostOption(
+            temp_import_id=row.id,
+            batch_id=batch_id,
+            imported_by=imported_by,
+            calc_date=datetime.utcnow(),
+            supplier_id=supplier_price.supplier_id,
+            product_id=row.selected_product_id,
+            supplier_name=supplier_price.supplier_name,
+            supplier_article=row.supplier_article,
+            supplier_product_name=row.product_name,
+            supplier_price=calc.supplier_price,
+            price_date_used=supplier_price.price_date,
+            cost_novo_wvat=calc.cost_novo_wvat,
+            full_cost_msk=calc.full_cost_msk,
+            currency_code=calc.currency_code,
+            fx_rate_used=calc.fx_rate_used,
+            fx_markup_used=calc.fx_markup_used,
+            transport_used=calc.transport_used,
+            reexport_used=calc.reexport_used,
+            has_customs_used=calc.has_customs_used,
+            via_novo_used=calc.via_novo_used,
+            bank_fee_used=calc.bank_fee_used,
+            customs_fee_used=calc.customs_fee_used,
+            move_novo_used=calc.move_novo_used,
+            move_msk_used=calc.move_msk_used,
+            is_excise_used=calc.is_excise_used,
+            additional_customs_used=calc.additional_customs_used,
+            storage_used=calc.storage_used,
+            marking_used=calc.marking_used,
+            opt_rank=None,
+        )
+        self.session.add(option)
+
     def rank_supplier_options(self, batch_id: str, imported_by: str) -> None:
         rows = self.session.query(TempCustomerCostImport).filter(
             TempCustomerCostImport.batch_id == batch_id,
             TempCustomerCostImport.imported_by == imported_by,
         ).all()
-
         for row in rows:
             options = self.session.query(TempCustomerCostOption).filter(
                 TempCustomerCostOption.batch_id == batch_id,
@@ -260,12 +268,10 @@ class CustomerCostImportService:
                 TempCustomerCostOption.supplier_name.asc(),
                 TempCustomerCostOption.id.asc(),
             ).all()
-
             rank = 1
             for option in options:
                 option.opt_rank = rank
                 rank += 1
-
         self.session.flush()
 
     def select_best_options(self, batch_id: str, imported_by: str) -> None:
@@ -273,7 +279,6 @@ class CustomerCostImportService:
             TempCustomerCostImport.batch_id == batch_id,
             TempCustomerCostImport.imported_by == imported_by,
         ).all()
-
         for row in rows:
             best_option = self.session.query(TempCustomerCostOption).filter(
                 TempCustomerCostOption.batch_id == batch_id,
@@ -283,9 +288,7 @@ class CustomerCostImportService:
                 TempCustomerCostOption.opt_rank.asc(),
                 TempCustomerCostOption.id.asc(),
             ).first()
-
             row.selected_option_id = best_option.id if best_option is not None else None
-
         self.session.flush()
 
     def delete_saved_calculations(self, batch_id: str, imported_by: str) -> int:
@@ -293,28 +296,23 @@ class CustomerCostImportService:
             CustomerPriceCalculation.batch_id == batch_id,
             CustomerPriceCalculation.imported_by == imported_by,
         ).delete(synchronize_session=False)
-
         self.session.flush()
         return int(deleted_count or 0)
 
     def save_calculations(self, batch_id: str, imported_by: str) -> int:
         self.delete_saved_calculations(batch_id, imported_by)
-
         rows = self.session.query(TempCustomerCostImport).filter(
             TempCustomerCostImport.batch_id == batch_id,
             TempCustomerCostImport.imported_by == imported_by,
         ).order_by(TempCustomerCostImport.import_row_no.asc(), TempCustomerCostImport.id.asc()).all()
 
         saved_count = 0
-
         for row in rows:
             if row.selected_product_id is None or row.selected_option_id is None:
                 continue
-
             option = self.session.query(TempCustomerCostOption).filter(
                 TempCustomerCostOption.id == row.selected_option_id
             ).first()
-
             if option is None:
                 continue
 
@@ -365,7 +363,6 @@ class CustomerCostImportService:
         created_products_count = self.create_products_from_temp(batch_id, imported_by)
         product_articles_count = self.create_or_update_product_articles(batch_id, imported_by)
         options_count = self.build_supplier_options(batch_id, imported_by)
-
         return {
             "created_products_count": created_products_count,
             "product_articles_count": product_articles_count,

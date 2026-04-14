@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
@@ -47,6 +47,36 @@ class SupplierPriceImportService:
         self.session.flush()
         return int(deleted_count or 0)
 
+    def delete_supplier_price_calculations(self, batch_id: str, imported_by: str) -> int:
+        deleted_count = (
+            self.session.query(SupplierPriceCalculation)
+            .filter(
+                SupplierPriceCalculation.batch_id == batch_id,
+                SupplierPriceCalculation.imported_by == imported_by,
+            )
+            .delete(synchronize_session=False)
+        )
+        self.session.flush()
+        return int(deleted_count or 0)
+
+    def reset_batch(self, batch_id: str, imported_by: str) -> None:
+        self.delete_supplier_price_calculations(batch_id, imported_by)
+        self.delete_temp_rows(batch_id, imported_by)
+        self.session.flush()
+
+    def cleanup_old_temp_rows(self, imported_by: str, before_date: Optional[date] = None) -> int:
+        cutoff = before_date or date.today()
+        deleted_count = (
+            self.session.query(TempPriceImport)
+            .filter(
+                TempPriceImport.imported_by == imported_by,
+                TempPriceImport.import_date < datetime.combine(cutoff, datetime.min.time()),
+            )
+            .delete(synchronize_session=False)
+        )
+        self.session.flush()
+        return int(deleted_count or 0)
+
     def get_temp_rows(self, batch_id: str, imported_by: str) -> list[TempPriceImport]:
         return (
             self.session.query(TempPriceImport)
@@ -57,6 +87,48 @@ class SupplierPriceImportService:
             .order_by(TempPriceImport.import_row_no.asc(), TempPriceImport.id.asc())
             .all()
         )
+
+    def create_empty_temp_row(
+        self,
+        *,
+        supplier_id: int,
+        batch_id: str,
+        imported_by: str,
+        import_date: Optional[datetime] = None,
+    ) -> TempPriceImport:
+        if import_date is None:
+            import_date = datetime.now()
+
+        last_row_no = (
+            self.session.query(TempPriceImport.import_row_no)
+            .filter(
+                TempPriceImport.batch_id == batch_id,
+                TempPriceImport.imported_by == imported_by,
+            )
+            .order_by(TempPriceImport.import_row_no.desc(), TempPriceImport.id.desc())
+            .first()
+        )
+        next_row_no = int(last_row_no[0]) + 1 if last_row_no and last_row_no[0] is not None else 1
+
+        row = TempPriceImport(
+            supplier_article=None,
+            product_name=None,
+            price=None,
+            price_pack=None,
+            supplier_id=supplier_id,
+            import_date=import_date,
+            batch_id=batch_id,
+            imported_by=imported_by,
+            import_row_no=next_row_no,
+            selected_product_id=None,
+            new_product_name=None,
+            new_brand=None,
+            new_pack=None,
+            new_is_excise=False,
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
 
     def import_rows_to_temp(
         self,
@@ -72,6 +144,7 @@ class SupplierPriceImportService:
 
         if replace_existing_batch_rows:
             self.delete_temp_rows(batch_id, imported_by)
+            self.delete_supplier_price_calculations(batch_id, imported_by)
 
         created_rows = []
 
@@ -265,6 +338,8 @@ class SupplierPriceImportService:
         return saved_count
 
     def save_supplier_price_calculations(self, batch_id: str, imported_by: str, fx_rate: Decimal, currency_code: str) -> int:
+        self.delete_supplier_price_calculations(batch_id, imported_by)
+
         rows = (
             self.session.query(TempPriceImport)
             .filter(

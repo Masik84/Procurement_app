@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 from decimal import Decimal
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
@@ -46,6 +46,13 @@ class SupplierService:
             .first()
         )
 
+    def get_all_suppliers(self) -> list[Supplier]:
+        return (
+            self.session.query(Supplier)
+            .order_by(Supplier.name.asc())
+            .all()
+        )
+
     def get_exchange_rate(self, currency_code: object) -> Optional[ExchangeRate]:
         code = clean_multi_spaces(currency_code).upper()
         if not code:
@@ -55,6 +62,13 @@ class SupplierService:
             self.session.query(ExchangeRate)
             .filter(ExchangeRate.currency_code == code)
             .first()
+        )
+
+    def get_all_exchange_rates(self) -> list[ExchangeRate]:
+        return (
+            self.session.query(ExchangeRate)
+            .order_by(ExchangeRate.currency_code.asc())
+            .all()
         )
 
     def get_rate_to_rub(self, currency_code: object) -> Optional[float]:

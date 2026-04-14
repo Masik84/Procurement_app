@@ -1,0 +1,872 @@
+<RCC>
+  <qresource prefix="icon">
+    <file>icon/activity — копия — копия.svg</file>
+    <file>icon/activity — копия.svg</file>
+    <file>icon/activity.svg</file>
+    <file>icon/airplay — копия — копия.svg</file>
+    <file>icon/airplay — копия.svg</file>
+    <file>icon/airplay.svg</file>
+    <file>icon/alert-circle — копия — копия.svg</file>
+    <file>icon/alert-circle — копия.svg</file>
+    <file>icon/alert-circle.svg</file>
+    <file>icon/alert-octagon — копия — копия.svg</file>
+    <file>icon/alert-octagon — копия.svg</file>
+    <file>icon/alert-octagon.svg</file>
+    <file>icon/alert-triangle — копия — копия.svg</file>
+    <file>icon/alert-triangle — копия.svg</file>
+    <file>icon/alert-triangle.svg</file>
+    <file>icon/align-center — копия — копия.svg</file>
+    <file>icon/align-center — копия.svg</file>
+    <file>icon/align-center.svg</file>
+    <file>icon/align-justify — копия — копия.svg</file>
+    <file>icon/align-justify — копия.svg</file>
+    <file>icon/align-justify.svg</file>
+    <file>icon/align-left — копия — копия.svg</file>
+    <file>icon/align-left — копия.svg</file>
+    <file>icon/align-left.svg</file>
+    <file>icon/align-right — копия — копия.svg</file>
+    <file>icon/align-right — копия.svg</file>
+    <file>icon/align-right.svg</file>
+    <file>icon/anchor — копия — копия.svg</file>
+    <file>icon/anchor — копия.svg</file>
+    <file>icon/anchor.svg</file>
+    <file>icon/aperture — копия — копия.svg</file>
+    <file>icon/aperture — копия.svg</file>
+    <file>icon/aperture.svg</file>
+    <file>icon/archive — копия — копия.svg</file>
+    <file>icon/archive — копия.svg</file>
+    <file>icon/archive.svg</file>
+    <file>icon/arrow-down — копия — копия.svg</file>
+    <file>icon/arrow-down — копия.svg</file>
+    <file>icon/arrow-down.svg</file>
+    <file>icon/arrow-down-circle — копия — копия.svg</file>
+    <file>icon/arrow-down-circle — копия.svg</file>
+    <file>icon/arrow-down-circle.svg</file>
+    <file>icon/arrow-down-left — копия — копия.svg</file>
+    <file>icon/arrow-down-left — копия.svg</file>
+    <file>icon/arrow-down-left.svg</file>
+    <file>icon/arrow-down-right — копия — копия.svg</file>
+    <file>icon/arrow-down-right — копия.svg</file>
+    <file>icon/arrow-down-right.svg</file>
+    <file>icon/arrow-left — копия — копия.svg</file>
+    <file>icon/arrow-left — копия.svg</file>
+    <file>icon/arrow-left.svg</file>
+    <file>icon/arrow-left-circle — копия — копия.svg</file>
+    <file>icon/arrow-left-circle — копия.svg</file>
+    <file>icon/arrow-left-circle.svg</file>
+    <file>icon/arrow-right — копия — копия.svg</file>
+    <file>icon/arrow-right — копия.svg</file>
+    <file>icon/arrow-right.svg</file>
+    <file>icon/arrow-right-circle — копия — копия.svg</file>
+    <file>icon/arrow-right-circle — копия.svg</file>
+    <file>icon/arrow-right-circle.svg</file>
+    <file>icon/arrow-up — копия — копия.svg</file>
+    <file>icon/arrow-up — копия.svg</file>
+    <file>icon/arrow-up.svg</file>
+    <file>icon/arrow-up-circle — копия — копия.svg</file>
+    <file>icon/arrow-up-circle — копия.svg</file>
+    <file>icon/arrow-up-circle.svg</file>
+    <file>icon/arrow-up-left — копия — копия.svg</file>
+    <file>icon/arrow-up-left — копия.svg</file>
+    <file>icon/arrow-up-left.svg</file>
+    <file>icon/arrow-up-right — копия — копия.svg</file>
+    <file>icon/arrow-up-right — копия.svg</file>
+    <file>icon/arrow-up-right.svg</file>
+    <file>icon/at-sign — копия — копия.svg</file>
+    <file>icon/at-sign — копия.svg</file>
+    <file>icon/at-sign.svg</file>
+    <file>icon/award — копия — копия.svg</file>
+    <file>icon/award — копия.svg</file>
+    <file>icon/award.svg</file>
+    <file>icon/bar-chart — копия — копия.svg</file>
+    <file>icon/bar-chart — копия.svg</file>
+    <file>icon/bar-chart.svg</file>
+    <file>icon/bar-chart-2 — копия — копия.svg</file>
+    <file>icon/bar-chart-2 — копия.svg</file>
+    <file>icon/bar-chart-2.svg</file>
+    <file>icon/battery — копия — копия.svg</file>
+    <file>icon/battery — копия.svg</file>
+    <file>icon/battery.svg</file>
+    <file>icon/battery-charging — копия — копия.svg</file>
+    <file>icon/battery-charging — копия.svg</file>
+    <file>icon/battery-charging.svg</file>
+    <file>icon/bell — копия — копия.svg</file>
+    <file>icon/bell — копия.svg</file>
+    <file>icon/bell.svg</file>
+    <file>icon/bell-off — копия — копия.svg</file>
+    <file>icon/bell-off — копия.svg</file>
+    <file>icon/bell-off.svg</file>
+    <file>icon/bluetooth — копия — копия.svg</file>
+    <file>icon/bluetooth — копия.svg</file>
+    <file>icon/bluetooth.svg</file>
+    <file>icon/bold — копия — копия.svg</file>
+    <file>icon/bold — копия.svg</file>
+    <file>icon/bold.svg</file>
+    <file>icon/book — копия — копия.svg</file>
+    <file>icon/book — копия.svg</file>
+    <file>icon/book.svg</file>
+    <file>icon/bookmark — копия — копия.svg</file>
+    <file>icon/bookmark — копия.svg</file>
+    <file>icon/bookmark.svg</file>
+    <file>icon/book-open — копия — копия.svg</file>
+    <file>icon/book-open — копия.svg</file>
+    <file>icon/book-open.svg</file>
+    <file>icon/box — копия — копия.svg</file>
+    <file>icon/box — копия.svg</file>
+    <file>icon/box.svg</file>
+    <file>icon/briefcase — копия — копия.svg</file>
+    <file>icon/briefcase — копия.svg</file>
+    <file>icon/briefcase.svg</file>
+    <file>icon/calendar — копия — копия.svg</file>
+    <file>icon/calendar — копия.svg</file>
+    <file>icon/calendar.svg</file>
+    <file>icon/camera — копия — копия.svg</file>
+    <file>icon/camera — копия.svg</file>
+    <file>icon/camera.svg</file>
+    <file>icon/camera-off — копия — копия.svg</file>
+    <file>icon/camera-off — копия.svg</file>
+    <file>icon/camera-off.svg</file>
+    <file>icon/cast — копия — копия.svg</file>
+    <file>icon/cast — копия.svg</file>
+    <file>icon/cast.svg</file>
+    <file>icon/check — копия — копия.svg</file>
+    <file>icon/check — копия.svg</file>
+    <file>icon/check.svg</file>
+    <file>icon/check-circle — копия — копия.svg</file>
+    <file>icon/check-circle — копия.svg</file>
+    <file>icon/check-circle.svg</file>
+    <file>icon/check-square — копия — копия.svg</file>
+    <file>icon/check-square — копия.svg</file>
+    <file>icon/check-square.svg</file>
+    <file>icon/chevron-down — копия — копия.svg</file>
+    <file>icon/chevron-down — копия.svg</file>
+    <file>icon/chevron-down.svg</file>
+    <file>icon/chevron-left — копия — копия.svg</file>
+    <file>icon/chevron-left — копия.svg</file>
+    <file>icon/chevron-left.svg</file>
+    <file>icon/chevron-right — копия — копия.svg</file>
+    <file>icon/chevron-right — копия.svg</file>
+    <file>icon/chevron-right.svg</file>
+    <file>icon/chevrons-down — копия — копия.svg</file>
+    <file>icon/chevrons-down — копия.svg</file>
+    <file>icon/chevrons-down.svg</file>
+    <file>icon/chevrons-left — копия — копия.svg</file>
+    <file>icon/chevrons-left — копия.svg</file>
+    <file>icon/chevrons-left.svg</file>
+    <file>icon/chevrons-right — копия — копия.svg</file>
+    <file>icon/chevrons-right — копия.svg</file>
+    <file>icon/chevrons-right.svg</file>
+    <file>icon/chevrons-up — копия — копия.svg</file>
+    <file>icon/chevrons-up — копия.svg</file>
+    <file>icon/chevrons-up.svg</file>
+    <file>icon/chevron-up — копия — копия.svg</file>
+    <file>icon/chevron-up — копия.svg</file>
+    <file>icon/chevron-up.svg</file>
+    <file>icon/chrome — копия — копия.svg</file>
+    <file>icon/chrome — копия.svg</file>
+    <file>icon/chrome.svg</file>
+    <file>icon/circle — копия — копия.svg</file>
+    <file>icon/circle — копия.svg</file>
+    <file>icon/circle.svg</file>
+    <file>icon/clipboard — копия — копия.svg</file>
+    <file>icon/clipboard — копия.svg</file>
+    <file>icon/clipboard.svg</file>
+    <file>icon/clock — копия — копия.svg</file>
+    <file>icon/clock — копия.svg</file>
+    <file>icon/clock.svg</file>
+    <file>icon/cloud — копия — копия.svg</file>
+    <file>icon/cloud — копия.svg</file>
+    <file>icon/cloud.svg</file>
+    <file>icon/cloud-drizzle — копия — копия.svg</file>
+    <file>icon/cloud-drizzle — копия.svg</file>
+    <file>icon/cloud-drizzle.svg</file>
+    <file>icon/cloud-lightning — копия — копия.svg</file>
+    <file>icon/cloud-lightning — копия.svg</file>
+    <file>icon/cloud-lightning.svg</file>
+    <file>icon/cloud-off — копия — копия.svg</file>
+    <file>icon/cloud-off — копия.svg</file>
+    <file>icon/cloud-off.svg</file>
+    <file>icon/cloud-rain — копия — копия.svg</file>
+    <file>icon/cloud-rain — копия.svg</file>
+    <file>icon/cloud-rain.svg</file>
+    <file>icon/cloud-snow — копия — копия.svg</file>
+    <file>icon/cloud-snow — копия.svg</file>
+    <file>icon/cloud-snow.svg</file>
+    <file>icon/code — копия — копия.svg</file>
+    <file>icon/code — копия.svg</file>
+    <file>icon/code.svg</file>
+    <file>icon/codepen — копия — копия.svg</file>
+    <file>icon/codepen — копия.svg</file>
+    <file>icon/codepen.svg</file>
+    <file>icon/codesandbox — копия — копия.svg</file>
+    <file>icon/codesandbox — копия.svg</file>
+    <file>icon/codesandbox.svg</file>
+    <file>icon/coffee — копия — копия.svg</file>
+    <file>icon/coffee — копия.svg</file>
+    <file>icon/coffee.svg</file>
+    <file>icon/columns — копия — копия.svg</file>
+    <file>icon/columns — копия.svg</file>
+    <file>icon/columns.svg</file>
+    <file>icon/command — копия — копия.svg</file>
+    <file>icon/command — копия.svg</file>
+    <file>icon/command.svg</file>
+    <file>icon/compass — копия — копия.svg</file>
+    <file>icon/compass — копия.svg</file>
+    <file>icon/compass.svg</file>
+    <file>icon/copy — копия — копия.svg</file>
+    <file>icon/copy — копия.svg</file>
+    <file>icon/copy.svg</file>
+    <file>icon/corner-down-left — копия — копия.svg</file>
+    <file>icon/corner-down-left — копия.svg</file>
+    <file>icon/corner-down-left.svg</file>
+    <file>icon/corner-down-right — копия — копия.svg</file>
+    <file>icon/corner-down-right — копия.svg</file>
+    <file>icon/corner-down-right.svg</file>
+    <file>icon/corner-left-down — копия — копия.svg</file>
+    <file>icon/corner-left-down — копия.svg</file>
+    <file>icon/corner-left-down.svg</file>
+    <file>icon/corner-left-up — копия — копия.svg</file>
+    <file>icon/corner-left-up — копия.svg</file>
+    <file>icon/corner-left-up.svg</file>
+    <file>icon/corner-right-down — копия — копия.svg</file>
+    <file>icon/corner-right-down — копия.svg</file>
+    <file>icon/corner-right-down.svg</file>
+    <file>icon/corner-right-up — копия — копия.svg</file>
+    <file>icon/corner-right-up — копия.svg</file>
+    <file>icon/corner-right-up.svg</file>
+    <file>icon/corner-up-left — копия — копия.svg</file>
+    <file>icon/corner-up-left — копия.svg</file>
+    <file>icon/corner-up-left.svg</file>
+    <file>icon/corner-up-right — копия — копия.svg</file>
+    <file>icon/corner-up-right — копия.svg</file>
+    <file>icon/corner-up-right.svg</file>
+    <file>icon/cpu — копия — копия.svg</file>
+    <file>icon/cpu — копия.svg</file>
+    <file>icon/cpu.svg</file>
+    <file>icon/credit-card — копия — копия.svg</file>
+    <file>icon/credit-card — копия.svg</file>
+    <file>icon/credit-card.svg</file>
+    <file>icon/crop — копия — копия.svg</file>
+    <file>icon/crop — копия.svg</file>
+    <file>icon/crop.svg</file>
+    <file>icon/crosshair — копия — копия.svg</file>
+    <file>icon/crosshair — копия.svg</file>
+    <file>icon/crosshair.svg</file>
+    <file>icon/database — копия — копия.svg</file>
+    <file>icon/database — копия.svg</file>
+    <file>icon/database.svg</file>
+    <file>icon/delete — копия — копия.svg</file>
+    <file>icon/delete — копия.svg</file>
+    <file>icon/delete.svg</file>
+    <file>icon/disc — копия — копия.svg</file>
+    <file>icon/disc — копия.svg</file>
+    <file>icon/disc.svg</file>
+    <file>icon/divide — копия — копия.svg</file>
+    <file>icon/divide — копия.svg</file>
+    <file>icon/divide.svg</file>
+    <file>icon/divide-circle — копия — копия.svg</file>
+    <file>icon/divide-circle — копия.svg</file>
+    <file>icon/divide-circle.svg</file>
+    <file>icon/divide-square — копия — копия.svg</file>
+    <file>icon/divide-square — копия.svg</file>
+    <file>icon/divide-square.svg</file>
+    <file>icon/dollar-sign — копия — копия.svg</file>
+    <file>icon/dollar-sign — копия.svg</file>
+    <file>icon/dollar-sign.svg</file>
+    <file>icon/download — копия — копия.svg</file>
+    <file>icon/download — копия.svg</file>
+    <file>icon/download.svg</file>
+    <file>icon/download-cloud — копия — копия.svg</file>
+    <file>icon/download-cloud — копия.svg</file>
+    <file>icon/download-cloud.svg</file>
+    <file>icon/dribbble — копия — копия.svg</file>
+    <file>icon/dribbble — копия.svg</file>
+    <file>icon/dribbble.svg</file>
+    <file>icon/droplet — копия — копия.svg</file>
+    <file>icon/droplet — копия.svg</file>
+    <file>icon/droplet.svg</file>
+    <file>icon/edit — копия — копия.svg</file>
+    <file>icon/edit — копия.svg</file>
+    <file>icon/edit.svg</file>
+    <file>icon/edit-2 — копия — копия.svg</file>
+    <file>icon/edit-2 — копия.svg</file>
+    <file>icon/edit-2.svg</file>
+    <file>icon/edit-3 — копия — копия.svg</file>
+    <file>icon/edit-3 — копия.svg</file>
+    <file>icon/edit-3.svg</file>
+    <file>icon/external-link — копия — копия.svg</file>
+    <file>icon/external-link — копия.svg</file>
+    <file>icon/external-link.svg</file>
+    <file>icon/eye — копия — копия.svg</file>
+    <file>icon/eye — копия.svg</file>
+    <file>icon/eye.svg</file>
+    <file>icon/eye-off — копия — копия.svg</file>
+    <file>icon/eye-off — копия.svg</file>
+    <file>icon/eye-off.svg</file>
+    <file>icon/facebook — копия — копия.svg</file>
+    <file>icon/facebook — копия.svg</file>
+    <file>icon/facebook.svg</file>
+    <file>icon/fast-forward — копия — копия.svg</file>
+    <file>icon/fast-forward — копия.svg</file>
+    <file>icon/fast-forward.svg</file>
+    <file>icon/feather — копия — копия.svg</file>
+    <file>icon/feather — копия.svg</file>
+    <file>icon/feather.svg</file>
+    <file>icon/figma — копия — копия.svg</file>
+    <file>icon/figma — копия.svg</file>
+    <file>icon/figma.svg</file>
+    <file>icon/file — копия — копия.svg</file>
+    <file>icon/file — копия.svg</file>
+    <file>icon/file.svg</file>
+    <file>icon/file-minus — копия — копия.svg</file>
+    <file>icon/file-minus — копия.svg</file>
+    <file>icon/file-minus.svg</file>
+    <file>icon/file-plus — копия — копия.svg</file>
+    <file>icon/file-plus — копия.svg</file>
+    <file>icon/file-plus.svg</file>
+    <file>icon/file-text — копия — копия.svg</file>
+    <file>icon/file-text — копия.svg</file>
+    <file>icon/file-text.svg</file>
+    <file>icon/film — копия — копия.svg</file>
+    <file>icon/film — копия.svg</file>
+    <file>icon/film.svg</file>
+    <file>icon/filter — копия — копия.svg</file>
+    <file>icon/filter — копия.svg</file>
+    <file>icon/filter.svg</file>
+    <file>icon/flag — копия — копия.svg</file>
+    <file>icon/flag — копия.svg</file>
+    <file>icon/flag.svg</file>
+    <file>icon/folder — копия — копия.svg</file>
+    <file>icon/folder — копия.svg</file>
+    <file>icon/folder.svg</file>
+    <file>icon/folder-minus — копия — копия.svg</file>
+    <file>icon/folder-minus — копия.svg</file>
+    <file>icon/folder-minus.svg</file>
+    <file>icon/folder-plus — копия — копия.svg</file>
+    <file>icon/folder-plus — копия.svg</file>
+    <file>icon/folder-plus.svg</file>
+    <file>icon/framer — копия — копия.svg</file>
+    <file>icon/framer — копия.svg</file>
+    <file>icon/framer.svg</file>
+    <file>icon/frown — копия — копия.svg</file>
+    <file>icon/frown — копия.svg</file>
+    <file>icon/frown.svg</file>
+    <file>icon/gift — копия — копия.svg</file>
+    <file>icon/gift — копия.svg</file>
+    <file>icon/gift.svg</file>
+    <file>icon/git-branch — копия — копия.svg</file>
+    <file>icon/git-branch — копия.svg</file>
+    <file>icon/git-branch.svg</file>
+    <file>icon/git-commit — копия — копия.svg</file>
+    <file>icon/git-commit — копия.svg</file>
+    <file>icon/git-commit.svg</file>
+    <file>icon/github — копия — копия.svg</file>
+    <file>icon/github — копия.svg</file>
+    <file>icon/github.svg</file>
+    <file>icon/gitlab — копия — копия.svg</file>
+    <file>icon/gitlab — копия.svg</file>
+    <file>icon/gitlab.svg</file>
+    <file>icon/git-merge — копия — копия.svg</file>
+    <file>icon/git-merge — копия.svg</file>
+    <file>icon/git-merge.svg</file>
+    <file>icon/git-pull-request — копия — копия.svg</file>
+    <file>icon/git-pull-request — копия.svg</file>
+    <file>icon/git-pull-request.svg</file>
+    <file>icon/globe — копия — копия.svg</file>
+    <file>icon/globe — копия.svg</file>
+    <file>icon/globe.svg</file>
+    <file>icon/grid — копия — копия.svg</file>
+    <file>icon/grid — копия.svg</file>
+    <file>icon/grid.svg</file>
+    <file>icon/hard-drive — копия — копия.svg</file>
+    <file>icon/hard-drive — копия.svg</file>
+    <file>icon/hard-drive.svg</file>
+    <file>icon/hash — копия — копия.svg</file>
+    <file>icon/hash — копия.svg</file>
+    <file>icon/hash.svg</file>
+    <file>icon/headphones — копия — копия.svg</file>
+    <file>icon/headphones — копия.svg</file>
+    <file>icon/headphones.svg</file>
+    <file>icon/heart — копия — копия.svg</file>
+    <file>icon/heart — копия.svg</file>
+    <file>icon/heart.svg</file>
+    <file>icon/help-circle — копия — копия.svg</file>
+    <file>icon/help-circle — копия.svg</file>
+    <file>icon/help-circle.svg</file>
+    <file>icon/hexagon — копия — копия.svg</file>
+    <file>icon/hexagon — копия.svg</file>
+    <file>icon/hexagon.svg</file>
+    <file>icon/home — копия — копия.svg</file>
+    <file>icon/home — копия.svg</file>
+    <file>icon/home.svg</file>
+    <file>icon/image — копия — копия.svg</file>
+    <file>icon/image — копия.svg</file>
+    <file>icon/image.svg</file>
+    <file>icon/inbox — копия — копия.svg</file>
+    <file>icon/inbox — копия.svg</file>
+    <file>icon/inbox.svg</file>
+    <file>icon/info — копия — копия.svg</file>
+    <file>icon/info — копия.svg</file>
+    <file>icon/info.svg</file>
+    <file>icon/instagram — копия — копия.svg</file>
+    <file>icon/instagram — копия.svg</file>
+    <file>icon/instagram.svg</file>
+    <file>icon/italic — копия — копия.svg</file>
+    <file>icon/italic — копия.svg</file>
+    <file>icon/italic.svg</file>
+    <file>icon/key — копия — копия.svg</file>
+    <file>icon/key — копия.svg</file>
+    <file>icon/key.svg</file>
+    <file>icon/layers — копия — копия.svg</file>
+    <file>icon/layers — копия.svg</file>
+    <file>icon/layers.svg</file>
+    <file>icon/layout — копия — копия.svg</file>
+    <file>icon/layout — копия.svg</file>
+    <file>icon/layout.svg</file>
+    <file>icon/life-buoy — копия — копия.svg</file>
+    <file>icon/life-buoy — копия.svg</file>
+    <file>icon/life-buoy.svg</file>
+    <file>icon/link — копия — копия.svg</file>
+    <file>icon/link — копия.svg</file>
+    <file>icon/link.svg</file>
+    <file>icon/link-2 — копия — копия.svg</file>
+    <file>icon/link-2 — копия.svg</file>
+    <file>icon/link-2.svg</file>
+    <file>icon/linkedin — копия — копия.svg</file>
+    <file>icon/linkedin — копия.svg</file>
+    <file>icon/linkedin.svg</file>
+    <file>icon/list — копия — копия.svg</file>
+    <file>icon/list — копия.svg</file>
+    <file>icon/list.svg</file>
+    <file>icon/loader — копия — копия.svg</file>
+    <file>icon/loader — копия.svg</file>
+    <file>icon/loader.svg</file>
+    <file>icon/lock — копия — копия.svg</file>
+    <file>icon/lock — копия.svg</file>
+    <file>icon/lock.svg</file>
+    <file>icon/log-in — копия — копия.svg</file>
+    <file>icon/log-in — копия.svg</file>
+    <file>icon/log-in.svg</file>
+    <file>icon/log-out — копия — копия.svg</file>
+    <file>icon/log-out — копия.svg</file>
+    <file>icon/log-out.svg</file>
+    <file>icon/mail — копия — копия.svg</file>
+    <file>icon/mail — копия.svg</file>
+    <file>icon/mail.svg</file>
+    <file>icon/map — копия — копия.svg</file>
+    <file>icon/map — копия.svg</file>
+    <file>icon/map.svg</file>
+    <file>icon/map-pin — копия — копия.svg</file>
+    <file>icon/map-pin — копия.svg</file>
+    <file>icon/map-pin.svg</file>
+    <file>icon/maximize — копия — копия.svg</file>
+    <file>icon/maximize — копия.svg</file>
+    <file>icon/maximize.svg</file>
+    <file>icon/maximize-2 — копия — копия.svg</file>
+    <file>icon/maximize-2 — копия.svg</file>
+    <file>icon/maximize-2.svg</file>
+    <file>icon/meh — копия — копия.svg</file>
+    <file>icon/meh — копия.svg</file>
+    <file>icon/meh.svg</file>
+    <file>icon/menu — копия — копия.svg</file>
+    <file>icon/menu — копия.svg</file>
+    <file>icon/menu.svg</file>
+    <file>icon/message-circle — копия — копия.svg</file>
+    <file>icon/message-circle — копия.svg</file>
+    <file>icon/message-circle.svg</file>
+    <file>icon/message-square — копия — копия.svg</file>
+    <file>icon/message-square — копия.svg</file>
+    <file>icon/message-square.svg</file>
+    <file>icon/mic — копия — копия.svg</file>
+    <file>icon/mic — копия.svg</file>
+    <file>icon/mic.svg</file>
+    <file>icon/mic-off — копия — копия.svg</file>
+    <file>icon/mic-off — копия.svg</file>
+    <file>icon/mic-off.svg</file>
+    <file>icon/minimize — копия — копия.svg</file>
+    <file>icon/minimize — копия.svg</file>
+    <file>icon/minimize.svg</file>
+    <file>icon/minimize-2 — копия — копия.svg</file>
+    <file>icon/minimize-2 — копия.svg</file>
+    <file>icon/minimize-2.svg</file>
+    <file>icon/minus — копия — копия.svg</file>
+    <file>icon/minus — копия.svg</file>
+    <file>icon/minus.svg</file>
+    <file>icon/minus-circle — копия — копия.svg</file>
+    <file>icon/minus-circle — копия.svg</file>
+    <file>icon/minus-circle.svg</file>
+    <file>icon/minus-square — копия — копия.svg</file>
+    <file>icon/minus-square — копия.svg</file>
+    <file>icon/minus-square.svg</file>
+    <file>icon/monitor — копия — копия.svg</file>
+    <file>icon/monitor — копия.svg</file>
+    <file>icon/monitor.svg</file>
+    <file>icon/moon — копия — копия.svg</file>
+    <file>icon/moon — копия.svg</file>
+    <file>icon/moon.svg</file>
+    <file>icon/more-horizontal — копия — копия.svg</file>
+    <file>icon/more-horizontal — копия.svg</file>
+    <file>icon/more-horizontal.svg</file>
+    <file>icon/more-vertical — копия — копия.svg</file>
+    <file>icon/more-vertical — копия.svg</file>
+    <file>icon/more-vertical.svg</file>
+    <file>icon/mouse-pointer — копия — копия.svg</file>
+    <file>icon/mouse-pointer — копия.svg</file>
+    <file>icon/mouse-pointer.svg</file>
+    <file>icon/move — копия — копия.svg</file>
+    <file>icon/move — копия.svg</file>
+    <file>icon/move.svg</file>
+    <file>icon/music — копия — копия.svg</file>
+    <file>icon/music — копия.svg</file>
+    <file>icon/music.svg</file>
+    <file>icon/navigation — копия — копия.svg</file>
+    <file>icon/navigation — копия.svg</file>
+    <file>icon/navigation.svg</file>
+    <file>icon/navigation-2 — копия — копия.svg</file>
+    <file>icon/navigation-2 — копия.svg</file>
+    <file>icon/navigation-2.svg</file>
+    <file>icon/octagon — копия — копия.svg</file>
+    <file>icon/octagon — копия.svg</file>
+    <file>icon/octagon.svg</file>
+    <file>icon/package — копия — копия.svg</file>
+    <file>icon/package — копия.svg</file>
+    <file>icon/package.svg</file>
+    <file>icon/paperclip — копия — копия.svg</file>
+    <file>icon/paperclip — копия.svg</file>
+    <file>icon/paperclip.svg</file>
+    <file>icon/pause — копия — копия.svg</file>
+    <file>icon/pause — копия.svg</file>
+    <file>icon/pause.svg</file>
+    <file>icon/pause-circle — копия — копия.svg</file>
+    <file>icon/pause-circle — копия.svg</file>
+    <file>icon/pause-circle.svg</file>
+    <file>icon/pen-tool — копия — копия.svg</file>
+    <file>icon/pen-tool — копия.svg</file>
+    <file>icon/pen-tool.svg</file>
+    <file>icon/percent — копия — копия.svg</file>
+    <file>icon/percent — копия.svg</file>
+    <file>icon/percent.svg</file>
+    <file>icon/phone — копия — копия.svg</file>
+    <file>icon/phone — копия.svg</file>
+    <file>icon/phone.svg</file>
+    <file>icon/phone-call — копия — копия.svg</file>
+    <file>icon/phone-call — копия.svg</file>
+    <file>icon/phone-call.svg</file>
+    <file>icon/phone-forwarded — копия — копия.svg</file>
+    <file>icon/phone-forwarded — копия.svg</file>
+    <file>icon/phone-forwarded.svg</file>
+    <file>icon/phone-incoming — копия — копия.svg</file>
+    <file>icon/phone-incoming — копия.svg</file>
+    <file>icon/phone-incoming.svg</file>
+    <file>icon/phone-missed — копия — копия.svg</file>
+    <file>icon/phone-missed — копия.svg</file>
+    <file>icon/phone-missed.svg</file>
+    <file>icon/phone-off — копия — копия.svg</file>
+    <file>icon/phone-off — копия.svg</file>
+    <file>icon/phone-off.svg</file>
+    <file>icon/phone-outgoing — копия — копия.svg</file>
+    <file>icon/phone-outgoing — копия.svg</file>
+    <file>icon/phone-outgoing.svg</file>
+    <file>icon/pie-chart — копия — копия.svg</file>
+    <file>icon/pie-chart — копия.svg</file>
+    <file>icon/pie-chart.svg</file>
+    <file>icon/play — копия — копия.svg</file>
+    <file>icon/play — копия.svg</file>
+    <file>icon/play.svg</file>
+    <file>icon/play-circle — копия — копия.svg</file>
+    <file>icon/play-circle — копия.svg</file>
+    <file>icon/play-circle.svg</file>
+    <file>icon/plus — копия — копия.svg</file>
+    <file>icon/plus — копия.svg</file>
+    <file>icon/plus.svg</file>
+    <file>icon/plus-circle — копия — копия.svg</file>
+    <file>icon/plus-circle — копия.svg</file>
+    <file>icon/plus-circle.svg</file>
+    <file>icon/plus-square — копия — копия.svg</file>
+    <file>icon/plus-square — копия.svg</file>
+    <file>icon/plus-square.svg</file>
+    <file>icon/pocket — копия — копия.svg</file>
+    <file>icon/pocket — копия.svg</file>
+    <file>icon/pocket.svg</file>
+    <file>icon/power — копия — копия.svg</file>
+    <file>icon/power — копия.svg</file>
+    <file>icon/power.svg</file>
+    <file>icon/printer — копия — копия.svg</file>
+    <file>icon/printer — копия.svg</file>
+    <file>icon/printer.svg</file>
+    <file>icon/radio — копия — копия.svg</file>
+    <file>icon/radio — копия.svg</file>
+    <file>icon/radio.svg</file>
+    <file>icon/refresh-ccw — копия — копия.svg</file>
+    <file>icon/refresh-ccw — копия.svg</file>
+    <file>icon/refresh-ccw.svg</file>
+    <file>icon/refresh-cw — копия — копия.svg</file>
+    <file>icon/refresh-cw — копия.svg</file>
+    <file>icon/refresh-cw.svg</file>
+    <file>icon/repeat — копия — копия.svg</file>
+    <file>icon/repeat — копия.svg</file>
+    <file>icon/repeat.svg</file>
+    <file>icon/rewind — копия — копия.svg</file>
+    <file>icon/rewind — копия.svg</file>
+    <file>icon/rewind.svg</file>
+    <file>icon/rotate-ccw — копия — копия.svg</file>
+    <file>icon/rotate-ccw — копия.svg</file>
+    <file>icon/rotate-ccw.svg</file>
+    <file>icon/rotate-cw — копия — копия.svg</file>
+    <file>icon/rotate-cw — копия.svg</file>
+    <file>icon/rotate-cw.svg</file>
+    <file>icon/rss — копия — копия.svg</file>
+    <file>icon/rss — копия.svg</file>
+    <file>icon/rss.svg</file>
+    <file>icon/save — копия — копия.svg</file>
+    <file>icon/save — копия.svg</file>
+    <file>icon/save.svg</file>
+    <file>icon/scissors — копия — копия.svg</file>
+    <file>icon/scissors — копия.svg</file>
+    <file>icon/scissors.svg</file>
+    <file>icon/search — копия — копия.svg</file>
+    <file>icon/search — копия.svg</file>
+    <file>icon/search.svg</file>
+    <file>icon/send — копия — копия.svg</file>
+    <file>icon/send — копия.svg</file>
+    <file>icon/send.svg</file>
+    <file>icon/server — копия — копия.svg</file>
+    <file>icon/server — копия.svg</file>
+    <file>icon/server.svg</file>
+    <file>icon/settings — копия — копия.svg</file>
+    <file>icon/settings — копия.svg</file>
+    <file>icon/settings.svg</file>
+    <file>icon/share — копия — копия.svg</file>
+    <file>icon/share — копия.svg</file>
+    <file>icon/share.svg</file>
+    <file>icon/share-2 — копия — копия.svg</file>
+    <file>icon/share-2 — копия.svg</file>
+    <file>icon/share-2.svg</file>
+    <file>icon/shield — копия — копия.svg</file>
+    <file>icon/shield — копия.svg</file>
+    <file>icon/shield.svg</file>
+    <file>icon/shield-off — копия — копия.svg</file>
+    <file>icon/shield-off — копия.svg</file>
+    <file>icon/shield-off.svg</file>
+    <file>icon/shopping-bag — копия — копия.svg</file>
+    <file>icon/shopping-bag — копия.svg</file>
+    <file>icon/shopping-bag.svg</file>
+    <file>icon/shopping-cart — копия — копия.svg</file>
+    <file>icon/shopping-cart — копия.svg</file>
+    <file>icon/shopping-cart.svg</file>
+    <file>icon/shuffle — копия — копия.svg</file>
+    <file>icon/shuffle — копия.svg</file>
+    <file>icon/shuffle.svg</file>
+    <file>icon/sidebar — копия — копия.svg</file>
+    <file>icon/sidebar — копия.svg</file>
+    <file>icon/sidebar.svg</file>
+    <file>icon/skip-back — копия — копия.svg</file>
+    <file>icon/skip-back — копия.svg</file>
+    <file>icon/skip-back.svg</file>
+    <file>icon/skip-forward — копия — копия.svg</file>
+    <file>icon/skip-forward — копия.svg</file>
+    <file>icon/skip-forward.svg</file>
+    <file>icon/slack — копия — копия.svg</file>
+    <file>icon/slack — копия.svg</file>
+    <file>icon/slack.svg</file>
+    <file>icon/slash — копия — копия.svg</file>
+    <file>icon/slash — копия.svg</file>
+    <file>icon/slash.svg</file>
+    <file>icon/sliders — копия — копия.svg</file>
+    <file>icon/sliders — копия.svg</file>
+    <file>icon/sliders.svg</file>
+    <file>icon/smartphone — копия — копия.svg</file>
+    <file>icon/smartphone — копия.svg</file>
+    <file>icon/smartphone.svg</file>
+    <file>icon/smile — копия — копия.svg</file>
+    <file>icon/smile — копия.svg</file>
+    <file>icon/smile.svg</file>
+    <file>icon/speaker — копия — копия.svg</file>
+    <file>icon/speaker — копия.svg</file>
+    <file>icon/speaker.svg</file>
+    <file>icon/square — копия — копия.svg</file>
+    <file>icon/square — копия.svg</file>
+    <file>icon/square.svg</file>
+    <file>icon/star — копия — копия.svg</file>
+    <file>icon/star — копия.svg</file>
+    <file>icon/star.svg</file>
+    <file>icon/stop-circle — копия — копия.svg</file>
+    <file>icon/stop-circle — копия.svg</file>
+    <file>icon/stop-circle.svg</file>
+    <file>icon/sun — копия — копия.svg</file>
+    <file>icon/sun — копия.svg</file>
+    <file>icon/sun.svg</file>
+    <file>icon/sunrise — копия — копия.svg</file>
+    <file>icon/sunrise — копия.svg</file>
+    <file>icon/sunrise.svg</file>
+    <file>icon/sunset — копия — копия.svg</file>
+    <file>icon/sunset — копия.svg</file>
+    <file>icon/sunset.svg</file>
+    <file>icon/table — копия — копия.svg</file>
+    <file>icon/table — копия.svg</file>
+    <file>icon/table.svg</file>
+    <file>icon/tablet — копия — копия.svg</file>
+    <file>icon/tablet — копия.svg</file>
+    <file>icon/tablet.svg</file>
+    <file>icon/tag — копия — копия.svg</file>
+    <file>icon/tag — копия.svg</file>
+    <file>icon/tag.svg</file>
+    <file>icon/target — копия — копия.svg</file>
+    <file>icon/target — копия.svg</file>
+    <file>icon/target.svg</file>
+    <file>icon/terminal — копия — копия.svg</file>
+    <file>icon/terminal — копия.svg</file>
+    <file>icon/terminal.svg</file>
+    <file>icon/thermometer — копия — копия.svg</file>
+    <file>icon/thermometer — копия.svg</file>
+    <file>icon/thermometer.svg</file>
+    <file>icon/thumbs-down — копия — копия.svg</file>
+    <file>icon/thumbs-down — копия.svg</file>
+    <file>icon/thumbs-down.svg</file>
+    <file>icon/thumbs-up — копия — копия.svg</file>
+    <file>icon/thumbs-up — копия.svg</file>
+    <file>icon/thumbs-up.svg</file>
+    <file>icon/toggle-left — копия — копия.svg</file>
+    <file>icon/toggle-left — копия.svg</file>
+    <file>icon/toggle-left.svg</file>
+    <file>icon/toggle-right — копия — копия.svg</file>
+    <file>icon/toggle-right — копия.svg</file>
+    <file>icon/toggle-right.svg</file>
+    <file>icon/tool — копия — копия.svg</file>
+    <file>icon/tool — копия.svg</file>
+    <file>icon/tool.svg</file>
+    <file>icon/trash — копия — копия.svg</file>
+    <file>icon/trash — копия.svg</file>
+    <file>icon/trash.svg</file>
+    <file>icon/trash-2 — копия — копия.svg</file>
+    <file>icon/trash-2 — копия.svg</file>
+    <file>icon/trash-2.svg</file>
+    <file>icon/trello — копия — копия.svg</file>
+    <file>icon/trello — копия.svg</file>
+    <file>icon/trello.svg</file>
+    <file>icon/trending-down — копия — копия.svg</file>
+    <file>icon/trending-down — копия.svg</file>
+    <file>icon/trending-down.svg</file>
+    <file>icon/trending-up — копия — копия.svg</file>
+    <file>icon/trending-up — копия.svg</file>
+    <file>icon/trending-up.svg</file>
+    <file>icon/triangle — копия — копия.svg</file>
+    <file>icon/triangle — копия.svg</file>
+    <file>icon/triangle.svg</file>
+    <file>icon/truck — копия — копия.svg</file>
+    <file>icon/truck — копия.svg</file>
+    <file>icon/truck.svg</file>
+    <file>icon/tv — копия — копия.svg</file>
+    <file>icon/tv — копия.svg</file>
+    <file>icon/tv.svg</file>
+    <file>icon/twitch — копия — копия.svg</file>
+    <file>icon/twitch — копия.svg</file>
+    <file>icon/twitch.svg</file>
+    <file>icon/twitter — копия — копия.svg</file>
+    <file>icon/twitter — копия.svg</file>
+    <file>icon/twitter.svg</file>
+    <file>icon/type — копия — копия.svg</file>
+    <file>icon/type — копия.svg</file>
+    <file>icon/type.svg</file>
+    <file>icon/umbrella — копия — копия.svg</file>
+    <file>icon/umbrella — копия.svg</file>
+    <file>icon/umbrella.svg</file>
+    <file>icon/underline — копия — копия.svg</file>
+    <file>icon/underline — копия.svg</file>
+    <file>icon/underline.svg</file>
+    <file>icon/unlock — копия — копия.svg</file>
+    <file>icon/unlock — копия.svg</file>
+    <file>icon/unlock.svg</file>
+    <file>icon/upload — копия — копия.svg</file>
+    <file>icon/upload — копия.svg</file>
+    <file>icon/upload.svg</file>
+    <file>icon/upload-cloud — копия — копия.svg</file>
+    <file>icon/upload-cloud — копия.svg</file>
+    <file>icon/upload-cloud.svg</file>
+    <file>icon/user — копия — копия.svg</file>
+    <file>icon/user — копия.svg</file>
+    <file>icon/user.svg</file>
+    <file>icon/user-check — копия — копия.svg</file>
+    <file>icon/user-check — копия.svg</file>
+    <file>icon/user-check.svg</file>
+    <file>icon/user-minus — копия — копия.svg</file>
+    <file>icon/user-minus — копия.svg</file>
+    <file>icon/user-minus.svg</file>
+    <file>icon/user-plus — копия — копия.svg</file>
+    <file>icon/user-plus — копия.svg</file>
+    <file>icon/user-plus.svg</file>
+    <file>icon/users — копия — копия.svg</file>
+    <file>icon/users — копия.svg</file>
+    <file>icon/users.svg</file>
+    <file>icon/user-x — копия — копия.svg</file>
+    <file>icon/user-x — копия.svg</file>
+    <file>icon/user-x.svg</file>
+    <file>icon/video — копия — копия.svg</file>
+    <file>icon/video — копия.svg</file>
+    <file>icon/video.svg</file>
+    <file>icon/video-off — копия — копия.svg</file>
+    <file>icon/video-off — копия.svg</file>
+    <file>icon/video-off.svg</file>
+    <file>icon/voicemail — копия — копия.svg</file>
+    <file>icon/voicemail — копия.svg</file>
+    <file>icon/voicemail.svg</file>
+    <file>icon/volume — копия — копия.svg</file>
+    <file>icon/volume — копия.svg</file>
+    <file>icon/volume.svg</file>
+    <file>icon/volume-1 — копия — копия.svg</file>
+    <file>icon/volume-1 — копия.svg</file>
+    <file>icon/volume-1.svg</file>
+    <file>icon/volume-2 — копия — копия.svg</file>
+    <file>icon/volume-2 — копия.svg</file>
+    <file>icon/volume-2.svg</file>
+    <file>icon/volume-x — копия — копия.svg</file>
+    <file>icon/volume-x — копия.svg</file>
+    <file>icon/volume-x.svg</file>
+    <file>icon/watch — копия — копия.svg</file>
+    <file>icon/watch — копия.svg</file>
+    <file>icon/watch.svg</file>
+    <file>icon/wifi — копия — копия.svg</file>
+    <file>icon/wifi — копия.svg</file>
+    <file>icon/wifi.svg</file>
+    <file>icon/wifi-off — копия — копия.svg</file>
+    <file>icon/wifi-off — копия.svg</file>
+    <file>icon/wifi-off.svg</file>
+    <file>icon/wind — копия — копия.svg</file>
+    <file>icon/wind — копия.svg</file>
+    <file>icon/wind.svg</file>
+    <file>icon/x — копия — копия.svg</file>
+    <file>icon/x — копия.svg</file>
+    <file>icon/x.svg</file>
+    <file>icon/x-circle — копия — копия.svg</file>
+    <file>icon/x-circle — копия.svg</file>
+    <file>icon/x-circle.svg</file>
+    <file>icon/x-octagon — копия — копия.svg</file>
+    <file>icon/x-octagon — копия.svg</file>
+    <file>icon/x-octagon.svg</file>
+    <file>icon/x-square — копия — копия.svg</file>
+    <file>icon/x-square — копия.svg</file>
+    <file>icon/x-square.svg</file>
+    <file>icon/youtube — копия — копия.svg</file>
+    <file>icon/youtube — копия.svg</file>
+    <file>icon/youtube.svg</file>
+    <file>icon/zap — копия — копия.svg</file>
+    <file>icon/zap — копия.svg</file>
+    <file>icon/zap.svg</file>
+    <file>icon/zap-off — копия — копия.svg</file>
+    <file>icon/zap-off — копия.svg</file>
+    <file>icon/zap-off.svg</file>
+    <file>icon/zoom-in — копия — копия.svg</file>
+    <file>icon/zoom-in — копия.svg</file>
+    <file>icon/zoom-in.svg</file>
+    <file>icon/zoom-out — копия — копия.svg</file>
+    <file>icon/zoom-out — копия.svg</file>
+    <file>icon/zoom-out.svg</file>
+  </qresource>
+  <qresource prefix="image">
+    <file>logo/logo.png</file>
+    <file>logo/лого_капля.ico</file>
+    <file>logo/лого_капля.png</file>
+    <file>logo/лого_капля.svg</file>
+    <file>logo/лого_маленькая.png</file>
+  </qresource>
+</RCC>
