@@ -112,11 +112,11 @@ class ProductMatchingService:
             return f"{s} {unit_text}"
 
         return f"{s} {p} {unit_text}"
-
+    
     @staticmethod
     def build_product_family_from_name(product_name: str, pack_value: object) -> str:
         s_name = clean_multi_spaces(product_name).upper()
-        s_pack = clean_multi_spaces(pack_value)
+        s_pack = clean_multi_spaces(pack_value).replace(",", ".")
 
         if not s_name:
             raise ValueError("Не заполнен ProductName.")
@@ -124,17 +124,16 @@ class ProductMatchingService:
         if not s_pack:
             raise ValueError("Не заполнен Pack.")
 
-        marker_l = f" {s_pack}L"
-        marker_kg = f" {s_pack}KG"
+        pattern = rf"^(.*)\s{re.escape(s_pack)}\s*(L|KG)$"
+        match = re.search(pattern, s_name, flags=re.IGNORECASE)
 
-        pos = s_name.find(marker_l)
-        if pos == -1:
-            pos = s_name.find(marker_kg)
+        if not match:
+            raise ValueError(
+                f"Для '{s_name}' проверь упаковку в названии. "
+                f"Ожидается формат с пробелом перед упаковкой, например: '... {s_pack}L' или '... {s_pack}KG'."
+            )
 
-        if pos == -1:
-            raise ValueError(f"Проверьте корректность упаковки {s_name}")
-
-        return s_name[:pos]
+        return match.group(1).strip()
 
     # =========================================================
     # Search helpers
@@ -294,6 +293,98 @@ class ProductMatchingService:
                 return link.product
 
         return None
+
+
+    def find_is_product(
+        self,
+        source_article: object,
+        source_product_name: object,
+    ) -> Optional[Product]:
+        article = clean_multi_spaces(source_article)
+        name = clean_multi_spaces(source_product_name)
+
+        if article:
+            link = self._get_article_link_by_exact_article(article)
+            if link and link.product:
+                return link.product
+
+        if name:
+            exact = self._get_product_by_exact_name(name)
+            if exact:
+                return exact
+
+            link = self._get_article_link_by_exact_name(name)
+            if link and link.product:
+                return link.product
+
+            product = self.find_by_normalized_product_name(name)
+            if product:
+                return product
+
+        return None
+
+
+    @staticmethod
+    def _format_pack_for_message(pack_value: object) -> str:
+        if pack_value is None:
+            return ""
+        s = str(pack_value).strip()
+        return s.replace(".", ",")
+
+    @classmethod
+    def validate_new_product_fields(
+        cls,
+        *,
+        product_name: object,
+        brand: object,
+        pack: object,
+        is_excise: object,
+    ) -> None:
+        clean_name = clean_multi_spaces(product_name)
+        clean_brand = clean_multi_spaces(brand)
+        pack_num = parse_loose_number(pack)
+
+        if not clean_name:
+            raise ValueError("Не заполнено название нового продукта.")
+
+        if is_excise is None:
+            raise ValueError(f"Для '{clean_name}' не заполнено поле 'Акциз'.")
+
+        if not clean_brand:
+            raise ValueError(f"Для '{clean_name}' не заполнено поле 'Бренд'.")
+
+        if pack is None or str(pack).strip() == "":
+            raise ValueError(f"Для '{clean_name}' не заполнено поле 'Упаковка'.")
+
+        if pack_num is None:
+            raise ValueError(
+                f"Для '{clean_name}' поле 'Упаковка' должно быть числом."
+            )
+
+        cls.validate_product_name_pack_format(
+            product_name=clean_name,
+            pack_value=pack_num,
+        )
+
+    @classmethod
+    def validate_product_name_pack_format(cls, *, product_name: str, pack_value: object) -> None:
+        s_name = clean_multi_spaces(product_name).upper()
+        s_pack = cls._normalize_pack_text(pack_value)
+
+        if not s_name:
+            raise ValueError("Не заполнено название нового продукта.")
+
+        if not s_pack:
+            raise ValueError(f"Для '{s_name}' не заполнено поле 'Упаковка'.")
+
+        # ВАЖНО: ожидаем именно пробел перед упаковкой
+        pattern = rf"\s{re.escape(s_pack)}\s*(L|KG)$"
+
+        if not re.search(pattern, s_name, flags=re.IGNORECASE):
+            raise ValueError(
+                f"Для '{s_name}' проверь упаковку в названии. "
+                f"Ожидается формат с пробелом перед упаковкой, например: '... {s_pack}L' или '... {s_pack}KG'."
+            )
 
     # =========================================================
     # Create / link methods

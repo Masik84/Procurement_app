@@ -19,6 +19,8 @@ from PySide6.QtUiTools import QUiLoader
 from app.db.models import Product
 from app.db.db import SessionLocal
 
+from app.ui.table_style import setup_data_table
+
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 PRODUCTS_UI = BASE_DIR / "app" / "ui" / "windows" / "products.ui"
@@ -58,6 +60,7 @@ class ProductsPage(QWidget):
 
         self.columns = ["id", "name", "brand", "pack", "is_excise", "family"]
         self.headers = ["id", "Product name", "Brand", "Pack", "Excise duty", "Product Family"]
+        self.header_to_column = dict(zip(self.headers, self.columns))
         self.text_columns = {"name", "brand", "family"}
 
         self.setup_ui()
@@ -66,48 +69,9 @@ class ProductsPage(QWidget):
 
     def setup_ui(self):
         self.table = self.ui.table
-
-        self.table.setSelectionBehavior(QTableWidget.SelectItems)
-        self.table.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.EditKeyPressed)
-        self.table.setAlternatingRowColors(True)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSortingEnabled(True)
-        self.table.setWordWrap(False)
-        self.table.setTextElideMode(Qt.TextElideMode.ElideRight)
-
+        setup_data_table(self.table, sorting=True)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
-
-        self.table.setStyleSheet("""
-            QTableWidget {
-                alternate-background-color: #f0f0f0;
-                selection-background-color: #3daee9;
-                selection-color: black;
-            }
-            QTableWidget::item {
-                padding: 3px;
-            }
-            QTableWidget::item:editable {
-                background-color: #fff5cc;
-                border: 1px solid #ffcc66;
-            }
-            QTableWidget::item:focus {
-                background-color: #f28223;
-                border: 1px solid #ff9900;
-                padding: 1px;
-            }
-            QTableWidget QLineEdit {
-                background-color: #fff2cc;
-                color: black;
-                border: 1px solid #ff9900;
-                padding: 1px;
-            }
-        """)
-
-        self.table.setTabKeyNavigation(True)
-        self.table.setCornerButtonEnabled(False)
 
     def setup_connections(self):
         self.table.itemChanged.connect(self.on_item_changed)
@@ -142,10 +106,10 @@ class ProductsPage(QWidget):
         try:
             row = item.row()
             column = item.column()
-            header = self.table.horizontalHeaderItem(column).text()
+            header_item = self.table.horizontalHeaderItem(column)
             id_item = self.table.item(row, 0)
 
-            if not id_item:
+            if not header_item or not id_item:
                 return
 
             row_id_text = id_item.text().strip()
@@ -153,8 +117,10 @@ class ProductsPage(QWidget):
                 return
 
             row_id = int(row_id_text)
+            header = header_item.text()
+            column_name = self.header_to_column.get(header)
 
-            if header == "id":
+            if not column_name or column_name == "id":
                 return
 
             new_value = item.text()
@@ -162,7 +128,7 @@ class ProductsPage(QWidget):
             if row_id not in self._pending_changes:
                 self._pending_changes[row_id] = {}
 
-            self._pending_changes[row_id][header] = new_value
+            self._pending_changes[row_id][column_name] = new_value
 
         except Exception as e:
             self.show_error_message(f"Ошибка: {str(e)}")
@@ -633,17 +599,6 @@ class ProductsPage(QWidget):
 
     def show_message(self, text):
         self.ui.label_msg.setText(text)
-        self.ui.label_msg.setStyleSheet("""
-            QLabel {
-                background-color: #CCFF99;
-                color: #12501A;
-                border: 2px solid #12501A;
-                border-radius: 5px;
-                padding: 8px;
-                font: 10pt "Tahoma";
-                margin: 2px;
-            }
-        """)
         self.ui.label_msg.setVisible(True)
 
     def clear_message(self):

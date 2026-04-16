@@ -215,14 +215,12 @@ class SupplierPriceImportService:
             if row.new_product_name is None or not str(row.new_product_name).strip():
                 continue
 
-            if row.new_is_excise is None:
-                raise ValueError(f"Для нового продукта '{row.new_product_name}' не заполнено поле new_is_excise.")
-
-            if row.new_brand is None or not str(row.new_brand).strip():
-                raise ValueError(f"Для нового продукта '{row.new_product_name}' не заполнен new_brand.")
-
-            if row.new_pack is None:
-                raise ValueError(f"Для нового продукта '{row.new_product_name}' не заполнен new_pack.")
+            self.product_matching_service.validate_new_product_fields(
+                product_name=row.new_product_name,
+                brand=row.new_brand,
+                pack=row.new_pack,
+                is_excise=row.new_is_excise,
+            )
 
     def create_products_from_temp(self, batch_id: str, imported_by: str) -> int:
         rows = (
@@ -280,6 +278,32 @@ class SupplierPriceImportService:
         self.session.flush()
         return processed_count
 
+    def _normalize_supplier_price_for_calc(
+        self,
+        *,
+        supplier_id: int,
+        raw_price: object,
+        rf_prices_include_vat: bool,
+    ) -> Decimal | None:
+        if raw_price is None:
+            return None
+
+        price_value = self._to_decimal(raw_price)
+        if price_value == Decimal("0"):
+            return Decimal("0")
+
+        supplier = self.cost_calculation_service.get_supplier(supplier_id)
+        if not supplier.is_rf or not rf_prices_include_vat:
+            return price_value
+
+        fixed = self.cost_calculation_service.get_fixed_costs()
+        vat = self._to_decimal(fixed.vat)
+
+        if vat <= Decimal("-1"):
+            raise ValueError("Некорректное значение НДС в fixed_costs.")
+
+        return self._round4(price_value / (Decimal("1") + vat))
+
     def fill_price_from_price_pack(self, batch_id: str, imported_by: str) -> int:
         rows = (
             self.session.query(TempPriceImport)
@@ -325,10 +349,16 @@ class SupplierPriceImportService:
         saved_count = 0
 
         for row in rows:
+            normalized_price = self._normalize_supplier_price_for_calc(
+                supplier_id=row.supplier_id,
+                raw_price=row.price,
+                rf_prices_include_vat=rf_prices_include_vat,
+            )
+
             self.price_repository.save_supplier_price(
                 supplier_id=row.supplier_id,
                 product_id=row.selected_product_id,
-                price=row.price,
+                price=normalized_price,
                 currency_code=currency_code,
                 price_date=row.import_date,
             )
@@ -355,10 +385,16 @@ class SupplierPriceImportService:
         saved_count = 0
 
         for row in rows:
+            normalized_price = self._normalize_supplier_price_for_calc(
+                supplier_id=row.supplier_id,
+                raw_price=row.price,
+                rf_prices_include_vat=rf_prices_include_vat,
+            )
+
             calc_result = self.cost_calculation_service.calculate_supplier_costs(
                 supplier_id=row.supplier_id,
                 product_id=row.selected_product_id,
-                supplier_price=self._to_decimal(row.price),
+                supplier_price=self._to_decimal(normalized_price),
                 fx_rate=self._to_decimal(fx_rate),
                 currency_code=currency_code,
             )
@@ -406,6 +442,7 @@ class SupplierPriceImportService:
         fx_rate: Decimal,
         import_date: Optional[datetime] = None,
         replace_existing_batch_rows: bool = True,
+        rf_prices_include_vat: bool = False,
     ) -> dict:
         imported_count = self.import_rows_to_temp(
             supplier_id=supplier_id,

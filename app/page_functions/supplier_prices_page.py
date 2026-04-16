@@ -36,6 +36,7 @@ from app.services.supplier_price_import import SupplierPriceImportService
 from app.utils.batch import get_current_username
 from app.utils.parsers import parse_flexible_date, parse_loose_number
 from app.utils.text import clean_multi_spaces
+from app.ui.table_style import setup_data_table
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -108,46 +109,9 @@ class SupplierPricesPage(QWidget):
 
     def setup_ui(self):
         self.table = self.ui.table
-        self.table.setSelectionBehavior(QTableWidget.SelectItems)
-        self.table.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.EditKeyPressed)
-        self.table.setAlternatingRowColors(True)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        setup_data_table(self.table, sorting=False)
         self.table.horizontalHeader().setSectionsMovable(False)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSortingEnabled(False)
-        self.table.setWordWrap(False)
-        self.table.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table.setTabKeyNavigation(True)
-        self.table.setCornerButtonEnabled(False)
-        self.table.setStyleSheet(
-            """
-            QTableWidget {
-                alternate-background-color: #f0f0f0;
-                selection-background-color: #3daee9;
-                selection-color: black;
-            }
-            QTableWidget::item {
-                padding: 3px;
-            }
-            QTableWidget::item:editable {
-                background-color: #fff5cc;
-                border: 1px solid #ffcc66;
-            }
-            QTableWidget::item:focus {
-                background-color: #f28223;
-                border: 1px solid #ff9900;
-                padding: 1px;
-            }
-            QTableWidget QLineEdit {
-                background-color: #fff2cc;
-                color: black;
-                border: 1px solid #ff9900;
-                padding: 1px;
-            }
-            """
-        )
 
         self.ui.label_msg.setText("Сообщений нет")
         self.ui.line_NewSupplier.setEnabled(False)
@@ -157,10 +121,10 @@ class SupplierPricesPage(QWidget):
         self.ui.date_Price.setDisplayFormat("dd.MM.yyyy")
         self.ui.date_Price.setSpecialValueText("")
 
-        self._setup_number_field(self.ui.line_ExchangeRate, "Формат: 82,0000",)
-        self._setup_number_field(self.ui.line_Transport, "Формат: 1,2500",)
-        self._setup_number_field(self.ui.line_Reexport, "Формат: 3,5% / 0,24%",)
-        self._setup_number_field(self.ui.line_FXMarkup, "Формат: 3,5% / 0,24%",)
+        self._setup_number_field(self.ui.line_ExchangeRate, "Формат: 82,0000")
+        self._setup_number_field(self.ui.line_Transport, "Формат: 1,2500")
+        self._setup_number_field(self.ui.line_Reexport, "Формат: 3,5% / 0,24%")
+        self._setup_number_field(self.ui.line_FXMarkup, "Формат: 3,5% / 0,24%")
 
     def setup_connections(self):
         self.table.itemChanged.connect(self.on_item_changed)

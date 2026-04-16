@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 ################################################################################
-## Form generated from reading UI file 'main_windowBqHDWC.ui'
+## Form generated from reading UI file 'main_windowfJABGB.ui'
 ##
 ## Created by: Qt User Interface Compiler version 6.11.0
 ##
@@ -54,7 +54,7 @@ class Ui_MainWindow(object):
 "\n"
 "#main_widget {\n"
 "	background-color: #f8f8f2; \n"
-"	border: 3px solid #f28223;\n"
+"	border: none;\n"
 "}\n"
 "\n"
 "#search_widget {\n"
@@ -79,9 +79,9 @@ class Ui_MainWindow(object):
 "\n"
 "QPushButton {\n"
 "	border: 2px solid #f09d54;\n"
-"	border-radius: 5px"
-                        ";\n"
-"	background-color: #f8f8f2;\n"
+"	border-radius: 5px;\n"
+"	backgr"
+                        "ound-color: #f8f8f2;\n"
 "	color: #262626;\n"
 "	font: 10pt \"Tahoma\";\n"
 "}\n"
@@ -135,9 +135,9 @@ class Ui_MainWindow(object):
 "	border: 3px solid #f28223;\n"
 "	border-radius: 5px;\n"
 "	background-color: #ffb472;\n"
-"	color"
-                        ": #262626;\n"
-"}\n"
+"	color: #262626;\n"
+""
+                        "}\n"
 "\n"
 "#toolBox::tab {\n"
 "	padding-left:5px;\n"
@@ -172,10 +172,10 @@ class Ui_MainWindow(object):
 "}\n"
 "\n"
 "QTabBar::tab {\n"
-"    background-color: #ffd4af;   /* \u043a\u0430\u043a \u0448\u0430\u043f\u043a\u0430 \u0442\u0430\u0431\u043b\u0438\u0446\u044b */\n"
+"    background-color: #ffd4af;\n"
 "    color: #262626;\n"
-"    padding: 6px 12px;\n"
-"    min-height: 24px;\n"
+"    padding: 2px 10px;\n"
+"    min-height: 18px;\n"
 "    border: 1px solid #f8994a;\n"
 "    border-bottom: none;\n"
 "    margin-right: 2px;\n"
@@ -183,14 +183,14 @@ class Ui_MainWindow(object):
 "\n"
 "QTabBar::tab:selected {\n"
 "    background-color: #f28223;\n"
-"    c"
-                        "olor: #ffffff;\n"
+"    color: #ffffff;\n"
 "}\n"
 "\n"
 "QTabBar::tab:!selected {\n"
 "    background-color: #ffd4af;\n"
 "    color: #262626;\n"
-"}\n"
+""
+                        "}\n"
 "\n"
 "QTabBar::tab:hover:!selected {\n"
 "    background-color: #f6c294;\n"
@@ -199,7 +199,7 @@ class Ui_MainWindow(object):
         self.appMargins = QGridLayout(self.centralwidget)
         self.appMargins.setSpacing(0)
         self.appMargins.setObjectName(u"appMargins")
-        self.appMargins.setContentsMargins(10, 10, 10, 10)
+        self.appMargins.setContentsMargins(0, 0, 0, 0)
         self.splitter = QSplitter(self.centralwidget)
         self.splitter.setObjectName(u"splitter")
         self.splitter.setOrientation(Qt.Orientation.Horizontal)
@@ -225,7 +225,7 @@ class Ui_MainWindow(object):
         self.toolBox.setLineWidth(2)
         self.general_page = QWidget()
         self.general_page.setObjectName(u"general_page")
-        self.general_page.setGeometry(QRect(0, 0, 236, 773))
+        self.general_page.setGeometry(QRect(0, 0, 236, 793))
         self.verticalLayout = QVBoxLayout(self.general_page)
         self.verticalLayout.setSpacing(10)
         self.verticalLayout.setObjectName(u"verticalLayout")
@@ -256,7 +256,7 @@ class Ui_MainWindow(object):
         self.toolBox.addItem(self.general_page, icon1, u"General")
         self.updater_page = QWidget()
         self.updater_page.setObjectName(u"updater_page")
-        self.updater_page.setGeometry(QRect(0, 0, 236, 773))
+        self.updater_page.setGeometry(QRect(0, 0, 236, 793))
         self.verticalLayout_3 = QVBoxLayout(self.updater_page)
         self.verticalLayout_3.setSpacing(10)
         self.verticalLayout_3.setObjectName(u"verticalLayout_3")
@@ -308,6 +308,16 @@ class Ui_MainWindow(object):
 
         self.verticalLayout_3.addWidget(self.btn_PackTypes)
 
+        self.btn_PriceHistory = QPushButton(self.updater_page)
+        self.btn_PriceHistory.setObjectName(u"btn_PriceHistory")
+
+        self.verticalLayout_3.addWidget(self.btn_PriceHistory)
+
+        self.btn_ProdSearchDB = QPushButton(self.updater_page)
+        self.btn_ProdSearchDB.setObjectName(u"btn_ProdSearchDB")
+
+        self.verticalLayout_3.addWidget(self.btn_ProdSearchDB)
+
         self.verticalSpacer_3 = QSpacerItem(20, 388, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
 
         self.verticalLayout_3.addItem(self.verticalSpacer_3)
@@ -317,7 +327,7 @@ class Ui_MainWindow(object):
         self.toolBox.addItem(self.updater_page, icon2, u"\u0421\u043f\u0440\u0430\u0432\u043e\u0447\u043d\u0438\u043a\u0438")
         self.docs_page = QWidget()
         self.docs_page.setObjectName(u"docs_page")
-        self.docs_page.setGeometry(QRect(0, 0, 236, 773))
+        self.docs_page.setGeometry(QRect(0, 0, 236, 793))
         self.docs_page.setStyleSheet(u"")
         self.verticalLayout_2 = QVBoxLayout(self.docs_page)
         self.verticalLayout_2.setSpacing(10)
@@ -338,10 +348,10 @@ class Ui_MainWindow(object):
 
         self.verticalLayout_2.addWidget(self.btn_Stock)
 
-        self.btn_QuickCalc = QPushButton(self.docs_page)
-        self.btn_QuickCalc.setObjectName(u"btn_QuickCalc")
+        self.btn_QuickCostCalc = QPushButton(self.docs_page)
+        self.btn_QuickCostCalc.setObjectName(u"btn_QuickCostCalc")
 
-        self.verticalLayout_2.addWidget(self.btn_QuickCalc)
+        self.verticalLayout_2.addWidget(self.btn_QuickCostCalc)
 
         self.verticalSpacer_2 = QSpacerItem(20, 350, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
 
@@ -352,7 +362,7 @@ class Ui_MainWindow(object):
         self.toolBox.addItem(self.docs_page, icon3, u"\u0420\u0430\u0441\u0447\u0435\u0442\u044b/\u041e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435")
         self.bonus_page = QWidget()
         self.bonus_page.setObjectName(u"bonus_page")
-        self.bonus_page.setGeometry(QRect(0, 0, 236, 773))
+        self.bonus_page.setGeometry(QRect(0, 0, 236, 793))
         font2 = QFont()
         font2.setFamilies([u"Tahoma"])
         self.bonus_page.setFont(font2)
@@ -360,19 +370,12 @@ class Ui_MainWindow(object):
         self.verticalLayout_4.setSpacing(10)
         self.verticalLayout_4.setObjectName(u"verticalLayout_4")
         self.verticalLayout_4.setContentsMargins(5, 0, 5, 5)
-        self.btn_Scheme = QPushButton(self.bonus_page)
-        self.btn_Scheme.setObjectName(u"btn_Scheme")
-        self.btn_Scheme.setMinimumSize(QSize(0, 30))
-        self.btn_Scheme.setFont(font1)
+        self.btn_PriceReports = QPushButton(self.bonus_page)
+        self.btn_PriceReports.setObjectName(u"btn_PriceReports")
+        self.btn_PriceReports.setMinimumSize(QSize(0, 30))
+        self.btn_PriceReports.setFont(font1)
 
-        self.verticalLayout_4.addWidget(self.btn_Scheme)
-
-        self.btn_Plan = QPushButton(self.bonus_page)
-        self.btn_Plan.setObjectName(u"btn_Plan")
-        self.btn_Plan.setMinimumSize(QSize(0, 30))
-        self.btn_Plan.setFont(font1)
-
-        self.verticalLayout_4.addWidget(self.btn_Plan)
+        self.verticalLayout_4.addWidget(self.btn_PriceReports)
 
         self.verticalSpacer_4 = QSpacerItem(20, 412, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
 
@@ -390,9 +393,11 @@ class Ui_MainWindow(object):
         self.gridLayout_2 = QGridLayout(self.main_widget)
         self.gridLayout_2.setSpacing(0)
         self.gridLayout_2.setObjectName(u"gridLayout_2")
-        self.gridLayout_2.setContentsMargins(0, 0, 6, 0)
+        self.gridLayout_2.setContentsMargins(0, 0, 0, 0)
         self.search_widget = QWidget(self.main_widget)
         self.search_widget.setObjectName(u"search_widget")
+        self.search_widget.setMinimumSize(QSize(0, 0))
+        self.search_widget.setMaximumSize(QSize(16777215, 55))
         self.search_widget.setStyleSheet(u"")
         self.horizontalLayout = QHBoxLayout(self.search_widget)
         self.horizontalLayout.setSpacing(0)
@@ -400,7 +405,7 @@ class Ui_MainWindow(object):
         self.horizontalLayout.setContentsMargins(10, 0, 0, 0)
         self.toggleButton = QPushButton(self.search_widget)
         self.toggleButton.setObjectName(u"toggleButton")
-        self.toggleButton.setMinimumSize(QSize(40, 40))
+        self.toggleButton.setMinimumSize(QSize(28, 28))
         icon5 = QIcon()
         icon5.addFile(u":/icon/icon/chevrons-left \u2014 \u043a\u043e\u043f\u0438\u044f \u2014 \u043a\u043e\u043f\u0438\u044f.svg", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         self.toggleButton.setIcon(icon5)
@@ -413,22 +418,18 @@ class Ui_MainWindow(object):
 
         self.horizontalLayout.addItem(self.horizontalSpacer)
 
-        self.widget = QWidget(self.search_widget)
-        self.widget.setObjectName(u"widget")
-        self.widget.setMinimumSize(QSize(70, 0))
-        self.verticalLayout_5 = QVBoxLayout(self.widget)
-        self.verticalLayout_5.setObjectName(u"verticalLayout_5")
-        self.label = QLabel(self.widget)
+        self.label = QLabel(self.search_widget)
         self.label.setObjectName(u"label")
-        self.label.setMinimumSize(QSize(50, 50))
-        self.label.setMaximumSize(QSize(50, 60))
+        self.label.setMinimumSize(QSize(0, 0))
+        self.label.setMaximumSize(QSize(40, 45))
         self.label.setPixmap(QPixmap(u":/image/logo/\u043b\u043e\u0433\u043e_\u043a\u0430\u043f\u043b\u044f.ico"))
         self.label.setScaledContents(True)
 
-        self.verticalLayout_5.addWidget(self.label)
+        self.horizontalLayout.addWidget(self.label)
 
+        self.horizontalSpacer_3 = QSpacerItem(20, 20, QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Minimum)
 
-        self.horizontalLayout.addWidget(self.widget)
+        self.horizontalLayout.addItem(self.horizontalSpacer_3)
 
         self.label_prog_name = QLabel(self.search_widget)
         self.label_prog_name.setObjectName(u"label_prog_name")
@@ -441,7 +442,7 @@ class Ui_MainWindow(object):
         self.label_prog_name.setFont(font3)
         self.label_prog_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.horizontalLayout.addWidget(self.label_prog_name, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.horizontalLayout.addWidget(self.label_prog_name)
 
         self.horizontalSpacer_2 = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
 
@@ -573,14 +574,15 @@ class Ui_MainWindow(object):
         self.btn_FixedCosts.setText(QCoreApplication.translate("MainWindow", u"Tax / Fees", None))
         self.btn_MarkingRates.setText(QCoreApplication.translate("MainWindow", u"\u041c\u0430\u0440\u043a\u0438\u0440\u043e\u0432\u043a\u0430", None))
         self.btn_PackTypes.setText(QCoreApplication.translate("MainWindow", u"\u0423\u043f\u0430\u043a\u043e\u0432\u043a\u0438", None))
+        self.btn_PriceHistory.setText(QCoreApplication.translate("MainWindow", u"\u041f\u043e\u0441\u043b\u0435\u0434\u043d\u0438\u0435 \u0446\u0435\u043d\u044b \u0438 \u0418\u0441\u0442\u043e\u0440\u0438\u044f", None))
+        self.btn_ProdSearchDB.setText(QCoreApplication.translate("MainWindow", u"\u041f\u043e\u0434\u0431\u043e\u0440 \u041f\u0440\u043e\u0434\u0443\u043a\u0442\u043e\u0432 \u043f\u043e \u0441\u043f\u0438\u0441\u043a\u0443", None))
         self.toolBox.setItemText(self.toolBox.indexOf(self.updater_page), QCoreApplication.translate("MainWindow", u"\u0421\u043f\u0440\u0430\u0432\u043e\u0447\u043d\u0438\u043a\u0438", None))
         self.btn_SupplierPrice.setText(QCoreApplication.translate("MainWindow", u"\u041f\u0440\u0430\u0439\u0441 \u041f\u043e\u0441\u0442\u0430\u0432\u0449\u0438\u043a\u0430", None))
         self.btn_CustomerCost.setText(QCoreApplication.translate("MainWindow", u"\u041a\u043e\u0441\u0442\u044b \u0434\u043b\u044f \u041a\u043b\u0438\u0435\u043d\u0442\u043e\u0432", None))
         self.btn_Stock.setText(QCoreApplication.translate("MainWindow", u"\u041e\u0441\u0442\u0430\u0442\u043a\u0438 / \u0417\u0430\u043a\u0430\u0437\u044b \u041f\u043e\u0441\u0442-\u043e\u0432", None))
-        self.btn_QuickCalc.setText(QCoreApplication.translate("MainWindow", u"\u0411\u044b\u0441\u0442\u0440\u044b\u0439 \u0440\u0430\u0441\u0447\u0435\u0442 \u041a\u043e\u0441\u0442\u0430", None))
+        self.btn_QuickCostCalc.setText(QCoreApplication.translate("MainWindow", u"\u0411\u044b\u0441\u0442\u0440\u044b\u0439 \u0440\u0430\u0441\u0447\u0435\u0442 \u041a\u043e\u0441\u0442\u0430", None))
         self.toolBox.setItemText(self.toolBox.indexOf(self.docs_page), QCoreApplication.translate("MainWindow", u"\u0420\u0430\u0441\u0447\u0435\u0442\u044b/\u041e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435", None))
-        self.btn_Scheme.setText(QCoreApplication.translate("MainWindow", u"\u0426\u0435\u043d\u044b \u041f\u043e\u0441\u0442\u0430\u0432\u0449\u0438\u043a\u0430", None))
-        self.btn_Plan.setText(QCoreApplication.translate("MainWindow", u"\u0426\u0435\u043d\u044b \u043f\u043e \u041f\u0440\u043e\u0434\u0443\u043a\u0442\u0430\u043c", None))
+        self.btn_PriceReports.setText(QCoreApplication.translate("MainWindow", u"\u041e\u0442\u0447\u0435\u0442 \u043f\u043e \u0426\u0435\u043d\u0430\u043c \u041f\u043e\u0441\u0442\u0430\u0432\u0449\u0438\u043a\u043e\u0432", None))
         self.toolBox.setItemText(self.toolBox.indexOf(self.bonus_page), QCoreApplication.translate("MainWindow", u"\u041e\u0442\u0447\u0435\u0442\u044b", None))
         self.toggleButton.setText("")
         self.label.setText("")

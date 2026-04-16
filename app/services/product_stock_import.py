@@ -163,16 +163,17 @@ class ProductStockImportService:
         self.session.flush()
         return len(created)
 
-    def _validate_new_rows(self, rows, name_attr: str = "new_product_name"):
-        for row in rows:
-            if getattr(row, name_attr) is None or not str(getattr(row, name_attr)).strip():
-                continue
-            if row.new_is_excise is None:
-                raise ValueError(f"Для нового продукта '{row.new_product_name}' не заполнено поле new_is_excise.")
-            if row.new_brand is None or not str(row.new_brand).strip():
-                raise ValueError(f"Для нового продукта '{row.new_product_name}' не заполнен new_brand.")
-            if row.new_pack is None:
-                raise ValueError(f"Для нового продукта '{row.new_product_name}' не заполнен new_pack.")
+        def _validate_new_rows(self, rows, name_attr: str = "new_product_name"):
+            for row in rows:
+                if getattr(row, name_attr) is None or not str(getattr(row, name_attr)).strip():
+                    continue
+
+                self.product_matching.validate_new_product_fields(
+                    product_name=row.new_product_name,
+                    brand=row.new_brand,
+                    pack=row.new_pack,
+                    is_excise=row.new_is_excise,
+                )
 
     def validate_new_stock_products_before_save(self, batch_id: str, imported_by: str) -> None:
         rows = self.session.query(TempStockImport).filter(
@@ -299,7 +300,10 @@ class ProductStockImportService:
 
         matched = 0
         for row in rows:
-            product = self.product_matching.find_stock_product(source_article=row.source_article, source_product_name=row.source_product_name)
+            product = self.product_matching.find_is_product(
+                source_article=row.source_article,
+                source_product_name=row.source_product_name,
+            )
             if product is not None:
                 row.selected_product_id = product.id
                 matched += 1

@@ -41,6 +41,7 @@ class Product(Base):
     temp_stock_import_rows = relationship("TempStockImport", back_populates="selected_product")
     temp_supplier_orders_rows = relationship("TempSupplierOrdersImport", back_populates="selected_product")
     temp_is_rows = relationship("TempIsImport", back_populates="selected_product")
+    temp_product_search_rows = relationship("TempProductSearchImport", back_populates="selected_product")
 
 
 class Supplier(Base):
@@ -480,6 +481,33 @@ class TempIsImport(Base):
         Index("ix_temp_is_batch_user", "batch_id", "imported_by"),
     )
     
+
+class TempProductSearchImport(Base):
+    __tablename__ = "temp_product_search_import"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    batch_id = Column(String(64), nullable=False, index=True)
+    imported_by = Column(String(255), nullable=False, index=True)
+    import_date = Column(DateTime, nullable=False)
+    import_row_no = Column(Integer, nullable=True)
+
+    source_article = Column(String(255), nullable=True)
+    source_product_name = Column(String(500), nullable=True)
+
+    selected_product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
+
+    new_product_name = Column(String(500), nullable=True)
+    new_brand = Column(String(255), nullable=True)
+    new_pack = Column(Numeric, nullable=True)
+    new_is_excise = Column(Boolean, nullable=True)
+
+    selected_product = relationship("Product", back_populates="temp_product_search_rows")
+
+    __table_args__ = (
+        Index("ix_temp_product_search_batch_user", "batch_id", "imported_by"),
+    )
+
 
 class CustomerPriceCalculation(Base):
     __tablename__ = "customer_price_calculations"

@@ -35,6 +35,7 @@ from app.services.product_stock_run import ProductStockImportRun
 from app.utils.batch import get_current_username
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
+from app.ui.table_style import setup_data_table
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 UI_PATH = BASE_DIR / "app" / "ui" / "windows" / "stock_supplier_orders.ui"
@@ -144,13 +145,7 @@ class ProductStockPage(QWidget):
         return SessionLocal()
 
     def setup_ui(self):
-        self.table.setSelectionBehavior(self.table.SelectionBehavior.SelectItems)
-        self.table.setAlternatingRowColors(True)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSortingEnabled(False)
-        self.table.setWordWrap(False)
+        setup_data_table(self.table, sorting=False)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
 
         for widget in (self.ui.line_RowsLoaded, self.ui.line_TotalQty, self.ui.line_RowsError):
@@ -168,6 +163,7 @@ class ProductStockPage(QWidget):
         self.ui.btn_Save.clicked.connect(self.save_all)
         self.ui.btn_Reset.clicked.connect(self.reset_all)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
+        self.table.itemChanged.connect(self.on_item_changed)
 
     def show_message(self, text: str):
         self.ui.label_msg.setText(text)
@@ -326,9 +322,6 @@ class ProductStockPage(QWidget):
         finally:
             self.table.blockSignals(False)
             self._updating_table = False
-
-        self.table.itemChanged.disconnect() if self.table.receivers(self.table.itemChanged) else None
-        self.table.itemChanged.connect(self.on_item_changed)
 
     def _build_indicator(self, checked: bool):
         checkbox = QCheckBox()

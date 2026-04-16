@@ -28,6 +28,8 @@ from app.utils.batch import get_current_username
 from app.imports.customer_cost_importer import CustomerCostImporter
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
+from app.ui.table_style import setup_data_table
+
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 UI_PATH = BASE_DIR / "app" / "ui" / "windows" / "customer_costs.ui"
@@ -65,6 +67,7 @@ class CustomerCostsPage(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.ui)
+        self.setStyleSheet(load_stylesheet("app/ui/styles/app_styles.qss"))
 
         self._updating_table = False
         self._batch_id = ""
@@ -94,13 +97,7 @@ class CustomerCostsPage(QWidget):
 
     def setup_ui(self):
         self.table = self.ui.table
-        self.table.setSelectionBehavior(self.table.SelectionBehavior.SelectItems)
-        self.table.setAlternatingRowColors(True)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSortingEnabled(False)
-        self.table.setWordWrap(False)
+        setup_data_table(self.table, sorting=False)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
 
         self.ui.label_msg.setText("")
@@ -109,6 +106,7 @@ class CustomerCostsPage(QWidget):
         self.ui.cbo_FindBrand.currentTextChanged.connect(self.refresh_product_combos)
 
     def setup_connections(self):
+        self.table.itemChanged.connect(self.on_item_changed)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
         self.ui.btn_DownFile.clicked.connect(self.download_template)
         self.ui.btn_Import.clicked.connect(self.import_file)
@@ -208,38 +206,39 @@ class CustomerCostsPage(QWidget):
 
     def display_table(self, data):
         self._updating_table = True
-        self.table.clear()
-        self.table.setColumnCount(len(self.headers))
-        self.table.setHorizontalHeaderLabels(self.headers)
-        self.table.setRowCount(len(data))
-        brand_values = self._get_brand_values()
+        try:
+            self.table.clear()
+            self.table.setColumnCount(len(self.headers))
+            self.table.setHorizontalHeaderLabels(self.headers)
+            self.table.setRowCount(len(data))
+            brand_values = self._get_brand_values()
 
-        for row_index, row_data in enumerate(data):
-            row_id = row_data["id"]
-            for col_index, col_name in enumerate(self.columns):
-                if col_name == "selected_option_id":
-                    combo = self._build_supplier_option_combo(row_id, row_data[col_name])
-                    self.table.setCellWidget(row_index, col_index, combo)
-                    continue
-                if col_name == "selected_product_id":
-                    combo = self._build_product_combo(row_id, row_data[col_name])
-                    self.table.setCellWidget(row_index, col_index, combo)
-                    continue
-                if col_name == "new_brand":
-                    combo = self._build_brand_combo(row_id, row_data[col_name], brand_values)
-                    self.table.setCellWidget(row_index, col_index, combo)
-                    continue
-                if col_name == "new_is_excise":
-                    self.table.setCellWidget(row_index, col_index, self._build_checkbox(row_id, bool(row_data[col_name])))
-                    continue
-                value = row_data[col_name]
-                text = "" if value is None else str(value)
-                item = QTableWidgetItem(text)
-                item.setData(Qt.UserRole, row_id)
-                self.table.setItem(row_index, col_index, item)
+            for row_index, row_data in enumerate(data):
+                row_id = row_data["id"]
+                for col_index, col_name in enumerate(self.columns):
+                    if col_name == "selected_option_id":
+                        combo = self._build_supplier_option_combo(row_id, row_data[col_name])
+                        self.table.setCellWidget(row_index, col_index, combo)
+                        continue
+                    if col_name == "selected_product_id":
+                        combo = self._build_product_combo(row_id, row_data[col_name])
+                        self.table.setCellWidget(row_index, col_index, combo)
+                        continue
+                    if col_name == "new_brand":
+                        combo = self._build_brand_combo(row_id, row_data[col_name], brand_values)
+                        self.table.setCellWidget(row_index, col_index, combo)
+                        continue
+                    if col_name == "new_is_excise":
+                        self.table.setCellWidget(row_index, col_index, self._build_checkbox(row_id, bool(row_data[col_name])))
+                        continue
 
-        self.table.itemChanged.connect(self.on_item_changed)
-        self._updating_table = False
+                    value = row_data[col_name]
+                    text = "" if value is None else str(value)
+                    item = QTableWidgetItem(text)
+                    item.setData(Qt.UserRole, row_id)
+                    self.table.setItem(row_index, col_index, item)
+        finally:
+            self._updating_table = False
 
     def _build_checkbox(self, row_id: int, checked: bool):
         checkbox = QCheckBox()

@@ -1,0 +1,839 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>Form</class>
+ <widget class="QWidget" name="Form">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1332</width>
+    <height>823</height>
+   </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>930</width>
+    <height>650</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>Form</string>
+  </property>
+  <property name="styleSheet">
+   <string notr="true">Form.QWidget{border: 2px solid #f28223;}
+
+QWidget{
+    background-color: #f8f8f2;
+}
+
+#Title_label.QLabel {
+    color: #2D2A26;
+    font: 20pt &quot;Tahoma&quot;;
+    font-weight: 700;
+}
+
+QLabel#label_filter_title {
+    color: #262626;
+    font: 14pt &quot;Tahoma&quot;;
+    font-weight: 700;
+}
+
+QLabel {
+    color: #262626;
+    font: 10pt &quot;Tahoma&quot;;
+}
+
+QPushButton {
+    border: 2px solid #f09d54;
+    border-radius: 5px;
+    background-color: #f8f8f2;
+    color: #964b09;
+    font: 10pt &quot;Tahoma&quot;;
+}
+
+QPushButton:hover {
+    background-color: #f28223;
+    color: #ffffff;
+}
+
+QPushButton:pressed {
+    background-color: #f28223;
+    border: 2px solid #f28223;
+    color: #ffffff;
+}
+
+QTableWidget {
+    background-color: #f8f8f2;
+    padding: 10px;
+    border-radius: 5px;
+    gridline-color: #f8994a;
+    outline: none;
+    color: #262626;
+}
+QTableWidget::item{
+    border-color: #f8994a;
+    padding-left: 5px;
+    padding-right: 5px;
+    gridline-color: #f8994a;
+    color: #262626;
+    padding: 1px;
+    font: 7pt &quot;Tahoma&quot;;
+}
+QTableWidget::item:selected{
+    background-color: #f28223;
+    color: #ffffff;
+}
+QTableWidget::item:editable {
+    background-color: #fff5cc;
+    border: #ffffff;
+}
+QTableWidget::item:focus {
+    background-color: #f28223;
+    border: 1px solid #ff9900;
+    padding: 1px;
+}
+QHeaderView::section{
+    background-color: #f8f8f2;
+    border: none;
+    border-style: none;
+}
+QTableWidget::horizontalHeader {
+    background-color: #f8994a;
+    font: 10pt &quot;Tahoma&quot;;
+}
+QHeaderView::section:horizontal {
+    border: 1px solid #f8994a;
+    background-color: #ffd4af;
+    padding: 3px;
+    border-top-left-radius: 7px;
+    border-top-right-radius: 7px;
+    color: #262626;
+}
+QHeaderView::section:vertical {
+    border: 1px solid #f8994a;
+    color: #262626;
+}
+
+QLineEdit {
+    background-color: #f8f8f2;
+    border-radius: 5px;
+    border: 1px solid #f09d54;
+    padding-left: 10px;
+    padding: 1px;
+    selection-color: rgb(255, 255, 255);
+    selection-background-color: #f28223;
+    color: #262626;
+}
+QLineEdit:hover {
+    border: 1px solid #f28223;
+}
+QLineEdit:focus {
+    border: 1px solid #f28223;
+}
+
+QListWidget {
+    background-color: #f8f8f2;
+    border: 1px solid #f09d54;
+    border-radius: 5px;
+    color: #262626;
+    font: 10pt &quot;Tahoma&quot;;
+}
+QListWidget::item {
+    padding: 5px;
+    border-bottom: 1px solid #f8994a;
+}
+QListWidget::item:selected {
+    background-color: #f28223;
+    color: #ffffff;
+}
+QListWidget::item:hover {
+    background-color: #ffd4af;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+}
+QCheckBox::indicator:unchecked {
+    border: 1px solid #f09d54;
+    background-color: #f8f8f2;
+    border-radius: 3px;
+}
+QCheckBox::indicator:checked {
+    border: 1px solid #f28223;
+    background-color: #f28223;
+    border-radius: 3px;
+    image: url(:/icon/icon/check.svg);
+}
+QCheckBox::indicator:hover {
+    border: 1px solid #f28223;
+}
+
+QComboBox {
+    background-color: #f8f8f2;
+    border-radius: 5px;
+    border: 1px solid #f09d54;
+    padding-left: 10px;
+    padding: 1px;
+    selection-color: #f28223;
+    selection-background-color: #f28223;
+    color: #262626;
+    font: 9pt &quot;Tahoma&quot;;
+}
+QComboBox:hover {
+    border: 1px solid #f28223;
+}
+QComboBox:focus {
+    border: 1px solid #f28223;
+}
+QComboBox QAbstractItemView::item {
+    color: #262626;
+}
+QComboBox QAbstractItemView::item::selected {
+    background-color: #f09d54;
+    color: #ffffff;
+}
+QComboBox::down-arrow {
+    image: url(:/icon/icon/chevron-down — копия — копия.svg);
+}
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 15px;
+    border-left-width: 1px;
+    border-left-color: #f8994a;
+    border-left-style: solid;
+    border-top-right-radius: 3px;
+    border-bottom-right-radius: 3px;
+    color: #262626;
+}
+
+QScrollBar:horizontal {
+    border: none;
+    background: #f8994a;
+    height: 8px;
+    margin: 0px 21px 0 21px;
+    border-radius: 0px;
+}
+QScrollBar::handle:horizontal {
+    background: #f6c294;
+    min-width: 20px;
+    border-radius: 4px;
+}
+QScrollBar::add-line:horizontal {
+    border: none;
+    background: #f8994a;
+    width: 20px;
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+    subcontrol-position: right;
+    subcontrol-origin: margin;
+}
+QScrollBar::sub-line:horizontal {
+    border: none;
+    background: #f8994a;
+    width: 20px;
+    border-top-left-radius: 4px;
+    border-bottom-left-radius: 4px;
+    subcontrol-position: left;
+    subcontrol-origin: margin;
+}
+QScrollBar:vertical {
+    border: none;
+    background: #f8994a;
+    width: 8px;
+    margin: 21px 0 21px 0;
+    border-radius: 0px;
+}
+QScrollBar::handle:vertical {
+    background: #f6c294;
+    min-height: 20px;
+    border-radius: 4px;
+}
+QScrollBar::add-line:vertical {
+    border: none;
+    background: #f8994a;
+    height: 20px;
+    border-bottom-left-radius: 4px;
+    border-bottom-right-radius: 4px;
+    subcontrol-position: bottom;
+    subcontrol-origin: margin;
+}
+QScrollBar::sub-line:vertical {
+    border: none;
+    background: #f8994a;
+    height: 20px;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    subcontrol-position: top;
+    subcontrol-origin: margin;
+}
+
+QRadioButton {
+    spacing: 6px;
+    color: #262626;
+    font-family: Tahoma;
+    font-size: 10pt;
+    background: transparent;
+}
+QRadioButton::indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 8px;
+    border: 1px solid #ff9900;
+    background-color: #ffffff;
+}
+QRadioButton::indicator:hover {
+    border: 1px solid #ff9900;
+    background-color: #ffffff;
+}
+QRadioButton::indicator:unchecked {
+    border: 1px solid #ff9900;
+    background-color: #ffffff;
+}
+QRadioButton::indicator:checked {
+    border: 1px solid #ff9900;
+    background-color: #f28223;
+}
+
+QFrame#frame_LeftPanel, QFrame#frame_RightPanel, QFrame#frame_bottom_bar {
+    border: 1px solid #f09d54;
+    border-radius: 8px;
+}</string>
+  </property>
+  <layout class="QHBoxLayout" name="horizontalLayout">
+   <property name="leftMargin">
+    <number>0</number>
+   </property>
+   <property name="topMargin">
+    <number>0</number>
+   </property>
+   <property name="rightMargin">
+    <number>0</number>
+   </property>
+   <property name="bottomMargin">
+    <number>0</number>
+   </property>
+   <item>
+    <widget class="QWidget" name="widget" native="true">
+     <layout class="QVBoxLayout" name="verticalLayout">
+      <property name="spacing">
+       <number>8</number>
+      </property>
+      <property name="leftMargin">
+       <number>6</number>
+      </property>
+      <property name="topMargin">
+       <number>0</number>
+      </property>
+      <property name="rightMargin">
+       <number>2</number>
+      </property>
+      <property name="bottomMargin">
+       <number>2</number>
+      </property>
+      <item alignment="Qt::AlignmentFlag::AlignHCenter">
+       <widget class="QLabel" name="Title_label">
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>40</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>16777215</width>
+          <height>40</height>
+         </size>
+        </property>
+        <property name="font">
+         <font>
+          <family>Tahoma</family>
+          <pointsize>20</pointsize>
+          <italic>false</italic>
+          <bold>true</bold>
+         </font>
+        </property>
+        <property name="text">
+         <string>Отчеты по ценам</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignmentFlag::AlignCenter</set>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QFrame" name="frame_Content">
+        <property name="frameShape">
+         <enum>QFrame::Shape::NoFrame</enum>
+        </property>
+        <property name="frameShadow">
+         <enum>QFrame::Shadow::Plain</enum>
+        </property>
+        <layout class="QHBoxLayout" name="horizontalLayout_content">
+         <property name="spacing">
+          <number>8</number>
+         </property>
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item>
+          <widget class="QFrame" name="frame_LeftPanel">
+           <property name="minimumSize">
+            <size>
+             <width>300</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>320</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <property name="frameShape">
+            <enum>QFrame::Shape::StyledPanel</enum>
+           </property>
+           <property name="frameShadow">
+            <enum>QFrame::Shadow::Raised</enum>
+           </property>
+           <layout class="QVBoxLayout" name="verticalLayout_left">
+            <property name="spacing">
+             <number>8</number>
+            </property>
+            <property name="leftMargin">
+             <number>8</number>
+            </property>
+            <property name="topMargin">
+             <number>12</number>
+            </property>
+            <property name="rightMargin">
+             <number>8</number>
+            </property>
+            <property name="bottomMargin">
+             <number>12</number>
+            </property>
+            <item>
+             <widget class="QLabel" name="label_filter_title">
+              <property name="text">
+               <string>Параметры отчета</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QFrame" name="frame_mode">
+              <property name="frameShape">
+               <enum>QFrame::Shape::NoFrame</enum>
+              </property>
+              <layout class="QVBoxLayout" name="verticalLayout_mode">
+               <property name="spacing">
+                <number>6</number>
+               </property>
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="label_mode">
+                 <property name="text">
+                  <string>Режим</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QRadioButton" name="radio_ByProduct">
+                 <property name="text">
+                  <string>Отчет по продуктам</string>
+                 </property>
+                 <property name="checked">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QRadioButton" name="radio_BySupplier">
+                 <property name="text">
+                  <string>Отчет по поставщику</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="label_supplier">
+              <property name="text">
+               <string>Поставщик</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QComboBox" name="cbo_Supplier">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>25</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="label_brand">
+              <property name="text">
+               <string>Бренды</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QListWidget" name="list_Brand">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>100</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>100</height>
+               </size>
+              </property>
+              <property name="selectionMode">
+               <enum>QAbstractItemView::SelectionMode::ExtendedSelection</enum>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="label_product_name">
+              <property name="text">
+               <string>Название продукта</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLineEdit" name="line_ProductName">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>25</height>
+               </size>
+              </property>
+              <property name="placeholderText">
+               <string>Фильтр по названию...</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QCheckBox" name="cbx_ShowPrevPrice">
+              <property name="text">
+               <string>Показывать предыдущую цену</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QFrame" name="frame_fx_placeholder">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>120</height>
+               </size>
+              </property>
+              <property name="styleSheet">
+               <string notr="true">#frame_fx_placeholder {border: 1px solid #f09d54; border-radius: 8px;}</string>
+              </property>
+              <property name="frameShape">
+               <enum>QFrame::Shape::StyledPanel</enum>
+              </property>
+              <property name="frameShadow">
+               <enum>QFrame::Shadow::Raised</enum>
+              </property>
+              <layout class="QVBoxLayout" name="verticalLayout_fx_placeholder">
+               <property name="leftMargin">
+                <number>8</number>
+               </property>
+               <property name="topMargin">
+                <number>8</number>
+               </property>
+               <property name="rightMargin">
+                <number>8</number>
+               </property>
+               <property name="bottomMargin">
+                <number>8</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="label_fx_title">
+                 <property name="text">
+                  <string>Курсы валют</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="label_fx_hint">
+                 <property name="text">
+                  <string>Здесь можно разместить subFXRates, как в текущих формах Access.</string>
+                 </property>
+                 <property name="wordWrap">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="label_dynamic_columns">
+              <property name="text">
+               <string>Колонки поставщиков должны добавляться динамически. Поставщиков может быть сколько угодно — 20, 50 и больше.</string>
+              </property>
+              <property name="wordWrap">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="verticalSpacer_left">
+              <property name="orientation">
+               <enum>Qt::Orientation::Vertical</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>20</width>
+                <height>40</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+            <item>
+             <widget class="QPushButton" name="btn_BuildReport">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>Сформировать отчет</string>
+              </property>
+              <property name="icon">
+               <iconset resource="../resource.qrc">
+                <normaloff>:/icon/icon/layers — копия — копия.svg</normaloff>:/icon/icon/layers — копия — копия.svg</iconset>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="btn_Reset">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>Сбросить</string>
+              </property>
+              <property name="icon">
+               <iconset resource="../resource.qrc">
+                <normaloff>:/icon/icon/loader — копия — копия.svg</normaloff>:/icon/icon/loader — копия — копия.svg</iconset>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="btn_ExportExcel">
+              <property name="minimumSize">
+               <size>
+                <width>180</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>Экспорт в Excel</string>
+              </property>
+              <property name="icon">
+               <iconset resource="../resource.qrc">
+                <normaloff>:/icon/icon/download — копия — копия.svg</normaloff>:/icon/icon/download — копия — копия.svg</iconset>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </item>
+         <item>
+          <widget class="QFrame" name="frame_RightPanel">
+           <property name="frameShape">
+            <enum>QFrame::Shape::StyledPanel</enum>
+           </property>
+           <property name="frameShadow">
+            <enum>QFrame::Shadow::Raised</enum>
+           </property>
+           <layout class="QVBoxLayout" name="verticalLayout_right">
+            <property name="spacing">
+             <number>8</number>
+            </property>
+            <property name="leftMargin">
+             <number>8</number>
+            </property>
+            <property name="topMargin">
+             <number>12</number>
+            </property>
+            <property name="rightMargin">
+             <number>8</number>
+            </property>
+            <property name="bottomMargin">
+             <number>8</number>
+            </property>
+            <item>
+             <widget class="QFrame" name="frame_top_right">
+              <property name="frameShape">
+               <enum>QFrame::Shape::NoFrame</enum>
+              </property>
+              <layout class="QHBoxLayout" name="horizontalLayout_top_right">
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <widget class="QTableWidget" name="table_ReportPreview">
+              <property name="alternatingRowColors">
+               <bool>false</bool>
+              </property>
+              <property name="selectionBehavior">
+               <enum>QAbstractItemView::SelectionBehavior::SelectRows</enum>
+              </property>
+              <property name="rowCount">
+               <number>8</number>
+              </property>
+              <property name="columnCount">
+               <number>12</number>
+              </property>
+              <row/>
+              <row/>
+              <row/>
+              <row/>
+              <row/>
+              <row/>
+              <row/>
+              <row/>
+              <column>
+               <property name="text">
+                <string>Our Product Name</string>
+               </property>
+              </column>
+              <column>
+               <property name="text">
+                <string>Pack</string>
+               </property>
+              </column>
+              <column>
+               <property name="text">
+                <string>last update</string>
+               </property>
+              </column>
+              <column>
+               <property name="text">
+                <string>Price, L</string>
+               </property>
+              </column>
+              <column>
+               <property name="text">
+                <string>Currency</string>
+               </property>
+              </column>
+              <column>
+               <property name="text">
+                <string>Cost Novo</string>
+               </property>
+              </column>
+              <column>
+               <property name="text">
+                <string>Full Cost Msk</string>
+               </property>
+              </column>
+              <column>
+               <property name="text">
+                <string>Best 1</string>
+               </property>
+              </column>
+              <column>
+               <property name="text">
+                <string>Best 2</string>
+               </property>
+              </column>
+              <column>
+               <property name="text">
+                <string>Stock</string>
+               </property>
+              </column>
+              <column>
+               <property name="text">
+                <string>Transit</string>
+               </property>
+              </column>
+              <column>
+               <property name="text">
+                <string>...</string>
+               </property>
+              </column>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources>
+  <include location="../resource.qrc"/>
+ </resources>
+ <connections/>
+</ui>

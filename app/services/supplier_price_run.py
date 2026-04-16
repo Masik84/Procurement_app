@@ -47,8 +47,12 @@ class SupplierPriceImportRun:
         import_date: Optional[datetime] = None,
         save_exchange_rate: bool = False,
         explicit_fx_rate: Optional[float] = None,
+        rf_prices_include_vat: bool = False,
     ) -> SupplierPriceImportResult:
-        supplier = self.supplier_service.ensure_supplier(supplier_id=supplier_id, data=supplier_data)
+        supplier = self.supplier_service.ensure_supplier(
+            supplier_id=supplier_id,
+            data=supplier_data,
+        )
         currency_code = supplier.base_currency
         fx_rate: Optional[float] = None
 
@@ -74,6 +78,7 @@ class SupplierPriceImportRun:
             fx_rate=fx_rate,
             import_date=import_date,
             replace_existing_batch_rows=True,
+            rf_prices_include_vat=rf_prices_include_vat,
         )
 
         return SupplierPriceImportResult(

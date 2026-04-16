@@ -1,0 +1,1623 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<ui version="4.0">
+ <class>Form</class>
+ <widget class="QWidget" name="Form">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1332</width>
+    <height>823</height>
+   </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>930</width>
+    <height>650</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>Form</string>
+  </property>
+  <property name="styleSheet">
+   <string notr="true">Form.QWidget{border: 2px solid #f28223;}
+
+QWidget{
+	background-color: #f8f8f2;
+}
+
+#Title_label.QLabel {
+color: #262626;
+font: 18pt "Tahoma";
+}
+
+QLabel {
+color: #262626;
+font: 10pt "Tahoma";
+}
+
+QPushButton {
+	border: 2px solid #f09d54;
+	border-radius: 5px;
+	background-color: #f8f8f2;
+	color: #964b09;
+	font: 10pt "Tahoma";
+}
+
+QPushButton:hover {
+	background-color: #f28223;
+	color: #ffffff;
+}
+
+QPushButton:pressed {
+	background-color: #f28223;
+	border: 2px solid #f28223;
+	color: #ffffff;
+}
+
+
+QTableWidget {	
+	background-color: #f8f8f2;
+	padding: 10px;
+	border-radius: 5px;
+	gridline-color: #f8994a;
+    outline: none;
+	color: #262626;
+}
+QTableWidget::item{
+	border-color: #f8994a;
+	padding-left: 5px;
+	padding-right: 5px;
+	gridline-color: #f8994a;
+	color: #262626;
+	padding: 1px;
+    font: 7pt "Tahoma"; 
+}
+QTableWidget::item:selected{
+	background-color: #f28223;
+    color: #ffffff;
+}
+QTableWidget::item:editable {
+	background-color: #fff5cc;
+	border: #ffffff;
+}
+QTableWidget::item:focus {
+	background-color: #f28223;
+	border: 2px solid #ffffff;
+}
+QHeaderView::section{
+	background-color: #f8f8f2;
+	border: none;
+	border-style: none;
+}
+QTableWidget::horizontalHeader {	
+	background-color: #f8994a;
+	font: 10pt "Tahoma";
+}
+QHeaderView::section:horizontal {
+    border: 1px solid #f8994a;
+	background-color: #ffd4af;
+	padding: 3px;
+	border-top-left-radius: 7px;
+    border-top-right-radius: 7px;
+    color: #262626;
+}
+QHeaderView::section:vertical {
+    border: 1px solid #f8994a;
+	color: #262626;
+}
+
+QLineEdit {
+	background-color: #f8f8f2;
+	border-radius: 5px;
+	border: 2px solid #f09d54;
+	padding-left: 10px;
+	selection-color: rgb(255, 255, 255);
+	selection-background-color: #f28223;
+    color: #262626;
+}
+QLineEdit:hover {
+	border: 2px solid #f28223;
+}
+QLineEdit:focus {
+	border: 2px solid #f28223;
+}
+
+/* Стили для множественного выбора */
+QListWidget {
+    background-color: #f8f8f2;
+    border: 2px solid #f09d54;
+    border-radius: 5px;
+    color: #262626;
+    font: 10pt "Tahoma";
+}
+
+QListWidget::item {
+    padding: 5px;
+    border-bottom: 1px solid #f8994a;
+}
+
+QListWidget::item:selected {
+    background-color: #f28223;
+    color: #ffffff;
+}
+
+QListWidget::item:hover {
+    background-color: #ffd4af;
+}
+
+/* Улучшенная видимость чекбоксов */
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+}
+
+QCheckBox::indicator:unchecked {
+    border: 2px solid #f09d54;
+    background-color: #f8f8f2;
+    border-radius: 3px;
+}
+
+QCheckBox::indicator:checked {
+    border: 2px solid #f28223;
+    background-color: #f28223;
+    border-radius: 3px;
+    image: url(:/icon/icon/check.svg);
+}
+
+QCheckBox::indicator:hover {
+    border: 2px solid #f28223;
+}
+
+QComboBox {
+	background-color: #f8f8f2;
+	border-radius: 5px;
+	border: 2px solid #f09d54;
+	padding-left: 10px;
+	selection-color: #f28223;
+	selection-background-color: #f28223;
+    color: #262626;
+	font: 9pt "Tahoma";
+}
+QComboBox:hover {
+	border: 2px solid #f28223;
+	
+}
+QComboBox:focus {
+	border: 2px solid #f28223;
+}
+
+QComboBox QAbstractItemView::item {
+	color: #262626;
+}
+QComboBox QAbstractItemView::item::selected {
+	background-color: #f09d54;
+	color: #ffffff;
+}
+
+QComboBox::down-arrow {
+	
+	image: url(:/icon/icon/chevron-down — копия — копия.svg);
+}
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 15px;
+    border-left-width: 1px;
+    border-left-color: #f8994a;
+    border-left-style: solid; /* just a single line */
+    border-top-right-radius: 3px; /* same radius as the QComboBox */
+    border-bottom-right-radius: 3px;
+	color: #262626;
+}
+
+QScrollBar:horizontal {
+    border: none;
+    background: #f8994a;
+    height: 8px;
+    margin: 0px 21px 0 21px;
+	border-radius: 0px;
+}
+QScrollBar::handle:horizontal {
+    background: #f6c294;
+    min-width: 20px;
+	border-radius: 4px
+}
+QScrollBar::add-line:horizontal {
+    border: none;
+    background: #f8994a;
+    width: 20px;
+	border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+    subcontrol-position: right;
+    subcontrol-origin: margin;
+}
+QScrollBar::sub-line:horizontal {
+    border: none;
+    background: #f8994a;
+    width: 20px;
+	border-top-left-radius: 4px;
+    border-bottom-left-radius: 4px;
+    subcontrol-position: left;
+    subcontrol-origin: margin;
+}
+QScrollBar::up-arrow:horizontal, QScrollBar::down-arrow:horizontal
+{
+     background: none;
+}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal
+{
+     background: none;
+}
+ QScrollBar:vertical {
+	border: none;
+    background-color: #f8994a;
+    width: 8px;
+    margin: 21px 0 21px 0;
+	border-radius: 0px;
+ }
+ QScrollBar::handle:vertical {	
+	background: #f6c294;
+    min-height: 25px;
+	border-radius: 4px
+ }
+ QScrollBar::add-line:vertical {
+     border: none;
+    background: #f8994a;
+     height: 20px;
+	border-bottom-left-radius: 4px;
+    border-bottom-right-radius: 4px;
+     subcontrol-position: bottom;
+     subcontrol-origin: margin;
+ }
+ QScrollBar::sub-line:vertical {
+	border: none;
+    background: #f8994a;
+     height: 20px;
+	border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+     subcontrol-position: top;
+     subcontrol-origin: margin;
+ }
+ QScrollBar::up-arrow:vertical, QScrollBar::down-arrow:vertical {
+     background: none;
+ }
+
+ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+     background: none;
+ }
+
+QDateEdit {
+    background-color: #f8f8f2;
+    border-radius: 5px;
+    border: 2px solid #f09d54;
+    padding-left: 10px; /* Add left padding */
+    padding-right: 10px; /* Add right padding to accommodate the dropdown arrow */
+    color: #262626;
+    font: 10pt "Tahoma";
+    min-width: 80px; /* Minimum width to prevent text clipping */
+}
+
+QDateEdit:hover {
+    border: 2px solid #f28223;
+}
+
+QDateEdit:focus {
+    border: 2px solid #f28223;
+}
+
+QDateEdit::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 25px; /* Keep the dropdown arrow width */
+    border-left-width: 1px;
+    border-left-color: #f8994a;
+    border-left-style: solid;
+    border-top-right-radius: 3px;
+    border-bottom-right-radius: 3px;
+    background-color: #f8f8f2;
+}
+
+QDateEdit::down-arrow {
+	image: url(:/icon/icon/chevron-down — копия — копия.svg);
+    width: 16px;
+    height: 16px;
+}
+
+/* Calendar Styling */
+QCalendarWidget {
+    background-color: #f8f8f2;
+    border: 2px solid #f28223;
+    color: #262626;
+}
+
+QCalendarWidget QWidget {
+    color: #262626;
+}
+
+QCalendarWidget QAbstractItemView {
+    background-color: #f8f8f2;
+    selection-background-color: #f28223;
+    selection-color: #ffffff;
+}
+
+QCalendarWidget QToolButton {
+    background-color: #ffd4af;
+    color: #262626;
+    font: 10pt "Tahoma";
+    border-radius: 3px;
+    padding: 5px;
+}
+
+QCalendarWidget QToolButton:hover {
+    background-color: #f28223;
+    color: #ffffff;
+}
+
+QCalendarWidget QMenu {
+    background-color: #f8f8f2;
+    border: 1px solid #f28223;
+}
+
+QCalendarWidget QSpinBox {
+    background-color: #f8f8f2;
+    color: #262626;
+    border: 1px solid #f09d54;
+}
+
+QCalendarWidget QSpinBox::up-button {
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 15px;
+    border-left-width: 1px;
+    border-left-color: #f8994a;
+    border-left-style: solid;
+}
+
+QCalendarWidget QSpinBox::down-button {
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 15px;
+    border-left-width: 1px;
+    border-left-color: #f8994a;
+    border-left-style: solid;
+}
+
+QCalendarWidget QSpinBox::up-arrow {
+	image: url(:/icon/icon/chevron-up — копия — копия.svg);
+    width: 10px;
+    height: 10px;
+}
+
+QCalendarWidget QSpinBox::down-arrow {
+	image: url(:/icon/icon/chevron-down — копия — копия.svg);
+    width: 10px;
+    height: 10px;
+}
+
+QTabWidget::pane {
+    border: none;
+    background: #f8f8f2;
+}
+
+QTabBar::tab {
+    background-color: #ffd4af;   /* как шапка таблицы */
+    color: #262626;
+    padding: 6px 12px;
+    min-height: 24px;
+    border: 1px solid #f8994a;
+    border-bottom: none;
+    margin-right: 2px;
+}
+
+QTabBar::tab:selected {
+    background-color: #f28223;
+    color: #ffffff;
+}
+
+QTabBar::tab:!selected {
+    background-color: #ffd4af;
+    color: #262626;
+}
+
+QTabBar::tab:hover:!selected {
+    background-color: #f6c294;
+    color: #262626;
+}
+</string>
+  </property>
+  <layout class="QHBoxLayout" name="horizontalLayout">
+   <property name="leftMargin">
+    <number>0</number>
+   </property>
+   <property name="topMargin">
+    <number>0</number>
+   </property>
+   <property name="rightMargin">
+    <number>0</number>
+   </property>
+   <property name="bottomMargin">
+    <number>0</number>
+   </property>
+   <item>
+    <widget class="QWidget" name="widget" native="true">
+     <layout class="QVBoxLayout" name="verticalLayout">
+      <property name="spacing">
+       <number>10</number>
+      </property>
+      <property name="leftMargin">
+       <number>16</number>
+      </property>
+      <property name="topMargin">
+       <number>12</number>
+      </property>
+      <property name="rightMargin">
+       <number>16</number>
+      </property>
+      <property name="bottomMargin">
+       <number>12</number>
+      </property>
+      <item alignment="Qt::AlignmentFlag::AlignHCenter">
+       <widget class="QLabel" name="Title_label">
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>40</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>16777215</width>
+          <height>40</height>
+         </size>
+        </property>
+        <property name="font">
+         <font>
+          <family>Tahoma</family>
+          <pointsize>18</pointsize>
+          <italic>false</italic>
+          <bold>false</bold>
+         </font>
+        </property>
+        <property name="layoutDirection">
+         <enum>Qt::LayoutDirection::LeftToRight</enum>
+        </property>
+        <property name="text">
+         <string>Цены поставщиков</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignmentFlag::AlignCenter</set>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QFrame" name="frame_Content">
+        <property name="frameShape">
+         <enum>QFrame::Shape::NoFrame</enum>
+        </property>
+        <property name="frameShadow">
+         <enum>QFrame::Shadow::Plain</enum>
+        </property>
+        <layout class="QHBoxLayout" name="horizontalLayout_content">
+         <property name="spacing">
+          <number>12</number>
+         </property>
+         <property name="leftMargin">
+          <number>0</number>
+         </property>
+         <property name="topMargin">
+          <number>0</number>
+         </property>
+         <property name="rightMargin">
+          <number>0</number>
+         </property>
+         <property name="bottomMargin">
+          <number>0</number>
+         </property>
+         <item>
+          <widget class="QFrame" name="frame_LeftPanel">
+           <property name="frameShape">
+            <enum>QFrame::Shape::StyledPanel</enum>
+           </property>
+           <property name="frameShadow">
+            <enum>QFrame::Shadow::Raised</enum>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>230</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>280</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">#frame_LeftPanel {border: 1px solid #f09d54; border-radius: 8px;}</string>
+           </property>
+           <layout class="QVBoxLayout" name="verticalLayout_left">
+            <property name="spacing">
+             <number>6</number>
+            </property>
+            <property name="leftMargin">
+             <number>12</number>
+            </property>
+            <property name="topMargin">
+             <number>12</number>
+            </property>
+            <property name="rightMargin">
+             <number>12</number>
+            </property>
+            <property name="bottomMargin">
+             <number>12</number>
+            </property>
+            <item>
+             <widget class="QLabel" name="label_filter_title">
+              <property name="text">
+               <string>Параметры импорта</string>
+              </property>
+              <property name="font">
+               <font>
+                <family>Tahoma</family>
+                <pointsize>12</pointsize>
+                <bold>true</bold>
+               </font>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QFrame" name="frame_import_grid">
+              <property name="frameShape">
+               <enum>QFrame::Shape::NoFrame</enum>
+              </property>
+              <property name="frameShadow">
+               <enum>QFrame::Shadow::Plain</enum>
+              </property>
+              <layout class="QGridLayout" name="gridLayout_import">
+               <property name="spacing">
+                <number>6</number>
+               </property>
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item row="0" column="0">
+                <widget class="QLabel" name="label_4">
+                 <property name="minimumSize">
+                  <size>
+                   <width>100</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="font">
+                  <font>
+                   <family>Tahoma</family>
+                   <pointsize>10</pointsize>
+                   <italic>false</italic>
+                   <bold>false</bold>
+                  </font>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true" />
+                 </property>
+                 <property name="text">
+                  <string>Назв. Поставщика</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="0" column="1">
+                <widget class="QComboBox" name="cbo_SupplName">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>16777215</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="0">
+                <widget class="QLabel" name="label_10">
+                 <property name="minimumSize">
+                  <size>
+                   <width>100</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>100</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>Поставщик РФ:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="1">
+                <widget class="QComboBox" name="cbo_SupplierRF">
+                 <item>
+                  <property name="text">
+                   <string>нет</string>
+                  </property>
+                 </item>
+                 <item>
+                  <property name="text">
+                   <string>да</string>
+                  </property>
+                 </item>
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>16777215</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item row="2" column="0">
+                <widget class="QLabel" name="label">
+                 <property name="minimumSize">
+                  <size>
+                   <width>50</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>Валюта</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="2" column="1">
+                <widget class="QComboBox" name="cbo_Currency">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>16777215</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="0">
+                <widget class="QLabel" name="label_2">
+                 <property name="minimumSize">
+                  <size>
+                   <width>35</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>Курс</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="1">
+                <widget class="QLineEdit" name="line_ExchangeRate">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>16777215</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item row="4" column="0">
+                <widget class="QLabel" name="label_5">
+                 <property name="minimumSize">
+                  <size>
+                   <width>70</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>70</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>Транспорт</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="4" column="1">
+                <widget class="QLineEdit" name="line_Transport">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>16777215</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item row="5" column="0">
+                <widget class="QLabel" name="label_6">
+                 <property name="minimumSize">
+                  <size>
+                   <width>105</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>105</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>Поставка через:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="5" column="1">
+                <widget class="QComboBox" name="cbo_viaNovo">
+                 <item>
+                  <property name="text">
+                   <string>через Ново</string>
+                  </property>
+                 </item>
+                 <item>
+                  <property name="text">
+                   <string>в Мск</string>
+                  </property>
+                 </item>
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>16777215</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item row="6" column="0">
+                <widget class="QLabel" name="label_7">
+                 <property name="minimumSize">
+                  <size>
+                   <width>80</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>80</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>Re-export %</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="6" column="1">
+                <widget class="QLineEdit" name="line_Reexport">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>16777215</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item row="7" column="0">
+                <widget class="QLabel" name="label_8">
+                 <property name="minimumSize">
+                  <size>
+                   <width>90</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>90</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>FX Markup %</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="7" column="1">
+                <widget class="QLineEdit" name="line_FXMarkup">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>16777215</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item row="8" column="0">
+                <widget class="QLabel" name="label_9">
+                 <property name="minimumSize">
+                  <size>
+                   <width>70</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>70</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>Пошлина:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="8" column="1">
+                <widget class="QComboBox" name="cbo_Customs">
+                 <item>
+                  <property name="text">
+                   <string>да</string>
+                  </property>
+                 </item>
+                 <item>
+                  <property name="text">
+                   <string>нет</string>
+                  </property>
+                 </item>
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>16777215</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item row="9" column="0">
+                <widget class="QLabel" name="label_3">
+                 <property name="minimumSize">
+                  <size>
+                   <width>80</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>80</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>Маркировка</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="9" column="1">
+                <widget class="QComboBox" name="cbo_Marking">
+                 <item>
+                  <property name="text">
+                   <string>Феникс</string>
+                  </property>
+                 </item>
+                 <item>
+                  <property name="text">
+                   <string>Поставщик</string>
+                  </property>
+                 </item>
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>16777215</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item row="10" column="0">
+                <widget class="QLabel" name="label_11">
+                 <property name="minimumSize">
+                  <size>
+                   <width>130</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>130</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>Сохранить историю?</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="10" column="1">
+                <widget class="QComboBox" name="cbo_History">
+                 <item>
+                  <property name="text">
+                   <string>да</string>
+                  </property>
+                 </item>
+                 <item>
+                  <property name="text">
+                   <string>нет</string>
+                  </property>
+                 </item>
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>16777215</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item row="11" column="0">
+                <widget class="QLabel" name="label_12">
+                 <property name="minimumSize">
+                  <size>
+                   <width>70</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>70</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>Дата цены</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="11" column="1">
+                <widget class="QDateEdit" name="date_Price">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>16777215</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item row="12" column="0">
+                <widget class="QLabel" name="label_13">
+                 <property name="minimumSize">
+                  <size>
+                   <width>130</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>130</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>включать в Рейтинг?</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="12" column="1">
+                <widget class="QComboBox" name="cbo_Rating">
+                 <item>
+                  <property name="text">
+                   <string>да</string>
+                  </property>
+                 </item>
+                 <item>
+                  <property name="text">
+                   <string>нет</string>
+                  </property>
+                 </item>
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>16777215</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item row="13" column="0">
+                <widget class="QLabel" name="label_new_supplier">
+                 <property name="text">
+                  <string>Новый поставщик</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="13" column="1">
+                <widget class="QLineEdit" name="line_NewSupplier">
+                 <property name="text">
+                  <string>название Поставщика</string>
+                 </property>
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>16777215</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <spacer name="verticalSpacer_left">
+              <property name="orientation">
+               <enum>Qt::Orientation::Vertical</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>20</width>
+                <height>20</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+            <item>
+             <widget class="QPushButton" name="btn_DownFile">
+              <property name="text">
+               <string>Скачать Шаблон</string>
+              </property>
+              <property name="icon">
+               <iconset resource="../resource.qrc">
+                <normaloff>:/icon/icon/arrow-down-circle — копия — копия.svg</normaloff>:/icon/icon/arrow-down-circle — копия — копия.svg</iconset>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>30</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="btn_Import">
+              <property name="text">
+               <string>Импорт</string>
+              </property>
+              <property name="icon">
+               <iconset resource="../resource.qrc">
+                <normaloff>:/icon/icon/arrow-up-circle — копия — копия.svg</normaloff>:/icon/icon/arrow-up-circle — копия — копия.svg</iconset>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>30</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="btn_Reset">
+              <property name="text">
+               <string>Сбросить все</string>
+              </property>
+              <property name="icon">
+               <iconset resource="../resource.qrc">
+                <normaloff>:/icon/icon/loader — копия — копия.svg</normaloff>:/icon/icon/loader — копия — копия.svg</iconset>
+              </property>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>30</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </item>
+         <item>
+          <widget class="QFrame" name="frame_RightPanel">
+           <property name="frameShape">
+            <enum>QFrame::Shape::StyledPanel</enum>
+           </property>
+           <property name="frameShadow">
+            <enum>QFrame::Shadow::Raised</enum>
+           </property>
+           <property name="minimumSize">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>16777215</width>
+             <height>16777215</height>
+            </size>
+           </property>
+           <property name="styleSheet">
+            <string notr="true">#frame_RightPanel {border: 1px solid #f09d54; border-radius: 8px;}</string>
+           </property>
+           <layout class="QVBoxLayout" name="verticalLayout_right">
+            <property name="spacing">
+             <number>6</number>
+            </property>
+            <property name="leftMargin">
+             <number>12</number>
+            </property>
+            <property name="topMargin">
+             <number>10</number>
+            </property>
+            <property name="rightMargin">
+             <number>12</number>
+            </property>
+            <property name="bottomMargin">
+             <number>12</number>
+            </property>
+            <item>
+             <widget class="QFrame" name="frame_top_right">
+              <property name="frameShape">
+               <enum>QFrame::Shape::NoFrame</enum>
+              </property>
+              <property name="frameShadow">
+               <enum>QFrame::Shadow::Plain</enum>
+              </property>
+              <layout class="QHBoxLayout" name="horizontalLayout_top_right">
+               <property name="spacing">
+                <number>6</number>
+               </property>
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QFrame" name="frame_line_FindProduct_box">
+                 <property name="frameShape">
+                  <enum>QFrame::Shape::NoFrame</enum>
+                 </property>
+                 <property name="frameShadow">
+                  <enum>QFrame::Shadow::Plain</enum>
+                 </property>
+                 <layout class="QVBoxLayout" name="verticalLayout_line_FindProduct">
+                  <property name="spacing">
+                   <number>2</number>
+                  </property>
+                  <property name="leftMargin">
+                   <number>0</number>
+                  </property>
+                  <property name="topMargin">
+                   <number>0</number>
+                  </property>
+                  <property name="rightMargin">
+                   <number>0</number>
+                  </property>
+                  <property name="bottomMargin">
+                   <number>0</number>
+                  </property>
+                  <item>
+                   <widget class="QLabel" name="label_14">
+                    <property name="text">
+                     <string>Поиск</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QLineEdit" name="line_FindProduct">
+                    <property name="minimumSize">
+                     <size>
+                      <width>260</width>
+                      <height>25</height>
+                     </size>
+                    </property>
+                    <property name="maximumSize">
+                     <size>
+                      <width>16777215</width>
+                      <height>25</height>
+                     </size>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+               <item>
+                <widget class="QFrame" name="frame_cbo_FindBrand_box">
+                 <property name="frameShape">
+                  <enum>QFrame::Shape::NoFrame</enum>
+                 </property>
+                 <property name="frameShadow">
+                  <enum>QFrame::Shadow::Plain</enum>
+                 </property>
+                 <layout class="QVBoxLayout" name="verticalLayout_cbo_FindBrand">
+                  <property name="spacing">
+                   <number>2</number>
+                  </property>
+                  <property name="leftMargin">
+                   <number>0</number>
+                  </property>
+                  <property name="topMargin">
+                   <number>0</number>
+                  </property>
+                  <property name="rightMargin">
+                   <number>0</number>
+                  </property>
+                  <property name="bottomMargin">
+                   <number>0</number>
+                  </property>
+                  <item>
+                   <widget class="QLabel" name="label_15">
+                    <property name="minimumSize">
+                     <size>
+                      <width>110</width>
+                      <height>0</height>
+                     </size>
+                    </property>
+                    <property name="maximumSize">
+                     <size>
+                      <width>110</width>
+                      <height>16777215</height>
+                     </size>
+                    </property>
+                    <property name="text">
+                     <string>Филтр по Бренду</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
+                   <widget class="QComboBox" name="cbo_FindBrand">
+                    <property name="minimumSize">
+                     <size>
+                      <width>180</width>
+                      <height>25</height>
+                     </size>
+                    </property>
+                    <property name="maximumSize">
+                     <size>
+                      <width>16777215</width>
+                      <height>25</height>
+                     </size>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+               <item>
+                <spacer name="horizontalSpacer_top">
+                 <property name="orientation">
+                  <enum>Qt::Orientation::Horizontal</enum>
+                 </property>
+                 <property name="sizeHint" stdset="0">
+                  <size>
+                   <width>40</width>
+                   <height>20</height>
+                  </size>
+                 </property>
+                </spacer>
+               </item>
+               <item>
+                <widget class="QPushButton" name="btn_AddLine">
+                 <property name="text">
+                  <string>Добавить строку</string>
+                 </property>
+                 <property name="icon">
+                  <iconset resource="../resource.qrc">
+                   <normaloff>:/icon/icon/plus-circle — копия — копия.svg</normaloff>:/icon/icon/plus-circle — копия — копия.svg</iconset>
+                 </property>
+                 <property name="minimumSize">
+                  <size>
+                   <width>150</width>
+                   <height>30</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>150</width>
+                   <height>30</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
+             <widget class="QTableWidget" name="table">
+              <property name="font">
+               <font>
+                <family>Tahoma</family>
+                <pointsize>10</pointsize>
+                <italic>false</italic>
+                <bold>false</bold>
+               </font>
+              </property>
+              <property name="verticalScrollBarPolicy">
+               <enum>Qt::ScrollBarPolicy::ScrollBarAlwaysOn</enum>
+              </property>
+              <property name="horizontalScrollBarPolicy">
+               <enum>Qt::ScrollBarPolicy::ScrollBarAlwaysOn</enum>
+              </property>
+              <property name="sizeAdjustPolicy">
+               <enum>QAbstractScrollArea::SizeAdjustPolicy::AdjustToContents</enum>
+              </property>
+              <property name="selectionMode">
+               <enum>QAbstractItemView::SelectionMode::SingleSelection</enum>
+              </property>
+              <property name="textElideMode">
+               <enum>Qt::TextElideMode::ElideMiddle</enum>
+              </property>
+              <property name="sortingEnabled">
+               <bool>true</bool>
+              </property>
+              <property name="wordWrap">
+               <bool>true</bool>
+              </property>
+              <property name="columnCount">
+               <number>0</number>
+              </property>
+              <attribute name="horizontalHeaderCascadingSectionResizes">
+               <bool>true</bool>
+              </attribute>
+              <attribute name="horizontalHeaderMinimumSectionSize">
+               <number>55</number>
+              </attribute>
+              <attribute name="horizontalHeaderShowSortIndicator" stdset="0">
+               <bool>true</bool>
+              </attribute>
+              <attribute name="horizontalHeaderStretchLastSection">
+               <bool>true</bool>
+              </attribute>
+              <attribute name="verticalHeaderVisible">
+               <bool>false</bool>
+              </attribute>
+              <attribute name="verticalHeaderCascadingSectionResizes">
+               <bool>true</bool>
+              </attribute>
+              <attribute name="verticalHeaderDefaultSectionSize">
+               <number>25</number>
+              </attribute>
+              <attribute name="verticalHeaderHighlightSections">
+               <bool>false</bool>
+              </attribute>
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>0</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>16777215</height>
+               </size>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QFrame" name="frame_Update">
+              <property name="frameShape">
+               <enum>QFrame::Shape::StyledPanel</enum>
+              </property>
+              <property name="frameShadow">
+               <enum>QFrame::Shadow::Raised</enum>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>50</height>
+               </size>
+              </property>
+              <property name="styleSheet">
+               <string notr="true">#frame_Update {border: 1px solid #f09d54; border-radius: 8px;}</string>
+              </property>
+              <layout class="QHBoxLayout" name="horizontalLayout_update">
+               <property name="spacing">
+                <number>8</number>
+               </property>
+               <property name="leftMargin">
+                <number>8</number>
+               </property>
+               <property name="topMargin">
+                <number>6</number>
+               </property>
+               <property name="rightMargin">
+                <number>8</number>
+               </property>
+               <property name="bottomMargin">
+                <number>6</number>
+               </property>
+               <item>
+                <widget class="QFrame" name="frame_18">
+                 <property name="frameShape">
+                  <enum>QFrame::Shape::NoFrame</enum>
+                 </property>
+                 <property name="frameShadow">
+                  <enum>QFrame::Shadow::Plain</enum>
+                 </property>
+                 <layout class="QVBoxLayout" name="verticalLayout_msg">
+                  <property name="spacing">
+                   <number>0</number>
+                  </property>
+                  <property name="leftMargin">
+                   <number>0</number>
+                  </property>
+                  <property name="topMargin">
+                   <number>0</number>
+                  </property>
+                  <property name="rightMargin">
+                   <number>0</number>
+                  </property>
+                  <property name="bottomMargin">
+                   <number>0</number>
+                  </property>
+                  <item>
+                   <widget class="QLabel" name="label_msg">
+                    <property name="text">
+                     <string>Сообщений нет</string>
+                    </property>
+                   </widget>
+                  </item>
+                 </layout>
+                </widget>
+               </item>
+               <item>
+                <spacer name="horizontalSpacer_update">
+                 <property name="orientation">
+                  <enum>Qt::Orientation::Horizontal</enum>
+                 </property>
+                 <property name="sizeHint" stdset="0">
+                  <size>
+                   <width>40</width>
+                   <height>20</height>
+                  </size>
+                 </property>
+                </spacer>
+               </item>
+               <item>
+                <widget class="QPushButton" name="btn_Save">
+                 <property name="text">
+                  <string>Сохранить</string>
+                 </property>
+                 <property name="icon">
+                  <iconset resource="../resource.qrc">
+                   <normaloff>:/icon/icon/save — копия — копия.svg</normaloff>:/icon/icon/save — копия — копия.svg</iconset>
+                 </property>
+                 <property name="minimumSize">
+                  <size>
+                   <width>160</width>
+                   <height>30</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>160</width>
+                   <height>30</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+           </layout>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources>
+  <include location="../resource.qrc" />
+ </resources>
+ <connections />
+</ui>

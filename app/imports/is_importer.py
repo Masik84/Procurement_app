@@ -52,7 +52,7 @@ class ISImporter:
 
                 col_code = _find_header_index(headers, "Phoenix code")
                 col_products = _find_header_index(headers, "PRODUCTS")
-                col_remains = _find_header_index(headers, "Remains w confirmed", "REMAINS", "CONFIRMED")
+                col_remains = _find_header_index(headers, "Remains w confirmed")
                 col_confirmed = _find_header_index(headers, "Confirmed")
 
                 required = [col_code, col_products, col_remains, col_confirmed]

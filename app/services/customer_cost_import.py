@@ -117,12 +117,13 @@ class CustomerCostImportService:
         for row in rows:
             if row.new_product_name is None or not str(row.new_product_name).strip():
                 continue
-            if row.new_is_excise is None:
-                raise ValueError(f"Для нового продукта '{row.new_product_name}' не заполнено поле new_is_excise.")
-            if row.new_brand is None or not str(row.new_brand).strip():
-                raise ValueError(f"Для нового продукта '{row.new_product_name}' не заполнен new_brand.")
-            if row.new_pack is None:
-                raise ValueError(f"Для нового продукта '{row.new_product_name}' не заполнен new_pack.")
+
+            self.product_matching.validate_new_product_fields(
+                product_name=row.new_product_name,
+                brand=row.new_brand,
+                pack=row.new_pack,
+                is_excise=row.new_is_excise,
+            )
 
     def create_products_from_temp(self, batch_id: str, imported_by: str) -> int:
         rows = self.session.query(TempCustomerCostImport).filter(

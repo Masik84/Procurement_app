@@ -16,6 +16,7 @@ from PySide6.QtUiTools import QUiLoader
 
 from app.db.models import Product, ProductArticle
 from app.db.db import SessionLocal
+from app.ui.table_style import setup_data_table
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -60,49 +61,9 @@ class ProductArticlesPage(QWidget):
 
     def setup_ui(self):
         self.table = self.ui.table
-
-        self.table.setSelectionBehavior(QTableWidget.SelectItems)
-        self.table.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.EditKeyPressed)
-        self.table.setAlternatingRowColors(True)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSortingEnabled(True)
-        self.table.setWordWrap(False)
-        self.table.setTextElideMode(Qt.TextElideMode.ElideRight)
-
+        setup_data_table(self.table, sorting=True)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
-
-        self.table.setStyleSheet("""
-            QTableWidget {
-                alternate-background-color: #f0f0f0;
-                selection-background-color: #3daee9;
-                selection-color: black;
-            }
-            QTableWidget::item {
-                padding: 3px;
-            }
-            QTableWidget::item:editable {
-                background-color: #fff5cc;
-                border: 1px solid #ffcc66;
-            }
-            QTableWidget::item:focus {
-                background-color: #f28223;
-                border: 1px solid #ff9900;
-                padding: 1px;
-            }
-            QTableWidget QLineEdit {
-                background-color: #fff2cc;
-                color: black;
-                border: 1px solid #ff9900;
-                padding: 1px;
-            }
-        """)
-
-        self._updating_table = False
-        self.table.setTabKeyNavigation(True)
-        self.table.setCornerButtonEnabled(False)
 
     def setup_connections(self):
         self.table.itemChanged.connect(self.on_item_changed)
