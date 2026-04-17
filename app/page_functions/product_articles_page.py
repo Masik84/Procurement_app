@@ -16,7 +16,7 @@ from PySide6.QtUiTools import QUiLoader
 
 from app.db.models import Product, ProductArticle
 from app.db.db import SessionLocal
-from app.ui.table_style import setup_data_table
+from app.ui.table_style import *
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -519,22 +519,17 @@ class ProductArticlesPage(QWidget):
 
     def show_message(self, text):
         self.ui.label_msg.setText(text)
-        self.ui.label_msg.setStyleSheet("""
-            QLabel {
-                background-color: #CCFF99;
-                color: #12501A;
-                border: 2px solid #12501A;
-                border-radius: 5px;
-                padding: 8px;
-                font: 10pt "Tahoma";
-                margin: 2px;
-            }
-        """)
+        self.ui.label_msg.setProperty("active", True)
+        self.ui.label_msg.style().unpolish(self.ui.label_msg)
+        self.ui.label_msg.style().polish(self.ui.label_msg)
         self.ui.label_msg.setVisible(True)
 
     def clear_message(self):
         self.ui.label_msg.setText("")
-        self.ui.label_msg.setStyleSheet("")
+        self.ui.label_msg.setProperty("active", False)
+        self.ui.label_msg.style().unpolish(self.ui.label_msg)
+        self.ui.label_msg.style().polish(self.ui.label_msg)
+        self.ui.label_msg.setVisible(False)
 
     def show_error_message(self, text):
         msg = QMessageBox()

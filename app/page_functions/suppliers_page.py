@@ -19,7 +19,7 @@ from PySide6.QtUiTools import QUiLoader
 
 from app.db.models import Supplier
 from app.db.db import SessionLocal
-from app.ui.table_style import setup_data_table
+from app.ui.table_style import *
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -416,8 +416,11 @@ class SuppliersPage(QWidget):
             return value
 
         text = str(value).strip()
-        if text == "":
-            return Decimal("0")
+
+        if "%" in text:
+            text = text.replace("%", "").strip()
+            text = text.replace(",", ".")
+            return Decimal(text) / Decimal("100")
 
         text = text.replace(",", ".")
 
@@ -536,7 +539,10 @@ class SuppliersPage(QWidget):
                     )
                     continue
 
-                text_value = "" if value is None else str(value)
+                if col_name in {"reexport_percent", "fx_rate_markup"}:
+                    text_value = self._format_percent(value)
+                else:
+                    text_value = "" if value is None else str(value).replace(".", ",")
                 item = self._build_table_item(col_name, text_value)
                 self._original_values[row_id][col_name] = text_value
                 self.table.setItem(row_index, col_index, item)
@@ -594,6 +600,15 @@ class SuppliersPage(QWidget):
 
         return item
 
+    def _format_percent(self, value):
+        if value is None:
+            return ""
+
+        try:
+            return f"{float(value) * 100:.1f}".replace(".", ",") + "%"
+        except Exception:
+            return str(value)
+    
     def add_line(self):
         self._updating_table = True
 
@@ -654,12 +669,17 @@ class SuppliersPage(QWidget):
 
     def show_message(self, text):
         self.ui.label_msg.setText(text)
-
+        self.ui.label_msg.setProperty("active", True)
+        self.ui.label_msg.style().unpolish(self.ui.label_msg)
+        self.ui.label_msg.style().polish(self.ui.label_msg)
         self.ui.label_msg.setVisible(True)
 
     def clear_message(self):
         self.ui.label_msg.setText("")
-        self.ui.label_msg.setStyleSheet("")
+        self.ui.label_msg.setProperty("active", False)
+        self.ui.label_msg.style().unpolish(self.ui.label_msg)
+        self.ui.label_msg.style().polish(self.ui.label_msg)
+        self.ui.label_msg.setVisible(False)
 
     def show_error_message(self, text):
         msg = QMessageBox()

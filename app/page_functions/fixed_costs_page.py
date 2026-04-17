@@ -17,7 +17,7 @@ from PySide6.QtUiTools import QUiLoader
 
 from app.db.models import FixedCosts
 from app.db.db import SessionLocal
-from app.ui.table_style import setup_data_table
+from app.ui.table_style import *
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -257,7 +257,7 @@ class FixedCostsPage(QWidget):
         self._display_data(data)
 
     def _build_item(self, value, editable=True, align_left=False):
-        item = QTableWidgetItem("" if value is None else str(value))
+        item = QTableWidgetItem(format_table_value(value))
         flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
         if editable:
             flags |= Qt.ItemIsEditable
@@ -292,7 +292,17 @@ class FixedCostsPage(QWidget):
 
     def show_message(self, text):
         self.ui.label_msg.setText(text)
+        self.ui.label_msg.setProperty("active", True)
+        self.ui.label_msg.style().unpolish(self.ui.label_msg)
+        self.ui.label_msg.style().polish(self.ui.label_msg)
         self.ui.label_msg.setVisible(True)
+
+    def clear_message(self):
+        self.ui.label_msg.setText("")
+        self.ui.label_msg.setProperty("active", False)
+        self.ui.label_msg.style().unpolish(self.ui.label_msg)
+        self.ui.label_msg.style().polish(self.ui.label_msg)
+        self.ui.label_msg.setVisible(False)
 
     def show_error_message(self, text):
         msg = QMessageBox()

@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QFile, Qt, QUrl
+from PySide6.QtCore import QFile, Qt, QUrl, QTimer
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -35,7 +35,7 @@ from app.services.product_stock_run import ProductStockImportRun
 from app.utils.batch import get_current_username
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
-from app.ui.table_style import setup_data_table
+from app.ui.table_style import *
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 UI_PATH = BASE_DIR / "app" / "ui" / "windows" / "stock_supplier_orders.ui"
@@ -163,6 +163,7 @@ class ProductStockPage(QWidget):
         self.ui.btn_Save.clicked.connect(self.save_all)
         self.ui.btn_Reset.clicked.connect(self.reset_all)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
+        self.table.cellDoubleClicked.connect(self.start_cell_edit)
         self.table.itemChanged.connect(self.on_item_changed)
 
     def show_message(self, text: str):
@@ -297,31 +298,114 @@ class ProductStockPage(QWidget):
             self.table.setColumnCount(len(columns))
             self.table.setHorizontalHeaderLabels([c.header for c in columns])
             self.table.setRowCount(len(data))
-            brand_values = self._get_brand_values()
 
             for row_index, row_data in enumerate(data):
                 row_id = row_data["id"]
                 for col_index, col in enumerate(columns):
                     value = row_data.get(col.key)
-                    if col.kind == "product_combo":
-                        self.table.setCellWidget(row_index, col_index, self._build_product_combo(row_id, value))
-                    elif col.kind == "brand_combo":
-                        self.table.setCellWidget(row_index, col_index, self._build_brand_combo(row_id, value, brand_values))
-                    elif col.kind == "checkbox":
+                    if col.kind == "checkbox":
                         self.table.setCellWidget(row_index, col_index, self._build_checkbox(row_id, col.key, bool(value)))
                     elif col.kind == "indicator":
                         self.table.setCellWidget(row_index, col_index, self._build_indicator(bool(value)))
+                    elif col.kind == "product_combo":
+                        text = self._get_product_name_by_id(value)
+                        self.table.setItem(row_index, col_index, self._build_display_item(row_id, col.key, text))
+                    elif col.kind == "brand_combo":
+                        self.table.setItem(row_index, col_index, self._build_display_item(row_id, col.key, format_table_value(value)))
                     else:
-                        item = QTableWidgetItem("" if value is None else str(value))
+                        item = QTableWidgetItem(format_table_value(value))
                         item.setData(Qt.UserRole, row_id)
                         flags = Qt.ItemIsSelectable | Qt.ItemIsEnabled
                         if col.editable:
                             flags |= Qt.ItemIsEditable
                         item.setFlags(flags)
                         self.table.setItem(row_index, col_index, item)
+
+            self.table.resizeColumnsToContents()
         finally:
             self.table.blockSignals(False)
             self._updating_table = False
+
+    def start_cell_edit(self, row: int, column: int):
+        if self._updating_table:
+            return
+
+        columns = COLUMN_DEFS[self._mode]
+        if row < 0 or row >= self.table.rowCount() or column < 0 or column >= len(columns):
+            return
+
+        col = columns[column]
+        if col.kind not in {"product_combo", "brand_combo"}:
+            return
+
+        row_id = None
+        for check_col in range(self.table.columnCount()):
+            item = self.table.item(row, check_col)
+            if item is not None:
+                row_id = item.data(Qt.UserRole)
+                if row_id is not None:
+                    break
+        if row_id is None:
+            return
+
+        if col.kind == "product_combo":
+            combo = self._build_product_combo(row_id, self._get_selected_product_id(row_id))
+            combo.activated.connect(lambda _, r=row, rid=row_id, c=combo, key=col.key: self.finish_product_edit(r, rid, c, key))
+            self.table.setCellWidget(row, column, combo)
+            QTimer.singleShot(0, combo.showPopup)
+        elif col.kind == "brand_combo":
+            combo = self._build_brand_combo(row_id, self._get_brand_text(row_id), self._get_brand_values())
+            combo.activated.connect(lambda _, r=row, rid=row_id, c=combo, key=col.key: self.finish_brand_edit(r, rid, c, key))
+            if combo.lineEdit() is not None:
+                combo.lineEdit().returnPressed.connect(lambda r=row, rid=row_id, c=combo, key=col.key: self.finish_brand_edit(r, rid, c, key))
+            self.table.setCellWidget(row, column, combo)
+            combo.setFocus()
+            QTimer.singleShot(0, combo.showPopup)
+
+    def _build_display_item(self, row_id: int, field_name: str, value: str):
+        item = QTableWidgetItem(value)
+        item.setData(Qt.UserRole, row_id)
+        item.setData(Qt.UserRole + 1, field_name)
+        item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        return item
+
+    def _get_product_name_by_id(self, product_id):
+        if not product_id:
+            return ""
+        with self.get_session() as session:
+            product = session.query(Product).filter(Product.id == product_id).first()
+            return product.name or "" if product else ""
+
+    def _get_selected_product_id(self, row_id: int):
+        with self.get_session() as session:
+            row = self._get_row_by_id(session, row_id)
+            return row.selected_product_id if row else None
+
+    def _get_brand_text(self, row_id: int):
+        with self.get_session() as session:
+            row = self._get_row_by_id(session, row_id)
+            return row.new_brand or "" if row else ""
+
+    def finish_product_edit(self, row: int, row_id: int, combo: QComboBox, field_name: str):
+        value = combo.currentData()
+        self.update_temp_field(row_id, field_name, value, reload=False)
+        self.table.removeCellWidget(row, self._column_index_by_key(field_name))
+        self.table.setItem(row, self._column_index_by_key(field_name), self._build_display_item(row_id, field_name, combo.currentText().strip()))
+        self.table.resizeColumnsToContents()
+
+    def finish_brand_edit(self, row: int, row_id: int, combo: QComboBox, field_name: str):
+        value = clean_multi_spaces(combo.currentText()) or None
+        self.update_temp_field(row_id, field_name, value, reload=False, clear_selected=True)
+        self.table.removeCellWidget(row, self._column_index_by_key(field_name))
+        self.table.setItem(row, self._column_index_by_key(field_name), self._build_display_item(row_id, field_name, format_table_value(value)))
+        self.table.resizeColumnsToContents()
+
+    def _column_index_by_key(self, field_name: str) -> int:
+        for index, col in enumerate(COLUMN_DEFS[self._mode]):
+            if col.key == field_name:
+                return index
+        return -1
 
     def _build_indicator(self, checked: bool):
         checkbox = QCheckBox()
@@ -351,9 +435,6 @@ class ProductStockPage(QWidget):
         combo.addItem("")
         combo.addItems(brands)
         combo.setCurrentText(value or "")
-        combo.currentTextChanged.connect(
-            lambda text, rid=row_id: self.update_temp_field(rid, "new_brand", clean_multi_spaces(text) or None, reload=False, clear_selected=True)
-        )
         return combo
 
     def _build_product_combo(self, row_id: int, selected_product_id: int | None):
@@ -372,9 +453,6 @@ class ProductStockPage(QWidget):
         idx = combo.findData(selected_product_id)
         if idx >= 0:
             combo.setCurrentIndex(idx)
-        combo.currentIndexChanged.connect(
-            lambda _, rid=row_id, c=combo: self.update_temp_field(rid, "selected_product_id", c.currentData(), reload=False)
-        )
         return combo
 
     def on_item_changed(self, item: QTableWidgetItem):

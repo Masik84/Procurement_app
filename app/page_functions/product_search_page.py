@@ -1,11 +1,10 @@
+
 from __future__ import annotations
 
-import shutil
 from datetime import datetime
 from pathlib import Path
 
-import pandas as pd
-from PySide6.QtCore import Qt, QFile, QEvent, QPoint
+from PySide6.QtCore import Qt, QFile, QEvent, QPoint, QTimer
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -26,17 +25,17 @@ from sqlalchemy.orm import joinedload
 
 from app.db.db import SessionLocal
 from app.db.models import Product, TempProductSearchImport
+from app.exports.product_search_excel_exporter import ProductSearchExcelExporter
 from app.imports.product_search_importer import ProductSearchImporter
 from app.services.product_search_service import ProductSearchService
+from app.ui.table_style import *
 from app.utils.batch import get_current_username
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
-from app.ui.table_style import setup_data_table
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 PRODUCT_SEARCH_UI = BASE_DIR / "app" / "ui" / "windows" / "product_search.ui"
-PRODUCT_SEARCH_TEMPLATE = BASE_DIR / "ProductSearchTemplate.xlsx"
 
 
 def load_ui(ui_path: Path):
@@ -56,6 +55,14 @@ def load_ui(ui_path: Path):
 
 
 class ProductSearchPage(QWidget):
+    COL_PRODUCT = 0
+    COL_ARTICLE = 1
+    COL_SUPPLIER_PRODUCT_NAME = 2
+    COL_NEW_PRODUCT_NAME = 3
+    COL_BRAND = 4
+    COL_PACK = 5
+    COL_EXCISE = 6
+
     def __init__(self):
         super().__init__()
 
@@ -71,7 +78,6 @@ class ProductSearchPage(QWidget):
         self._updating_table = False
         self._pending_changes: dict[int, dict] = {}
         self._pending_deletes: set[int] = set()
-        self._new_rows: set[int] = set()
         self._table_row_ids: list[int] = []
 
         self.columns = [
@@ -109,6 +115,7 @@ class ProductSearchPage(QWidget):
         self.ui.line_FindProduct.installEventFilter(self)
 
     def setup_connections(self):
+        self.table.cellDoubleClicked.connect(self.start_cell_edit)
         self.table.itemChanged.connect(self.on_item_changed)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
 
@@ -117,9 +124,6 @@ class ProductSearchPage(QWidget):
         self.ui.btn_AddLine.clicked.connect(self.add_line)
         self.ui.btn_Save.clicked.connect(self.apply_pending_changes)
         self.ui.btn_Reset.clicked.connect(self.reset_form)
-
-        self.ui.cbo_FindBrand.currentTextChanged.connect(self.refresh_current_product_combo)
-        self.ui.line_FindProduct.textChanged.connect(self.refresh_current_product_combo)
 
     def get_session(self):
         return SessionLocal()
@@ -131,21 +135,10 @@ class ProductSearchPage(QWidget):
                 watched.toolTip(),
                 watched,
             )
-
-        if isinstance(watched, QComboBox):
-            row_id = watched.property("row_id")
-            role = watched.property("combo_role")
-            if row_id and role and event.type() in {QEvent.FocusIn, QEvent.MouseButtonPress}:
-                if role == "product_combo":
-                    self.populate_product_combo(watched, int(row_id), keep_current=True)
-                elif role == "brand_combo":
-                    self.populate_brand_combo(watched, keep_current=True)
-
         return super().eventFilter(watched, event)
 
     def load_initial_state(self):
         self.start_new_batch()
-        self.load_find_brands()
         self.cleanup_old_temp_rows()
         self.load_table_rows()
 
@@ -167,30 +160,8 @@ class ProductSearchPage(QWidget):
         self.ui.label_msg.setText(text)
         QMessageBox.warning(self, "Ошибка", text)
 
-    def load_find_brands(self):
-        current_text = self.ui.cbo_FindBrand.currentText().strip()
-        brands = self.get_brand_names()
-
-        self.ui.cbo_FindBrand.blockSignals(True)
-        self.ui.cbo_FindBrand.clear()
-        self.ui.cbo_FindBrand.addItem("-")
-        if brands:
-            self.ui.cbo_FindBrand.addItems(brands)
-        self.ui.cbo_FindBrand.blockSignals(False)
-
-        if current_text:
-            self.set_combo_text(self.ui.cbo_FindBrand, current_text if current_text != "" else "-")
-
-    def get_brand_names(self) -> list[str]:
-        with self.get_session() as session:
-            rows = (
-                session.query(Product.brand)
-                .filter(Product.brand.isnot(None), Product.brand != "")
-                .distinct()
-                .order_by(Product.brand.asc())
-                .all()
-            )
-        return [row[0] for row in rows if row[0]]
+    def show_popup_error(self, text: str):
+        QMessageBox.warning(self, "Ошибка", text)
 
     def set_combo_text(self, combo: QComboBox, value: str):
         index = combo.findText(value)
@@ -200,10 +171,6 @@ class ProductSearchPage(QWidget):
             combo.setCurrentText(value)
 
     def download_template(self):
-        if not PRODUCT_SEARCH_TEMPLATE.exists():
-            df = pd.DataFrame(columns=["Article", "Product name"])
-            df.to_excel(PRODUCT_SEARCH_TEMPLATE, index=False)
-
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Сохранить шаблон",
@@ -216,9 +183,19 @@ class ProductSearchPage(QWidget):
         if not file_path.lower().endswith(".xlsx"):
             file_path += ".xlsx"
 
-        shutil.copyfile(PRODUCT_SEARCH_TEMPLATE, file_path)
-        QDesktopServices.openUrl(Path(file_path).as_uri())
-        self.show_message("Шаблон сохранен")
+        try:
+            exporter = ProductSearchExcelExporter()
+            exporter.export_template(file_path)
+            QDesktopServices.openUrl(Path(file_path).as_uri())
+            self.show_message("Шаблон сохранен")
+        except PermissionError:
+            self.show_popup_error(
+                "Не удалось сохранить файл.\n\n"
+                "Скорее всего, файл уже открыт в Excel.\n"
+                "Закрой файл и попробуй снова."
+            )
+        except Exception as e:
+            self.show_popup_error(f"Ошибка при сохранении шаблона: {str(e)}")
 
     def import_file(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -271,7 +248,6 @@ class ProductSearchPage(QWidget):
         self._updating_table = True
         self._table_row_ids = [row.id for row in rows]
         self._pending_deletes.clear()
-        self._new_rows.clear()
 
         self.table.clear()
         self.table.setColumnCount(len(self.headers))
@@ -281,39 +257,46 @@ class ProductSearchPage(QWidget):
         for row_index, row in enumerate(rows):
             self._pending_changes.setdefault(row.id, {})
 
-            self.table.setCellWidget(
+            product_name = row.selected_product.name if row.selected_product else ""
+            brand_name = row.new_brand or ""
+
+            self.table.setItem(
                 row_index,
-                0,
-                self.build_product_combo(
-                    row.id,
-                    row.selected_product_id,
-                    row.selected_product.name if row.selected_product else "",
-                ),
+                self.COL_PRODUCT,
+                self.build_table_item("selected_product_id", product_name, editable=False, align_left=True),
             )
-            self.table.setItem(row_index, 1, self.build_table_item("source_article", row.source_article or ""))
-            self.table.setItem(row_index, 2, self.build_table_item("source_product_name", row.source_product_name or ""))
-            self.table.setItem(row_index, 3, self.build_table_item("new_product_name", row.new_product_name or ""))
-            self.table.setCellWidget(
+            self.table.setItem(
                 row_index,
-                4,
-                self.build_brand_combo(row.id, row.new_brand or ""),
+                self.COL_ARTICLE,
+                self.build_table_item("source_article", row.source_article or "", editable=True, align_left=True),
             )
-            self.table.setItem(row_index, 5, self.build_table_item("new_pack", self.value_to_text(row.new_pack)))
+            self.table.setItem(
+                row_index,
+                self.COL_SUPPLIER_PRODUCT_NAME,
+                self.build_table_item("source_product_name", row.source_product_name or "", editable=True, align_left=True),
+            )
+            self.table.setItem(
+                row_index,
+                self.COL_NEW_PRODUCT_NAME,
+                self.build_table_item("new_product_name", row.new_product_name or "", editable=True, align_left=True),
+            )
+            self.table.setItem(
+                row_index,
+                self.COL_BRAND,
+                self.build_table_item("new_brand", brand_name, editable=False, align_left=True),
+            )
+            self.table.setItem(
+                row_index,
+                self.COL_PACK,
+                self.build_table_item("new_pack", self.value_to_text(row.new_pack), editable=True, align_left=False),
+            )
             self.table.setCellWidget(
                 row_index,
-                6,
+                self.COL_EXCISE,
                 self.build_checkbox_widget(row.id, bool(row.new_is_excise)),
             )
 
         self.table.resizeColumnsToContents()
-        self.table.setColumnWidth(0, 260)
-        self.table.setColumnWidth(1, 140)
-        self.table.setColumnWidth(2, 280)
-        self.table.setColumnWidth(3, 280)
-        self.table.setColumnWidth(4, 160)
-        self.table.setColumnWidth(5, 100)
-        self.table.setColumnWidth(6, 110)
-
         self._updating_table = False
 
     def value_to_text(self, value: object) -> str:
@@ -324,58 +307,127 @@ class ProductSearchPage(QWidget):
             return str(value)
         return str(number).replace(".", ",")
 
-    def build_table_item(self, column_name: str, value: str) -> QTableWidgetItem:
+    def build_table_item(self, column_name: str, value: str, *, editable: bool = True, align_left: bool = False) -> QTableWidgetItem:
         item = QTableWidgetItem(value)
         item.setData(Qt.UserRole, column_name)
-        item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
-        if column_name in self.numeric_columns:
+        flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
+        if editable:
+            flags |= Qt.ItemIsEditable
+        item.setFlags(flags)
+        if column_name in self.numeric_columns and editable:
             item.setTextAlignment(Qt.AlignCenter)
         else:
-            item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter if align_left else Qt.AlignCenter)
         return item
+
+    def start_cell_edit(self, row: int, column: int):
+        if self._updating_table:
+            return
+
+        if row < 0 or row >= len(self._table_row_ids):
+            return
+
+        row_id = self._table_row_ids[row]
+
+        if column == self.COL_PRODUCT:
+            current_name = self._get_cell_text(row, column)
+            current_product_id = self._get_row_selected_product_id(row_id)
+
+            combo = self.build_product_combo(row_id, current_product_id, current_name)
+            combo.activated.connect(
+                lambda _=None, r=row, rid=row_id, cb=combo: self.finish_product_edit(r, rid, cb)
+            )
+            if combo.lineEdit() is not None:
+                combo.lineEdit().returnPressed.connect(
+                    lambda r=row, rid=row_id, cb=combo: self.finish_product_edit(r, rid, cb)
+                )
+
+            self.table.setCellWidget(row, column, combo)
+            combo.setFocus()
+            QTimer.singleShot(0, combo.showPopup)
+
+        elif column == self.COL_BRAND:
+            current_text = self._get_cell_text(row, column)
+
+            combo = self.build_brand_combo(row_id, current_text)
+            combo.activated.connect(
+                lambda _=None, r=row, rid=row_id, cb=combo: self.finish_brand_edit(r, rid, cb)
+            )
+            if combo.lineEdit() is not None:
+                combo.lineEdit().returnPressed.connect(
+                    lambda r=row, rid=row_id, cb=combo: self.finish_brand_edit(r, rid, cb)
+                )
+
+            self.table.setCellWidget(row, column, combo)
+            combo.setFocus()
+            QTimer.singleShot(0, combo.showPopup)
+
+    def _get_cell_text(self, row: int, column: int) -> str:
+        item = self.table.item(row, column)
+        return item.text().strip() if item else ""
+
+    def _get_row_selected_product_id(self, row_id: int):
+        changes = self._pending_changes.get(row_id, {})
+        if "selected_product_id" in changes:
+            return changes.get("selected_product_id")
+
+        with self.get_session() as session:
+            row = (
+                session.query(TempProductSearchImport)
+                .filter(TempProductSearchImport.id == row_id)
+                .first()
+            )
+            return row.selected_product_id if row else None
+
+    def get_filtered_products(self) -> list[Product]:
+        brand_filter = clean_multi_spaces(self.ui.cbo_FindBrand.currentText())
+        text_filter = clean_multi_spaces(self.ui.line_FindProduct.text())
+
+        with self.get_session() as session:
+            query = session.query(Product).filter(Product.name.isnot(None), Product.name != "")
+            if brand_filter and brand_filter != "-":
+                query = query.filter(Product.brand == brand_filter)
+            if text_filter:
+                query = query.filter(Product.name.ilike(f"%{text_filter}%"))
+            products = query.order_by(Product.name.asc()).all()
+        return products
+
+    def get_brand_names(self) -> list[str]:
+        with self.get_session() as session:
+            rows = (
+                session.query(Product.brand)
+                .filter(Product.brand.isnot(None), Product.brand != "")
+                .distinct()
+                .order_by(Product.brand.asc())
+                .all()
+            )
+        return [row[0] for row in rows if row[0]]
 
     def build_product_combo(self, row_id: int, selected_product_id: int | None, selected_name: str) -> QComboBox:
         combo = QComboBox()
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.NoInsert)
         combo.setProperty("row_id", row_id)
         combo.setProperty("combo_role", "product_combo")
-        combo.installEventFilter(self)
-        combo.setToolTip("Выберите продукт из базы")
-        self.populate_product_combo(combo, row_id, keep_current=False, selected_product_id=selected_product_id, selected_name=selected_name)
-        combo.currentIndexChanged.connect(lambda _=None, rid=row_id, cb=combo: self.on_product_combo_changed(rid, cb))
-        return combo
+        combo.setToolTip("Выберите продукт из базы или впишите вручную")
 
-    def populate_product_combo(
-        self,
-        combo: QComboBox,
-        row_id: int,
-        keep_current: bool,
-        selected_product_id: int | None = None,
-        selected_name: str = "",
-    ):
-        current_id = combo.currentData() if keep_current else selected_product_id
-        current_name = combo.currentText().strip() if keep_current else selected_name
-
-        products = self.get_filtered_products()
-        combo.blockSignals(True)
-        combo.clear()
         combo.addItem("", None)
-
         added_ids: set[int] = set()
-        for product in products:
+
+        for product in self.get_filtered_products():
             combo.addItem(product.name, product.id)
             added_ids.add(product.id)
 
-        if current_id and current_id not in added_ids and current_name:
-            combo.insertItem(1, current_name, current_id)
+        if selected_product_id and selected_product_id not in added_ids and selected_name:
+            combo.addItem(selected_name, selected_product_id)
 
-        index = combo.findData(current_id)
+        index = combo.findData(selected_product_id)
         if index >= 0:
             combo.setCurrentIndex(index)
-        elif current_name and combo.findText(current_name) >= 0:
-            combo.setCurrentText(current_name)
         else:
-            combo.setCurrentIndex(0)
-        combo.blockSignals(False)
+            combo.setCurrentText(selected_name or "")
+
+        return combo
 
     def build_brand_combo(self, row_id: int, brand_name: str) -> QComboBox:
         combo = QComboBox()
@@ -383,24 +435,67 @@ class ProductSearchPage(QWidget):
         combo.setInsertPolicy(QComboBox.NoInsert)
         combo.setProperty("row_id", row_id)
         combo.setProperty("combo_role", "brand_combo")
-        combo.installEventFilter(self)
-        self.populate_brand_combo(combo, keep_current=False, current_text=brand_name)
-        combo.currentTextChanged.connect(lambda _=None, rid=row_id, cb=combo: self.on_brand_combo_changed(rid, cb))
+        combo.setToolTip("Выберите бренд из базы или впишите вручную")
+
+        combo.addItem("")
+        for brand in self.get_brand_names():
+            combo.addItem(brand)
+
+        if brand_name and combo.findText(brand_name) < 0:
+            combo.addItem(brand_name)
+
+        combo.setCurrentText(brand_name)
         return combo
 
-    def populate_brand_combo(self, combo: QComboBox, keep_current: bool, current_text: str = ""):
-        brand_value = combo.currentText().strip() if keep_current else current_text
-        brands = self.get_brand_names()
+    def _resolve_combo_product(self, combo: QComboBox):
+        text = clean_multi_spaces(combo.currentText())
+        if not text:
+            return None, ""
 
-        combo.blockSignals(True)
-        combo.clear()
-        combo.addItem("")
-        if brands:
-            combo.addItems(brands)
-        if brand_value and combo.findText(brand_value) < 0:
-            combo.addItem(brand_value)
-        combo.setCurrentText(brand_value)
-        combo.blockSignals(False)
+        for index in range(combo.count()):
+            item_text = clean_multi_spaces(combo.itemText(index))
+            if item_text.lower() == text.lower():
+                return combo.itemData(index), combo.itemText(index)
+
+        return None, text
+
+    def finish_product_edit(self, row: int, row_id: int, combo: QComboBox):
+        if self.table.cellWidget(row, self.COL_PRODUCT) is not combo:
+            return
+
+        product_id, product_name = self._resolve_combo_product(combo)
+
+        self._pending_changes.setdefault(row_id, {})
+        self._pending_changes[row_id]["selected_product_id"] = product_id
+
+        self.table.removeCellWidget(row, self.COL_PRODUCT)
+        self._updating_table = True
+        self.table.setItem(
+            row,
+            self.COL_PRODUCT,
+            self.build_table_item("selected_product_id", product_name, editable=False, align_left=True),
+        )
+        self._updating_table = False
+        self.table.resizeColumnsToContents()
+
+    def finish_brand_edit(self, row: int, row_id: int, combo: QComboBox):
+        if self.table.cellWidget(row, self.COL_BRAND) is not combo:
+            return
+
+        brand_name = clean_multi_spaces(combo.currentText()) or None
+
+        self._pending_changes.setdefault(row_id, {})
+        self._pending_changes[row_id]["new_brand"] = brand_name
+
+        self.table.removeCellWidget(row, self.COL_BRAND)
+        self._updating_table = True
+        self.table.setItem(
+            row,
+            self.COL_BRAND,
+            self.build_table_item("new_brand", brand_name or "", editable=False, align_left=True),
+        )
+        self._updating_table = False
+        self.table.resizeColumnsToContents()
 
     def build_checkbox_widget(self, row_id: int, checked: bool) -> QWidget:
         checkbox = QCheckBox()
@@ -425,18 +520,6 @@ class ProductSearchPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         return container
 
-    def on_product_combo_changed(self, row_id: int, combo: QComboBox):
-        if self._updating_table:
-            return
-        self._pending_changes.setdefault(row_id, {})
-        self._pending_changes[row_id]["selected_product_id"] = combo.currentData()
-
-    def on_brand_combo_changed(self, row_id: int, combo: QComboBox):
-        if self._updating_table:
-            return
-        self._pending_changes.setdefault(row_id, {})
-        self._pending_changes[row_id]["new_brand"] = clean_multi_spaces(combo.currentText()) or None
-
     def on_checkbox_changed(self, row_id: int, checked: bool):
         if self._updating_table:
             return
@@ -453,7 +536,7 @@ class ProductSearchPage(QWidget):
 
         row_id = self._table_row_ids[row]
         column_name = item.data(Qt.UserRole)
-        if not column_name:
+        if not column_name or column_name in {"selected_product_id", "new_brand"}:
             return
 
         value = clean_multi_spaces(item.text())
@@ -488,8 +571,8 @@ class ProductSearchPage(QWidget):
                 rows.setdefault(item.row(), {})[item.column()] = item.text()
             text_rows = []
             for _, cols in sorted(rows.items()):
-                text_rows.append("	".join(value for _, value in sorted(cols.items())))
-            clipboard.setText("".join(text_rows).strip())
+                text_rows.append("\t".join(value for _, value in sorted(cols.items())))
+            clipboard.setText("\n".join(text_rows).strip())
 
         self.show_message("Скопировано")
 
@@ -502,29 +585,6 @@ class ProductSearchPage(QWidget):
         row_id = self._table_row_ids[row]
         self._pending_deletes.add(row_id)
         self.apply_pending_changes(save_to_db_only=True)
-
-    def refresh_current_product_combo(self):
-        row = self.table.currentRow()
-        if row < 0:
-            return
-        combo = self.table.cellWidget(row, 0)
-        if isinstance(combo, QComboBox):
-            row_id = combo.property("row_id")
-            if row_id:
-                self.populate_product_combo(combo, int(row_id), keep_current=True)
-
-    def get_filtered_products(self) -> list[Product]:
-        brand_filter = clean_multi_spaces(self.ui.cbo_FindBrand.currentText())
-        text_filter = clean_multi_spaces(self.ui.line_FindProduct.text())
-
-        with self.get_session() as session:
-            query = session.query(Product).filter(Product.name.isnot(None), Product.name != "")
-            if brand_filter and brand_filter != "-":
-                query = query.filter(Product.brand == brand_filter)
-            if text_filter:
-                query = query.filter(Product.name.ilike(f"%{text_filter}%"))
-            products = query.order_by(Product.name.asc()).all()
-        return products
 
     def add_line(self):
         try:
@@ -539,10 +599,38 @@ class ProductSearchPage(QWidget):
 
             self.load_table_rows()
             if self.table.rowCount() > 0:
-                self.table.setCurrentCell(0, 0)
+                self.table.setCurrentCell(0, self.COL_PRODUCT)
             self.show_message("Добавлена строка")
         except Exception as e:
             self.show_error_message(str(e))
+
+    def _build_export_rows(self) -> list[dict]:
+        with self.get_session() as session:
+            rows = (
+                session.query(TempProductSearchImport)
+                .options(joinedload(TempProductSearchImport.selected_product))
+                .filter(
+                    TempProductSearchImport.batch_id == self.batch_id,
+                    TempProductSearchImport.imported_by == self.imported_by,
+                )
+                .order_by(TempProductSearchImport.import_row_no.asc(), TempProductSearchImport.id.asc())
+                .all()
+            )
+
+            data: list[dict] = []
+            for row in rows:
+                product = row.selected_product
+                data.append(
+                    {
+                        "source_article": row.source_article or "",
+                        "source_product_name": row.source_product_name or "",
+                        "product_name": product.name if product else (row.new_product_name or ""),
+                        "brand": product.brand if product else (row.new_brand or ""),
+                        "pack": product.pack if product else row.new_pack,
+                        "is_excise": product.is_excise if product else row.new_is_excise,
+                    }
+                )
+            return data
 
     def apply_pending_changes(self, save_to_db_only: bool = False):
         if not self._pending_changes and not self._pending_deletes and not save_to_db_only:
@@ -566,9 +654,9 @@ class ProductSearchPage(QWidget):
                             setattr(row, key, value)
 
                 if self._pending_deletes:
-                    session.query(TempProductSearchImport).filter(TempProductSearchImport.id.in_(self._pending_deletes)).delete(
-                        synchronize_session=False
-                    )
+                    session.query(TempProductSearchImport).filter(
+                        TempProductSearchImport.id.in_(self._pending_deletes)
+                    ).delete(synchronize_session=False)
 
                 if not save_to_db_only:
                     service.validate_new_products_before_save(self.batch_id, self.imported_by)
@@ -587,17 +675,27 @@ class ProductSearchPage(QWidget):
                 if not save_path:
                     self.show_message("Данные сохранены в БД. Сохранение файла отменено")
                 else:
-                    with self.get_session() as session:
-                        service = ProductSearchService(session)
-                        service.export_to_excel(self.batch_id, self.imported_by, save_path)
-                    self.show_message("Данные сохранены")
+                    if not save_path.lower().endswith(".xlsx"):
+                        save_path += ".xlsx"
+
+                    try:
+                        exporter = ProductSearchExcelExporter()
+                        exporter.export_result(save_path, self._build_export_rows())
+                        self.show_message("Данные сохранены")
+                    except PermissionError:
+                        self.show_popup_error(
+                            "Не удалось сохранить файл.\n\n"
+                            "Скорее всего, файл уже открыт в Excel.\n"
+                            "Закрой файл и попробуй снова."
+                        )
 
             self._pending_changes.clear()
             self._pending_deletes.clear()
-            self.load_find_brands()
             self.load_table_rows()
+
             if save_to_db_only:
                 self.show_message("Строка удалена")
+
         except Exception as e:
             self.show_error_message(str(e))
 
@@ -613,7 +711,6 @@ class ProductSearchPage(QWidget):
             self.start_new_batch()
             self.selected_file_path = ""
             self.ui.line_FindProduct.clear()
-            self.set_combo_text(self.ui.cbo_FindBrand, "-")
             self.load_table_rows()
             self.show_message("Форма очищена")
         except Exception as e:

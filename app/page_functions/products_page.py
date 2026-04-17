@@ -16,10 +16,12 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QFile
 from PySide6.QtUiTools import QUiLoader
 
+from decimal import Decimal, InvalidOperation
+
 from app.db.models import Product
 from app.db.db import SessionLocal
 
-from app.ui.table_style import setup_data_table
+from app.ui.table_style import *
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -273,7 +275,7 @@ class ProductsPage(QWidget):
     def _insert_product(self, session, changes):
         name = str(changes.get("name", "")).strip()
         brand = str(changes.get("brand", "")).strip()
-        pack = str(changes.get("pack", "")).strip()
+        pack = self._to_decimal(changes.get("pack", ""), "Pack")
         family = str(changes.get("family", "")).strip()
         is_excise = bool(changes.get("is_excise", False))
 
@@ -287,7 +289,7 @@ class ProductsPage(QWidget):
         product = Product(
             name=name,
             brand=brand if brand else None,
-            pack=pack if pack else None,
+            pack=pack,
             is_excise=is_excise,
             family=family if family else None,
         )
@@ -318,8 +320,7 @@ class ProductsPage(QWidget):
             product.brand = value if value else None
 
         if "pack" in changes:
-            value = str(changes["pack"]).strip()
-            product.pack = value if value else None
+            product.pack = self._to_decimal(changes["pack"], "Pack")
 
         if "family" in changes:
             value = str(changes["family"]).strip()
@@ -529,7 +530,7 @@ class ProductsPage(QWidget):
         return container
 
     def _build_table_item(self, col_name, value):
-        item = QTableWidgetItem(value)
+        item = QTableWidgetItem(format_table_value(value))
 
         if col_name == "id":
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
@@ -547,6 +548,21 @@ class ProductsPage(QWidget):
 
         return item
 
+    def _to_decimal(self, value, field_name):
+        if isinstance(value, Decimal):
+            return value
+
+        text = str(value).strip()
+        if text == "":
+            return None
+
+        text = text.replace(",", ".")
+
+        try:
+            return Decimal(text)
+        except (InvalidOperation, ValueError):
+            raise Exception(f"Поле '{field_name}' должно быть числом")
+    
     def add_line(self):
         self._updating_table = True
 
@@ -599,11 +615,17 @@ class ProductsPage(QWidget):
 
     def show_message(self, text):
         self.ui.label_msg.setText(text)
+        self.ui.label_msg.setProperty("active", True)
+        self.ui.label_msg.style().unpolish(self.ui.label_msg)
+        self.ui.label_msg.style().polish(self.ui.label_msg)
         self.ui.label_msg.setVisible(True)
 
     def clear_message(self):
         self.ui.label_msg.setText("")
-        self.ui.label_msg.setStyleSheet("")
+        self.ui.label_msg.setProperty("active", False)
+        self.ui.label_msg.style().unpolish(self.ui.label_msg)
+        self.ui.label_msg.style().polish(self.ui.label_msg)
+        self.ui.label_msg.setVisible(False)
 
     def show_error_message(self, text):
         msg = QMessageBox()

@@ -44,6 +44,11 @@ except Exception:
     engine = None
 
 
+# alembic revision --autogenerate -m "fixed_naming"
+# alembic upgrade head
+# pyside6-rcc -o resource_rc.py resource.qrc
+
+
 WINDOW_SIZE = 0
 
 

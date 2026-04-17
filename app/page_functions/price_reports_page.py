@@ -36,7 +36,7 @@ from app.db.models import (
     ProductStock,
     Supplier,
 )
-from app.ui.table_style import setup_data_table
+from app.ui.table_style import *
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -1070,16 +1070,18 @@ class PriceReportsPage(QWidget):
         return str(value)
 
     def show_message(self, text):
-        if not hasattr(self.ui, "label_msg"):
-            return
         self.ui.label_msg.setText(text)
+        self.ui.label_msg.setProperty("active", True)
+        self.ui.label_msg.style().unpolish(self.ui.label_msg)
+        self.ui.label_msg.style().polish(self.ui.label_msg)
         self.ui.label_msg.setVisible(True)
 
     def clear_message(self):
-        if not hasattr(self.ui, "label_msg"):
-            return
         self.ui.label_msg.setText("")
-        self.ui.label_msg.setStyleSheet("")
+        self.ui.label_msg.setProperty("active", False)
+        self.ui.label_msg.style().unpolish(self.ui.label_msg)
+        self.ui.label_msg.style().polish(self.ui.label_msg)
+        self.ui.label_msg.setVisible(False)
 
     def show_error_message(self, text):
         msg = QMessageBox()

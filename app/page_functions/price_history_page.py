@@ -19,7 +19,7 @@ from PySide6.QtUiTools import QUiLoader
 
 from app.db.models import Product, Supplier, PriceHistory, CurrentSupplierPrice
 from app.db.db import SessionLocal
-from app.ui.table_style import setup_data_table
+from app.ui.table_style import *
 from app.exports.price_history_export import PriceHistoryExport
 
 
@@ -78,6 +78,7 @@ class PriceHistoryPage(QWidget):
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
 
     def setup_connections(self):
+        self.table.cellDoubleClicked.connect(self.start_cell_edit)
         self.table.itemChanged.connect(self.on_item_changed)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
 
@@ -86,7 +87,13 @@ class PriceHistoryPage(QWidget):
         self.ui.btn_Save.clicked.connect(self.apply_pending_changes)
         self.ui.btn_SaveExcel.clicked.connect(self.save_excel)
 
+        self.ui.line_SupplName.currentTextChanged.connect(self.fill_in_prod_brand_list)
+        self.ui.line_SupplName.currentTextChanged.connect(self.fill_in_prod_fam_list)
+        self.ui.line_SupplName.currentTextChanged.connect(self.fill_in_prod_name_list)
+        
         self.ui.line_Brand.currentTextChanged.connect(self.fill_in_prod_fam_list)
+        self.ui.line_Brand.currentTextChanged.connect(self.fill_in_prod_name_list)
+        
         self.ui.line_Prod_Fam.currentTextChanged.connect(self.fill_in_prod_name_list)
 
     def get_session(self):
@@ -94,12 +101,6 @@ class PriceHistoryPage(QWidget):
 
     def get_mode(self):
         return self.ui.line_TableName.currentText().strip()
-
-    def is_current_mode(self):
-        return self.get_mode() == MODE_CURRENT
-
-    def is_history_mode(self):
-        return self.get_mode() == MODE_HISTORY
 
     def _fill_combobox(self, combobox, items):
         current_value = combobox.currentText()
@@ -150,6 +151,128 @@ class PriceHistoryPage(QWidget):
         self.fill_in_prod_fam_list()
         self.fill_in_prod_name_list()
 
+    def _get_products_for_filters_query(self, session):
+        supplier_name = self.ui.line_SupplName.currentText()
+
+        query = session.query(Product).filter(
+            Product.name.isnot(None),
+            Product.name != ""
+        )
+
+        if supplier_name != "-":
+            mode = self.get_mode()
+
+            if mode == MODE_CURRENT:
+                query = query.join(
+                    CurrentSupplierPrice,
+                    CurrentSupplierPrice.product_id == Product.id
+                ).join(
+                    Supplier,
+                    CurrentSupplierPrice.supplier_id == Supplier.id
+                ).filter(
+                    Supplier.name == supplier_name
+                )
+            else:
+                query = query.join(
+                    PriceHistory,
+                    PriceHistory.product_id == Product.id
+                ).join(
+                    Supplier,
+                    PriceHistory.supplier_id == Supplier.id
+                ).filter(
+                    Supplier.name == supplier_name
+                )
+
+        return query.distinct()
+
+    def start_cell_edit(self, row, column):
+        if self._updating_table:
+            return
+
+        if column not in (0, 1):
+            return
+
+        date_item = self.table.item(row, 2)
+        if not date_item:
+            return
+
+        row_key = date_item.data(Qt.UserRole)
+        if not row_key:
+            return
+
+        if row_key.startswith("new::"):
+            return  # у новой строки combo уже есть
+
+        if column == 0:
+            products = self.get_filtered_products()
+            current_product_id = self._get_row_product_id(row_key)
+            combo = self._build_product_combo(row_key, current_product_id, products)
+            combo.currentIndexChanged.connect(
+                lambda _, r=row, rk=row_key, c=combo: self.finish_product_edit(r, rk, c)
+            )
+            self.table.setCellWidget(row, column, combo)
+            combo.showPopup()
+
+        elif column == 1:
+            suppliers = self.get_filtered_suppliers()
+            current_supplier_id = self._get_row_supplier_id(row_key)
+            combo = self._build_supplier_combo(row_key, current_supplier_id, suppliers)
+            combo.currentIndexChanged.connect(
+                lambda _, r=row, rk=row_key, c=combo: self.finish_supplier_edit(r, rk, c)
+            )
+            self.table.setCellWidget(row, column, combo)
+            combo.showPopup()
+    
+    def _get_row_product_id(self, row_key):
+        if row_key.startswith("current::"):
+            _, product_id, _ = row_key.split("::")
+            return int(product_id)
+
+        if row_key.startswith("history::"):
+            with self.get_session() as session:
+                _, history_id = row_key.split("::")
+                row = session.query(PriceHistory).filter(PriceHistory.id == int(history_id)).first()
+                return row.product_id if row else None
+
+        return None
+
+    def _get_row_supplier_id(self, row_key):
+        if row_key.startswith("current::"):
+            _, _, supplier_id = row_key.split("::")
+            return int(supplier_id)
+
+        if row_key.startswith("history::"):
+            with self.get_session() as session:
+                _, history_id = row_key.split("::")
+                row = session.query(PriceHistory).filter(PriceHistory.id == int(history_id)).first()
+                return row.supplier_id if row else None
+
+        return None
+
+    def finish_product_edit(self, row, row_key, combo):
+        product_id = combo.currentData()
+        product_name = combo.currentText().strip()
+
+        if row_key not in self._pending_changes:
+            self._pending_changes[row_key] = {}
+
+        self._pending_changes[row_key]["product_id"] = product_id
+
+        self.table.removeCellWidget(row, 0)
+        self.table.setItem(row, 0, self._build_item(product_name, row_key, align_left=True))
+
+    def finish_supplier_edit(self, row, row_key, combo):
+        supplier_id = combo.currentData()
+        supplier_name = combo.currentText().strip()
+
+        if row_key not in self._pending_changes:
+            self._pending_changes[row_key] = {}
+
+        self._pending_changes[row_key]["supplier_id"] = supplier_id
+
+        self.table.removeCellWidget(row, 1)
+        self.table.setItem(row, 1, self._build_item(supplier_name, row_key, align_left=True))
+
     def fill_in_table_list(self):
         self._fill_combobox(self.ui.line_TableName, [MODE_CURRENT, MODE_HISTORY])
 
@@ -173,8 +296,9 @@ class PriceHistoryPage(QWidget):
     def fill_in_prod_brand_list(self):
         try:
             with self.get_session() as session:
+                query = self._get_products_for_filters_query(session)
                 brands = (
-                    session.query(Product.brand)
+                    query.with_entities(Product.brand)
                     .filter(Product.brand.isnot(None), Product.brand != "")
                     .distinct()
                     .order_by(Product.brand)
@@ -192,20 +316,23 @@ class PriceHistoryPage(QWidget):
 
         try:
             with self.get_session() as session:
-                query = (
-                    session.query(Product.family)
-                    .filter(Product.family.isnot(None), Product.family != "")
-                )
+                query = self._get_products_for_filters_query(session)
 
                 if brand != "-":
                     query = query.filter(Product.brand == brand)
 
-                families = query.distinct().order_by(Product.family).all()
+                families = (
+                    query.with_entities(Product.family)
+                    .filter(Product.family.isnot(None), Product.family != "")
+                    .distinct()
+                    .order_by(Product.family)
+                    .all()
+                )
 
             family_names = [row[0] for row in families if row[0]]
             current_value = self.ui.line_Prod_Fam.currentText()
             self._fill_combobox(self.ui.line_Prod_Fam, family_names)
-
+            
             if current_value in family_names:
                 self.ui.line_Prod_Fam.setCurrentText(current_value)
 
@@ -219,10 +346,11 @@ class PriceHistoryPage(QWidget):
 
         try:
             with self.get_session() as session:
-                query = session.query(Product).filter(Product.name.isnot(None), Product.name != "")
+                query = self._get_products_for_filters_query(session)
 
                 if brand != "-":
                     query = query.filter(Product.brand == brand)
+
                 if family != "-":
                     query = query.filter(Product.family == family)
 
@@ -308,17 +436,25 @@ class PriceHistoryPage(QWidget):
         mode = self.get_mode()
 
         with self.get_session() as session:
+            supplier_name = self.ui.line_SupplName.currentText()
+            brand = self.ui.line_Brand.currentText()
+            family = self.ui.line_Prod_Fam.currentText()
+            product_name = self.ui.line_Prod_name.currentText()
+
             if mode == MODE_CURRENT:
                 query = (
-                    session.query(CurrentSupplierPrice)
+                    session.query(
+                        CurrentSupplierPrice.product_id.label("product_id"),
+                        CurrentSupplierPrice.supplier_id.label("supplier_id"),
+                        CurrentSupplierPrice.last_update.label("price_date"),
+                        CurrentSupplierPrice.price.label("price"),
+                        CurrentSupplierPrice.currency.label("currency"),
+                        Product.name.label("product_name"),
+                        Supplier.name.label("supplier_name"),
+                    )
                     .join(Product, CurrentSupplierPrice.product_id == Product.id)
                     .join(Supplier, CurrentSupplierPrice.supplier_id == Supplier.id)
                 )
-
-                supplier_name = self.ui.line_SupplName.currentText()
-                brand = self.ui.line_Brand.currentText()
-                family = self.ui.line_Prod_Fam.currentText()
-                product_name = self.ui.line_Prod_name.currentText()
 
                 if supplier_name != "-":
                     query = query.filter(Supplier.name == supplier_name)
@@ -330,22 +466,23 @@ class PriceHistoryPage(QWidget):
                     query = query.filter(Product.name == product_name)
 
                 rows = (
-                    query.order_by(Product.name, Supplier.name, CurrentSupplierPrice.last_update.desc())
+                    query.order_by(
+                        Product.name,
+                        Supplier.name,
+                        CurrentSupplierPrice.last_update.desc(),
+                    )
                     .all()
                 )
 
                 data = []
                 for row in rows:
-                    product = session.query(Product).filter(Product.id == row.product_id).first()
-                    supplier = session.query(Supplier).filter(Supplier.id == row.supplier_id).first()
-
                     data.append({
                         "row_key": f"current::{row.product_id}::{row.supplier_id}",
                         "product_id": row.product_id,
                         "supplier_id": row.supplier_id,
-                        "product_name": product.name if product else "",
-                        "supplier_name": supplier.name if supplier else "",
-                        "price_date": row.last_update,
+                        "product_name": row.product_name or "",
+                        "supplier_name": row.supplier_name or "",
+                        "price_date": row.price_date,
                         "price": row.price,
                         "currency": row.currency,
                         "is_new": False,
@@ -355,15 +492,19 @@ class PriceHistoryPage(QWidget):
 
             elif mode == MODE_HISTORY:
                 query = (
-                    session.query(PriceHistory)
+                    session.query(
+                        PriceHistory.id.label("history_id"),
+                        PriceHistory.product_id.label("product_id"),
+                        PriceHistory.supplier_id.label("supplier_id"),
+                        PriceHistory.price_date.label("price_date"),
+                        PriceHistory.price.label("price"),
+                        PriceHistory.currency.label("currency"),
+                        Product.name.label("product_name"),
+                        Supplier.name.label("supplier_name"),
+                    )
                     .join(Product, PriceHistory.product_id == Product.id)
                     .join(Supplier, PriceHistory.supplier_id == Supplier.id)
                 )
-
-                supplier_name = self.ui.line_SupplName.currentText()
-                brand = self.ui.line_Brand.currentText()
-                family = self.ui.line_Prod_Fam.currentText()
-                product_name = self.ui.line_Prod_name.currentText()
 
                 if supplier_name != "-":
                     query = query.filter(Supplier.name == supplier_name)
@@ -375,21 +516,23 @@ class PriceHistoryPage(QWidget):
                     query = query.filter(Product.name == product_name)
 
                 rows = (
-                    query.order_by(Product.name, Supplier.name, PriceHistory.price_date.desc(), PriceHistory.id.desc())
+                    query.order_by(
+                        Product.name,
+                        Supplier.name,
+                        PriceHistory.price_date.desc(),
+                        PriceHistory.id.desc(),
+                    )
                     .all()
                 )
 
                 data = []
                 for row in rows:
-                    product = session.query(Product).filter(Product.id == row.product_id).first()
-                    supplier = session.query(Supplier).filter(Supplier.id == row.supplier_id).first()
-
                     data.append({
-                        "row_key": f"history::{row.id}",
+                        "row_key": f"history::{row.history_id}",
                         "product_id": row.product_id,
                         "supplier_id": row.supplier_id,
-                        "product_name": product.name if product else "",
-                        "supplier_name": supplier.name if supplier else "",
+                        "product_name": row.product_name or "",
+                        "supplier_name": row.supplier_name or "",
                         "price_date": row.price_date,
                         "price": row.price,
                         "currency": row.currency,
@@ -415,9 +558,13 @@ class PriceHistoryPage(QWidget):
 
     def _build_item(self, value, row_key, align_left=False):
         if isinstance(value, datetime):
-            value = value.strftime("%d.%m.%Y")
+            text = value.strftime("%d.%m.%Y")
+        elif isinstance(value, Decimal):
+            text = str(value).replace(".", ",")
+        else:
+            text = "" if value is None else str(value)
 
-        item = QTableWidgetItem("" if value is None else str(value))
+        item = QTableWidgetItem(text)
         item.setData(Qt.UserRole, row_key)
         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
         item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter if align_left else Qt.AlignCenter)
@@ -472,17 +619,26 @@ class PriceHistoryPage(QWidget):
         for row_index, row_data in enumerate(data):
             row_key = row_data["row_key"]
 
-            self.table.setCellWidget(
-                row_index,
-                0,
-                self._build_product_combo(row_key, row_data["product_id"], products)
-            )
-
-            self.table.setCellWidget(
-                row_index,
-                1,
-                self._build_supplier_combo(row_key, row_data["supplier_id"], suppliers)
-            )
+            if row_key.startswith("new::"):
+                self.table.setCellWidget(
+                    row_index,
+                    0,
+                    self._build_product_combo(row_key, row_data["product_id"], products)
+                )
+                self.table.setCellWidget(
+                    row_index,
+                    1,
+                    self._build_supplier_combo(row_key, row_data["supplier_id"], suppliers)
+                )
+            else:
+                self.table.setItem(
+                    row_index, 0,
+                    self._build_item(row_data["product_name"], row_key, align_left=True)
+                )
+                self.table.setItem(
+                    row_index, 1,
+                    self._build_item(row_data["supplier_name"], row_key, align_left=True)
+                )
 
             self.table.setItem(
                 row_index, 2,
@@ -498,10 +654,6 @@ class PriceHistoryPage(QWidget):
             )
 
         self.table.resizeColumnsToContents()
-
-        for i in range(self.table.columnCount()):
-            if self.table.columnWidth(i) < 120:
-                self.table.setColumnWidth(i, 120)
 
         self._updating_table = False
         self.table.setSortingEnabled(True)
@@ -581,11 +733,6 @@ class PriceHistoryPage(QWidget):
         row = self.table.currentRow()
         if row < 0:
             self.show_error_message("Не выбрана строка для удаления")
-            return
-
-        product_widget = self.table.cellWidget(row, 0)
-        if not product_widget:
-            self.show_error_message("Не удалось определить строку")
             return
 
         row_key = None
@@ -818,7 +965,17 @@ class PriceHistoryPage(QWidget):
 
     def show_message(self, text):
         self.ui.label_msg.setText(text)
+        self.ui.label_msg.setProperty("active", True)
+        self.ui.label_msg.style().unpolish(self.ui.label_msg)
+        self.ui.label_msg.style().polish(self.ui.label_msg)
         self.ui.label_msg.setVisible(True)
+
+    def clear_message(self):
+        self.ui.label_msg.setText("")
+        self.ui.label_msg.setProperty("active", False)
+        self.ui.label_msg.style().unpolish(self.ui.label_msg)
+        self.ui.label_msg.style().polish(self.ui.label_msg)
+        self.ui.label_msg.setVisible(False)
 
     def show_error_message(self, text):
         msg = QMessageBox()

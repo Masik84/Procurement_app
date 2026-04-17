@@ -6,7 +6,7 @@ from datetime import datetime, date
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QFile, QEvent, QPoint, QDate
+from PySide6.QtCore import Qt, QFile, QEvent, QPoint, QDate, QTimer
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -36,7 +36,7 @@ from app.services.supplier_price_import import SupplierPriceImportService
 from app.utils.batch import get_current_username
 from app.utils.parsers import parse_flexible_date, parse_loose_number
 from app.utils.text import clean_multi_spaces
-from app.ui.table_style import setup_data_table
+from app.ui.table_style import *
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -127,6 +127,7 @@ class SupplierPricesPage(QWidget):
         self._setup_number_field(self.ui.line_FXMarkup, "Формат: 3,5% / 0,24%")
 
     def setup_connections(self):
+        self.table.cellDoubleClicked.connect(self.start_cell_edit)
         self.table.itemChanged.connect(self.on_item_changed)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
 
@@ -582,21 +583,19 @@ class SupplierPricesPage(QWidget):
         for row_index, row in enumerate(rows):
             self._pending_changes.setdefault(row.id, {})
 
-            self.table.setCellWidget(
-                row_index,
-                0,
-                self.build_product_combo(row.id, row.selected_product_id, row.selected_product.name if row.selected_product else ""),
-            )
+            product_text = row.selected_product.name if row.selected_product else ""
+            product_item = self.build_display_item(row.id, "selected_product_id", product_text)
+            self.table.setItem(row_index, 0, product_item)
+
             self.table.setItem(row_index, 1, self.build_table_item("supplier_article", row.supplier_article or ""))
             self.table.setItem(row_index, 2, self.build_table_item("product_name", row.product_name or ""))
             self.table.setItem(row_index, 3, self.build_table_item("price", self.value_to_text(row.price)))
             self.table.setItem(row_index, 4, self.build_table_item("price_pack", self.value_to_text(row.price_pack)))
             self.table.setItem(row_index, 5, self.build_table_item("new_product_name", row.new_product_name or ""))
-            self.table.setCellWidget(
-                row_index,
-                6,
-                self.build_brand_combo(row.id, row.new_brand or ""),
-            )
+
+            brand_item = self.build_display_item(row.id, "new_brand", row.new_brand or "")
+            self.table.setItem(row_index, 6, brand_item)
+
             self.table.setItem(row_index, 7, self.build_table_item("new_pack", self.value_to_text(row.new_pack)))
             self.table.setCellWidget(
                 row_index,
@@ -605,17 +604,72 @@ class SupplierPricesPage(QWidget):
             )
 
         self.table.resizeColumnsToContents()
-        self.table.setColumnWidth(0, 260)
-        self.table.setColumnWidth(1, 130)
-        self.table.setColumnWidth(2, 260)
-        self.table.setColumnWidth(3, 110)
-        self.table.setColumnWidth(4, 110)
-        self.table.setColumnWidth(5, 260)
-        self.table.setColumnWidth(6, 160)
-        self.table.setColumnWidth(7, 100)
-        self.table.setColumnWidth(8, 110)
-
         self._updating_table = False
+
+    def start_cell_edit(self, row: int, column: int):
+        if self._updating_table:
+            return
+
+        if column not in (0, 6):
+            return
+
+        if row < 0 or row >= len(self._table_row_ids):
+            return
+
+        row_id = self._table_row_ids[row]
+
+        if column == 0:
+            current_product_id = self._get_row_selected_product_id(row_id)
+            current_product_name = self._get_row_selected_product_name(row_id)
+            combo = self.build_product_combo(row_id, current_product_id, current_product_name)
+            combo.activated.connect(lambda _, r=row, rid=row_id, c=combo: self.finish_product_edit(r, rid, c))
+            self.table.setCellWidget(row, column, combo)
+            QTimer.singleShot(0, combo.showPopup)
+
+        elif column == 6:
+            current_brand = self._get_row_brand(row_id)
+            combo = self.build_brand_combo(row_id, current_brand)
+            combo.activated.connect(lambda _, r=row, rid=row_id, c=combo: self.finish_brand_edit(r, rid, c))
+            if combo.lineEdit() is not None:
+                combo.lineEdit().returnPressed.connect(lambda r=row, rid=row_id, c=combo: self.finish_brand_edit(r, rid, c))
+            self.table.setCellWidget(row, column, combo)
+            combo.setFocus()
+            QTimer.singleShot(0, combo.showPopup)
+
+    def _get_row_selected_product_id(self, row_id: int):
+        with self.get_session() as session:
+            row = session.query(TempPriceImport).options(joinedload(TempPriceImport.selected_product)).filter(
+                TempPriceImport.id == row_id
+            ).first()
+            return row.selected_product_id if row else None
+
+    def _get_row_selected_product_name(self, row_id: int) -> str:
+        with self.get_session() as session:
+            row = session.query(TempPriceImport).options(joinedload(TempPriceImport.selected_product)).filter(
+                TempPriceImport.id == row_id
+            ).first()
+            if row and row.selected_product:
+                return row.selected_product.name or ""
+            return ""
+
+    def _get_row_brand(self, row_id: int) -> str:
+        with self.get_session() as session:
+            row = session.query(TempPriceImport).filter(TempPriceImport.id == row_id).first()
+            return row.new_brand or "" if row else ""
+
+    def finish_product_edit(self, row: int, row_id: int, combo: QComboBox):
+        self.on_product_combo_changed(row_id, combo)
+        self.table.removeCellWidget(row, 0)
+        item = self.build_display_item(row_id, "selected_product_id", combo.currentText().strip())
+        self.table.setItem(row, 0, item)
+        self.table.resizeColumnsToContents()
+
+    def finish_brand_edit(self, row: int, row_id: int, combo: QComboBox):
+        self.on_brand_combo_changed(row_id, combo)
+        self.table.removeCellWidget(row, 6)
+        item = self.build_display_item(row_id, "new_brand", combo.currentText().strip())
+        self.table.setItem(row, 6, item)
+        self.table.resizeColumnsToContents()
 
     def value_to_text(self, value: object) -> str:
         if value is None:
@@ -635,6 +689,14 @@ class SupplierPricesPage(QWidget):
             item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         return item
 
+    def build_display_item(self, row_id: int, column_name: str, value: str) -> QTableWidgetItem:
+        item = QTableWidgetItem(value)
+        item.setData(Qt.UserRole, column_name)
+        item.setData(Qt.UserRole + 1, row_id)
+        item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        return item
+
     def build_product_combo(self, row_id: int, selected_product_id: int | None, selected_name: str) -> QComboBox:
         combo = QComboBox()
         combo.setProperty("row_id", row_id)
@@ -642,7 +704,6 @@ class SupplierPricesPage(QWidget):
         combo.installEventFilter(self)
         combo.setToolTip("Выберите продукт из базы")
         self.populate_product_combo(combo, row_id, keep_current=False, selected_product_id=selected_product_id, selected_name=selected_name)
-        combo.currentIndexChanged.connect(lambda _=None, rid=row_id, cb=combo: self.on_product_combo_changed(rid, cb))
         return combo
 
     def populate_product_combo(
@@ -686,7 +747,6 @@ class SupplierPricesPage(QWidget):
         combo.setProperty("combo_role", "brand_combo")
         combo.installEventFilter(self)
         self.populate_brand_combo(combo, keep_current=False, current_text=brand_name)
-        combo.currentTextChanged.connect(lambda _=None, rid=row_id, cb=combo: self.on_brand_combo_changed(rid, cb))
         return combo
 
     def populate_brand_combo(self, combo: QComboBox, keep_current: bool, current_text: str = ""):

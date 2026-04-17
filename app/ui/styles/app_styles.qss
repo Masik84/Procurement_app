@@ -24,9 +24,13 @@ QLabel {
 }
 
 QLabel#label_msg {
+    background-color: transparent;
+    border: none;
+}
+
+QLabel#label_msg[active="true"] {
     background-color: #CCFF99;
     color: #12501A;
-    border: none;
     border-radius: 5px;
     padding: 8px;
     font: 10pt "Tahoma";

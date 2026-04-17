@@ -29,19 +29,25 @@ class Product(Base):
     pack = Column(Numeric, nullable=False)
     is_excise = Column(Boolean, nullable=False, default=False)
 
-    articles = relationship("ProductArticle", back_populates="product")
-    price_history = relationship("PriceHistory", back_populates="product")
-    current_prices = relationship("CurrentSupplierPrice", back_populates="product")
-    price_calculations = relationship("SupplierPriceCalculation", back_populates="product")
-    stock = relationship("ProductStock", back_populates="product", uselist=False)
+    articles = relationship("ProductArticle", back_populates="product", passive_deletes=True)
+    price_history = relationship("PriceHistory", back_populates="product", passive_deletes=True)
+    current_prices = relationship("CurrentSupplierPrice", back_populates="product", passive_deletes=True)
+    price_calculations = relationship("SupplierPriceCalculation", back_populates="product", passive_deletes=True)
+    stock = relationship("ProductStock", back_populates="product", uselist=False, passive_deletes=True)
 
-    temp_price_import_rows = relationship("TempPriceImport", back_populates="selected_product")
-    temp_customer_cost_rows = relationship("TempCustomerCostImport", back_populates="selected_product")
-    temp_customer_cost_options = relationship("TempCustomerCostOption", back_populates="product")
-    temp_stock_import_rows = relationship("TempStockImport", back_populates="selected_product")
-    temp_supplier_orders_rows = relationship("TempSupplierOrdersImport", back_populates="selected_product")
-    temp_is_rows = relationship("TempIsImport", back_populates="selected_product")
-    temp_product_search_rows = relationship("TempProductSearchImport", back_populates="selected_product")
+    temp_price_import_rows = relationship("TempPriceImport", back_populates="selected_product", passive_deletes=True)
+    temp_customer_cost_rows = relationship("TempCustomerCostImport", back_populates="selected_product", passive_deletes=True)
+    temp_customer_cost_options = relationship("TempCustomerCostOption", back_populates="product", passive_deletes=True)
+    temp_stock_import_rows = relationship("TempStockImport", back_populates="selected_product", passive_deletes=True)
+    temp_supplier_orders_rows = relationship("TempSupplierOrdersImport", back_populates="selected_product", passive_deletes=True)
+    temp_is_rows = relationship("TempIsImport", back_populates="selected_product", passive_deletes=True)
+    temp_product_search_rows = relationship("TempProductSearchImport", back_populates="selected_product", passive_deletes=True)
+
+    customer_price_calculations = relationship(
+        "CustomerPriceCalculation",
+        back_populates="product",
+        passive_deletes=True,
+    )
 
 
 class Supplier(Base):
@@ -62,11 +68,20 @@ class Supplier(Base):
     is_rf = Column(Boolean, nullable=False, default=False)
     country = Column(String(50))
 
-    price_history = relationship("PriceHistory", back_populates="supplier")
-    current_prices = relationship("CurrentSupplierPrice", back_populates="supplier")
-    price_calculations = relationship("SupplierPriceCalculation", back_populates="supplier")
-    temp_price_import_rows = relationship("TempPriceImport", back_populates="supplier")
-    temp_customer_cost_options = relationship("TempCustomerCostOption", back_populates="supplier")
+    price_history = relationship("PriceHistory", back_populates="supplier", passive_deletes=True)
+    current_prices = relationship("CurrentSupplierPrice", back_populates="supplier", passive_deletes=True)
+    price_calculations = relationship("SupplierPriceCalculation", back_populates="supplier", passive_deletes=True)
+    temp_price_import_rows = relationship("TempPriceImport", back_populates="supplier", passive_deletes=True)
+    temp_customer_cost_options = relationship(
+        "TempCustomerCostOption",
+        back_populates="supplier",
+        passive_deletes=True,
+    )
+    customer_price_calculations = relationship(
+        "CustomerPriceCalculation",
+        back_populates="supplier",
+        passive_deletes=True,
+    )
 
 
 class ProductArticle(Base):
@@ -74,7 +89,12 @@ class ProductArticle(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
 
-    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    product_id = Column(
+        Integer,
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     article = Column(String(255), nullable=True, index=True)
     name = Column(String(500), nullable=True, index=True)
 
@@ -140,8 +160,18 @@ class PriceHistory(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
 
-    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False, index=True)
-    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    supplier_id = Column(
+        Integer,
+        ForeignKey("suppliers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    product_id = Column(
+        Integer,
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     price_date = Column(DateTime, nullable=False, index=True)
     price = Column(Numeric, nullable=False)
@@ -154,8 +184,16 @@ class PriceHistory(Base):
 class CurrentSupplierPrice(Base):
     __tablename__ = "current_supplier_prices"
 
-    supplier_id = Column(Integer, ForeignKey("suppliers.id"), primary_key=True)
-    product_id = Column(Integer, ForeignKey("products.id"), primary_key=True)
+    supplier_id = Column(
+        Integer,
+        ForeignKey("suppliers.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    product_id = Column(
+        Integer,
+        ForeignKey("products.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
 
     price = Column(Numeric, nullable=False)
     currency = Column(String(10), nullable=False)
@@ -174,8 +212,18 @@ class SupplierPriceCalculation(Base):
     batch_id = Column(String(64), nullable=False, index=True)
     imported_by = Column(String(255), nullable=False, index=True)
 
-    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False, index=True)
-    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    supplier_id = Column(
+        Integer,
+        ForeignKey("suppliers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    product_id = Column(
+        Integer,
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     supplier_article = Column(String(255), nullable=True)
     supplier_product_name = Column(String(500), nullable=True)
@@ -212,7 +260,11 @@ class SupplierPriceCalculation(Base):
 class ProductStock(Base):
     __tablename__ = "product_stock"
 
-    product_id = Column(Integer, ForeignKey("products.id"), primary_key=True)
+    product_id = Column(
+        Integer,
+        ForeignKey("products.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
 
     product_name = Column(String(500), nullable=False)
 
@@ -254,13 +306,23 @@ class TempPriceImport(Base):
     price = Column(Numeric, nullable=True)
     price_pack = Column(Numeric, nullable=True)
 
-    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False, index=True)
+    supplier_id = Column(
+        Integer,
+        ForeignKey("suppliers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     import_date = Column(DateTime, nullable=False)
     batch_id = Column(String(64), nullable=False, index=True)
     imported_by = Column(String(255), nullable=False, index=True)
 
-    selected_product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
+    selected_product_id = Column(
+        Integer,
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
 
     import_row_no = Column(Integer, nullable=True)
 
@@ -302,7 +364,12 @@ class TempCustomerCostImport(Base):
     payment_terms = Column(String(255), nullable=True)
     comments = Column(Text, nullable=True)
 
-    selected_product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
+    selected_product_id = Column(
+        Integer,
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
 
     selected_option_id = Column(Integer, nullable=True)
 
@@ -317,6 +384,7 @@ class TempCustomerCostImport(Base):
         "TempCustomerCostOption",
         back_populates="temp_import",
         foreign_keys="TempCustomerCostOption.temp_import_id",
+        passive_deletes=True,
     )
 
     __table_args__ = (
@@ -329,14 +397,29 @@ class TempCustomerCostOption(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
 
-    temp_import_id = Column(Integer, ForeignKey("temp_customer_cost_import.id"), nullable=False, index=True)
+    temp_import_id = Column(
+        Integer,
+        ForeignKey("temp_customer_cost_import.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     batch_id = Column(String(64), nullable=False, index=True)
     imported_by = Column(String(255), nullable=False, index=True)
     calc_date = Column(DateTime, nullable=False)
 
-    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False, index=True)
-    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    supplier_id = Column(
+        Integer,
+        ForeignKey("suppliers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    product_id = Column(
+        Integer,
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     supplier_name = Column(String(255), nullable=False)
     supplier_article = Column(String(255), nullable=True)
@@ -405,7 +488,12 @@ class TempStockImport(Base):
     markdown_qty = Column(Numeric, nullable=False, default=0)
     reserve_qty = Column(Numeric, nullable=False, default=0)
 
-    selected_product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
+    selected_product_id = Column(
+        Integer,
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
 
     has_lpc_warning = Column(Boolean, nullable=False, default=False)
 
@@ -437,7 +525,12 @@ class TempSupplierOrdersImport(Base):
     transit_qty = Column(Numeric, nullable=False, default=0)
     order_qty = Column(Numeric, nullable=False, default=0)
 
-    selected_product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
+    selected_product_id = Column(
+        Integer,
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
 
     new_product_name = Column(String(500), nullable=True)
     new_brand = Column(String(255), nullable=True)
@@ -468,7 +561,12 @@ class TempIsImport(Base):
     remains_qty = Column(Numeric, nullable=False, default=0)
     stock_qty = Column(Numeric, nullable=False, default=0)
 
-    selected_product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
+    selected_product_id = Column(
+        Integer,
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
 
     new_product_name = Column(String(500), nullable=True)
     new_brand = Column(String(255), nullable=True)
@@ -480,7 +578,7 @@ class TempIsImport(Base):
     __table_args__ = (
         Index("ix_temp_is_batch_user", "batch_id", "imported_by"),
     )
-    
+
 
 class TempProductSearchImport(Base):
     __tablename__ = "temp_product_search_import"
@@ -495,7 +593,12 @@ class TempProductSearchImport(Base):
     source_article = Column(String(255), nullable=True)
     source_product_name = Column(String(500), nullable=True)
 
-    selected_product_id = Column(Integer, ForeignKey("products.id"), nullable=True, index=True)
+    selected_product_id = Column(
+        Integer,
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
 
     new_product_name = Column(String(500), nullable=True)
     new_brand = Column(String(255), nullable=True)
@@ -522,8 +625,18 @@ class CustomerPriceCalculation(Base):
     customer_name = Column(String(255), nullable=True)
     request_date = Column(DateTime, nullable=True)
 
-    supplier_id = Column(Integer, ForeignKey("suppliers.id"), nullable=False, index=True)
-    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
+    supplier_id = Column(
+        Integer,
+        ForeignKey("suppliers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    product_id = Column(
+        Integer,
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     supplier_article = Column(String(255), nullable=True)
     supplier_product_name = Column(String(500), nullable=True)
@@ -555,9 +668,11 @@ class CustomerPriceCalculation(Base):
     is_excise_used = Column(Boolean, nullable=False)
 
     price_date_used = Column(DateTime, nullable=True)
-    import_row_no = Column(Integer, nullable=True)        
+    import_row_no = Column(Integer, nullable=True)
 
-    
-    
-    
-    
+    supplier = relationship("Supplier", back_populates="customer_price_calculations")
+    product = relationship("Product", back_populates="customer_price_calculations")
+
+    __table_args__ = (
+        Index("ix_customer_price_calc_batch_user", "batch_id", "imported_by"),
+    )

@@ -359,6 +359,29 @@ QScrollBar::handle:vertical {
               </property>
              </spacer>
             </item>
+            <item>
+             <widget class="QPushButton" name="btn_Search">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>Search</string>
+              </property>
+              <property name="icon">
+               <iconset resource="../resource.qrc">
+                <normaloff>:/icon/icon/search — копия — копия.svg</normaloff>:/icon/icon/search — копия — копия.svg</iconset>
+              </property>
+             </widget>
+            </item>
            </layout>
           </widget>
          </item>
