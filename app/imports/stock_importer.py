@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 import pandas as pd
 
-from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces, normalize_product_name
 
 
@@ -52,6 +51,10 @@ def is_excluded_brand(brand: object) -> bool:
 class StockImporter:
     sheet_name = "Stock&Price"
 
+    @staticmethod
+    def _series_to_number(series: pd.Series) -> pd.Series:
+        return pd.to_numeric(series, errors="coerce").fillna(0.0)
+
     def read_excel(self, file_path: str | Path) -> list[dict]:
         file_path = Path(file_path)
         if not file_path.exists():
@@ -66,7 +69,13 @@ class StockImporter:
         data.columns = headers
 
         col_brand = _find_header_index(headers, "Бренд", "БРЕНД")
-        col_prod = _find_header_index(headers, "Английское наименование продукта", "АНГЛИЙСКОЕ", "НАИМЕНОВАНИЕ", "ПРОДУКТА")
+        col_prod = _find_header_index(
+            headers,
+            "Английское наименование продукта",
+            "АНГЛИЙСКОЕ",
+            "НАИМЕНОВАНИЕ",
+            "ПРОДУКТА",
+        )
         col_article = _find_header_index(headers, "Code 1C", "CODE", "1C")
         col_sku = _find_header_index(headers, "SKU", "SKU")
         col_origin = _find_header_index(headers, "Страна происхождения", "СТРАНА", "ПРОИСХ")
@@ -75,70 +84,97 @@ class StockImporter:
         col_distr = _find_header_index(headers, "Цена Дистр ", "ЦЕНА", "ДИСТР")
         col_promo = _find_header_index(headers, "Цена Промо", "ЦЕНА", "ПРОМО")
         col_brand_group = _find_header_index(headers, "Группа бренда", "ГРУППА", "БРЕНДА")
-        col_stock_start = _find_header_index(headers, "Свободный сток (Новороссийск)", "СВОБОДНЫЙ", "СТОК", "НОВОРОССИЙСК")
-        col_stock_end = _find_header_index(headers, "Заказы Клиентов Оплачено/Частично оплачено", "ЗАКАЗЫ", "КЛИЕНТОВ", "ОПЛАЧЕНО")
+        col_transit = _find_header_index(headers, "Общий Транзит, л", "ОБЩИЙ", "ТРАНЗИТ", "Л")
+        col_stock_start = _find_header_index(
+            headers,
+            "Свободный сток (Новороссийск)",
+            "СВОБОДНЫЙ",
+            "СТОК",
+            "НОВОРОССИЙСК",
+        )
+        col_stock_end = _find_header_index(
+            headers,
+            "Заказы Клиентов Оплачено/Частично оплачено",
+            "ЗАКАЗЫ",
+            "КЛИЕНТОВ",
+            "ОПЛАЧЕНО",
+        )
 
-        required = [col_brand, col_prod, col_article, col_sku, col_origin, col_lpc, col_landed, col_distr, col_promo, col_brand_group, col_stock_start, col_stock_end]
+        required = [
+            col_brand, col_prod, col_article, col_sku, col_origin,
+            col_lpc, col_landed, col_distr, col_promo,
+            col_brand_group, col_transit, col_stock_start, col_stock_end,
+        ]
         if any(x < 0 for x in required):
             raise ValueError("Не найдены обязательные колонки в листе Stock&Price.")
         if col_stock_end <= col_stock_start:
             raise ValueError("Некорректный диапазон колонок остатков.")
 
-        rows = []
         stock_headers = headers[col_stock_start:col_stock_end]
+        stock_columns = headers[col_stock_start:col_stock_end]
 
-        for idx, rec in data.iterrows():
-            src_sku = _norm(rec.iloc[col_sku])
-            if src_sku == "":
-                break
+        markdown_cols: list[str] = []
+        reserve_cols: list[str] = []
+        plain_stock_cols: list[str] = []
+        for h in stock_headers:
+            h_norm = _norm_header(h)
+            if _header_contains(h_norm, "УЦЕНКА") or _header_contains(h_norm, "БРАК"):
+                markdown_cols.append(h)
+            elif _header_contains(h_norm, "РЕЗЕРВ"):
+                reserve_cols.append(h)
+            else:
+                plain_stock_cols.append(h)
 
-            src_brand = _norm(rec.iloc[col_brand])
-            if is_excluded_brand(src_brand):
-                continue
+        compact = pd.DataFrame({
+            "source_brand": data.iloc[:, col_brand].map(_norm),
+            "source_product_name": data.iloc[:, col_prod].map(_norm),
+            "source_article": data.iloc[:, col_article].map(_norm),
+            "source_sku": data.iloc[:, col_sku].map(_norm),
+            "source_origin": data.iloc[:, col_origin].map(_norm),
+            "source_brand_group": data.iloc[:, col_brand_group].map(_norm),
+            "lpc": self._series_to_number(data.iloc[:, col_lpc]),
+            "landed_cost": self._series_to_number(data.iloc[:, col_landed]),
+            "distr_price": self._series_to_number(data.iloc[:, col_distr]),
+            "promo_price": self._series_to_number(data.iloc[:, col_promo]),
+            "transit_qty": self._series_to_number(data.iloc[:, col_transit]),
+        })
 
-            src_article = _norm(rec.iloc[col_article])
-            src_prod_name = _norm(rec.iloc[col_prod])
-            src_origin = _norm(rec.iloc[col_origin])
-            src_brand_group = _norm(rec.iloc[col_brand_group])
+        if stock_columns:
+            stock_matrix = data.loc[:, stock_columns].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+        else:
+            stock_matrix = pd.DataFrame(index=data.index)
 
-            lpc_val = parse_loose_number(rec.iloc[col_lpc])
-            landed_val = parse_loose_number(rec.iloc[col_landed])
-            distr_val = parse_loose_number(rec.iloc[col_distr])
-            promo_val = parse_loose_number(rec.iloc[col_promo])
+        compact["stock_qty"] = stock_matrix[plain_stock_cols].sum(axis=1) if plain_stock_cols else 0.0
+        compact["markdown_qty"] = stock_matrix[markdown_cols].sum(axis=1) if markdown_cols else 0.0
+        compact["reserve_qty"] = stock_matrix[reserve_cols].sum(axis=1) if reserve_cols else 0.0
 
-            stock_qty = 0.0
-            markdown_qty = 0.0
-            reserve_qty = 0.0
+        compact["total_qty"] = (
+            compact["stock_qty"] + compact["markdown_qty"] + compact["reserve_qty"] + compact["transit_qty"]
+        )
+        compact["has_lpc_warning"] = (compact["total_qty"] > 0) & (compact["lpc"] == 0)
 
-            for offset, h in enumerate(stock_headers):
-                q = parse_loose_number(rec.iloc[col_stock_start + offset])
-                if q is None:
-                    continue
-                h_norm = _norm_header(h)
-                if _header_contains(h_norm, "УЦЕНКА") or _header_contains(h_norm, "БРАК"):
-                    markdown_qty += float(q)
-                elif _header_contains(h_norm, "РЕЗЕРВ"):
-                    reserve_qty += float(q)
-                else:
-                    stock_qty += float(q)
+        non_empty_mask = ~((compact["source_sku"] == "") & (compact["source_article"] == "") & (compact["source_product_name"] == ""))
+        filtered = compact.loc[non_empty_mask].copy()
+        filtered = filtered.loc[~filtered["source_brand"].map(is_excluded_brand)].copy()
 
-            total_qty = stock_qty + markdown_qty + reserve_qty
-
+        rows: list[dict] = []
+        for idx, rec in filtered.iterrows():
             rows.append({
-                "import_row_no": idx + 5,
-                "source_article": src_article or None,
-                "source_sku": src_sku or None,
-                "source_product_name": src_prod_name or None,
-                "source_origin": src_origin or None,
-                "source_brand_group": src_brand_group or None,
-                "lpc": lpc_val,
-                "landed_cost": landed_val,
-                "distr_price": distr_val,
-                "promo_price": promo_val,
-                "stock_qty": stock_qty,
-                "markdown_qty": markdown_qty,
-                "reserve_qty": reserve_qty,
-                "has_lpc_warning": bool(total_qty > 0 and (lpc_val is None or float(lpc_val) == 0)),
+                "import_row_no": int(idx) + 5,
+                "source_article": rec["source_article"] or None,
+                "source_sku": rec["source_sku"] or None,
+                "source_product_name": rec["source_product_name"] or None,
+                "source_origin": rec["source_origin"] or None,
+                "source_brand_group": rec["source_brand_group"] or None,
+                "lpc": float(rec["lpc"] or 0),
+                "landed_cost": float(rec["landed_cost"] or 0),
+                "distr_price": float(rec["distr_price"] or 0),
+                "promo_price": float(rec["promo_price"] or 0),
+                "stock_qty": float(rec["stock_qty"] or 0),
+                "transit_qty": float(rec["transit_qty"] or 0),
+                "markdown_qty": float(rec["markdown_qty"] or 0),
+                "reserve_qty": float(rec["reserve_qty"] or 0),
+                "has_lpc_warning": bool(rec["has_lpc_warning"]),
             })
 
         return rows

@@ -221,6 +221,10 @@ class CustomerCostImportService:
             fx_rate=self._get_fx_rate_for_currency(supplier_price.currency_code),
             currency_code=supplier_price.currency_code,
         )
+
+        def safe(v):
+            return v if v is not None else Decimal("0")
+
         option = TempCustomerCostOption(
             temp_import_id=row.id,
             batch_id=batch_id,
@@ -236,22 +240,28 @@ class CustomerCostImportService:
             cost_novo_wvat=calc.cost_novo_wvat,
             full_cost_msk=calc.full_cost_msk,
             currency_code=calc.currency_code,
-            fx_rate_used=calc.fx_rate_used,
-            fx_markup_used=calc.fx_markup_used,
-            transport_used=calc.transport_used,
-            reexport_used=calc.reexport_used,
+
+            fx_rate_used=safe(calc.fx_rate_used),
+            fx_markup_used=safe(calc.fx_markup_used),
+            transport_used=safe(calc.transport_used),
+            reexport_used=safe(calc.reexport_used),
             has_customs_used=calc.has_customs_used,
             via_novo_used=calc.via_novo_used,
-            bank_fee_used=calc.bank_fee_used,
-            customs_fee_used=calc.customs_fee_used,
-            move_novo_used=calc.move_novo_used,
-            move_msk_used=calc.move_msk_used,
+            bank_fee_used=safe(calc.bank_fee_used),
+            customs_fee_used=safe(calc.customs_fee_used),
+            move_novo_used=safe(calc.move_novo_used),
+            move_msk_used=safe(calc.move_msk_used),
             is_excise_used=calc.is_excise_used,
-            additional_customs_used=calc.additional_customs_used,
-            storage_used=calc.storage_used,
-            marking_used=calc.marking_used,
+            additional_customs_used=safe(calc.additional_customs_used),
+            storage_used=safe(calc.storage_used),
+            marking_used=safe(calc.marking_used),
+
+            # 🔥 ВОТ ЭТО ГЛАВНОЕ
+            agent_fee_used=safe(getattr(calc, "agent_fee_used", None)),
+
             opt_rank=None,
         )
+
         self.session.add(option)
 
     def rank_supplier_options(self, batch_id: str, imported_by: str) -> None:
@@ -280,16 +290,22 @@ class CustomerCostImportService:
             TempCustomerCostImport.batch_id == batch_id,
             TempCustomerCostImport.imported_by == imported_by,
         ).all()
+
         for row in rows:
-            best_option = self.session.query(TempCustomerCostOption).filter(
+            options = self.session.query(TempCustomerCostOption).filter(
                 TempCustomerCostOption.batch_id == batch_id,
                 TempCustomerCostOption.imported_by == imported_by,
                 TempCustomerCostOption.temp_import_id == row.id,
             ).order_by(
                 TempCustomerCostOption.opt_rank.asc(),
                 TempCustomerCostOption.id.asc(),
-            ).first()
-            row.selected_option_id = best_option.id if best_option is not None else None
+            ).all()
+
+            if len(options) == 1:
+                row.selected_option_id = options[0].id
+            else:
+                row.selected_option_id = None
+
         self.session.flush()
 
     def delete_saved_calculations(self, batch_id: str, imported_by: str) -> int:
@@ -340,6 +356,7 @@ class CustomerCostImportService:
                 fx_markup_used=option.fx_markup_used,
                 transport_used=option.transport_used,
                 reexport_used=option.reexport_used,
+                agent_fee_used=option.agent_fee_used if option.agent_fee_used is not None else Decimal("0"),
                 has_customs_used=option.has_customs_used,
                 via_novo_used=option.via_novo_used,
                 bank_fee_used=option.bank_fee_used,

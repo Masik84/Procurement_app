@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -5,14 +7,13 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy.exc import SQLAlchemyError
 from PySide6.QtWidgets import (
     QMessageBox,
-    QHeaderView,
-    QTableWidget,
     QMenu,
     QTableWidgetItem,
     QWidget,
     QApplication,
     QVBoxLayout,
     QComboBox,
+    QFileDialog,
 )
 from PySide6.QtCore import Qt, QFile
 from PySide6.QtUiTools import QUiLoader
@@ -20,7 +21,14 @@ from PySide6.QtUiTools import QUiLoader
 from app.db.models import Product, Supplier, PriceHistory, CurrentSupplierPrice
 from app.db.db import SessionLocal
 from app.ui.table_style import *
-from app.exports.price_history_export import PriceHistoryExport
+from app.imports.price_history_importer import PriceHistoryImporter
+from app.exports.price_history_excel_exporter import PriceHistoryExcelExporter
+from app.services.product_matching import ProductMatchingService
+from app.utils.text import clean_multi_spaces, normalize_product_name
+from app.utils.batch import get_current_username
+from app.db.models import CurrentSupplierPrice, PriceHistory, Product, Supplier
+from app.db.models import PriceHistory as PriceHistoryModel
+from app.db.models import CurrentSupplierPrice as CurrentSupplierPriceModel
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -58,12 +66,15 @@ class PriceHistoryPage(QWidget):
         layout.addWidget(self.ui)
 
         self.table = self.ui.table
+        self.imported_by = get_current_username()
 
         self._updating_table = False
         self._pending_changes = {}
         self._pending_deletes = set()
         self._new_rows = set()
         self._temp_row_id = -1
+        self._import_preview_active = False
+        self._import_preview_rows = []
 
         self.columns = ["product_id", "supplier_id", "price_date", "price", "currency"]
         self.headers = ["Product name", "Supplier name", "Price date", "Price", "Currency"]
@@ -76,6 +87,7 @@ class PriceHistoryPage(QWidget):
     def setup_ui(self):
         setup_data_table(self.table, sorting=True)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.clear_message()
 
     def setup_connections(self):
         self.table.cellDoubleClicked.connect(self.start_cell_edit)
@@ -86,14 +98,16 @@ class PriceHistoryPage(QWidget):
         self.ui.btn_AddLine.clicked.connect(self.add_line)
         self.ui.btn_Save.clicked.connect(self.apply_pending_changes)
         self.ui.btn_SaveExcel.clicked.connect(self.save_excel)
+        self.ui.btn_DownFile.clicked.connect(self.download_template)
+        self.ui.btn_Import.clicked.connect(self.import_excel)
 
         self.ui.line_SupplName.currentTextChanged.connect(self.fill_in_prod_brand_list)
         self.ui.line_SupplName.currentTextChanged.connect(self.fill_in_prod_fam_list)
         self.ui.line_SupplName.currentTextChanged.connect(self.fill_in_prod_name_list)
-        
+
         self.ui.line_Brand.currentTextChanged.connect(self.fill_in_prod_fam_list)
         self.ui.line_Brand.currentTextChanged.connect(self.fill_in_prod_name_list)
-        
+
         self.ui.line_Prod_Fam.currentTextChanged.connect(self.fill_in_prod_name_list)
 
     def get_session(self):
@@ -142,7 +156,7 @@ class PriceHistoryPage(QWidget):
             except ValueError:
                 pass
 
-        raise Exception(f"Поле '{field_name}' должно быть датой в формате dd.MM.yyyy")
+        raise Exception(f"Поле '{field_name}' должно быть датой в формате ДД.ММ.ГГГГ")
 
     def refresh_all_comboboxes(self):
         self.fill_in_table_list()
@@ -201,7 +215,7 @@ class PriceHistoryPage(QWidget):
             return
 
         if row_key.startswith("new::"):
-            return  # у новой строки combo уже есть
+            return
 
         if column == 0:
             products = self.get_filtered_products()
@@ -222,7 +236,7 @@ class PriceHistoryPage(QWidget):
             )
             self.table.setCellWidget(row, column, combo)
             combo.showPopup()
-    
+
     def _get_row_product_id(self, row_key):
         if row_key.startswith("current::"):
             _, product_id, _ = row_key.split("::")
@@ -332,7 +346,7 @@ class PriceHistoryPage(QWidget):
             family_names = [row[0] for row in families if row[0]]
             current_value = self.ui.line_Prod_Fam.currentText()
             self._fill_combobox(self.ui.line_Prod_Fam, family_names)
-            
+
             if current_value in family_names:
                 self.ui.line_Prod_Fam.setCurrentText(current_value)
 
@@ -544,6 +558,8 @@ class PriceHistoryPage(QWidget):
         return []
 
     def find_rows(self):
+        self._import_preview_active = False
+        self._import_preview_rows = []
         mode = self.get_mode()
 
         if mode == MODE_NONE or not mode:
@@ -577,6 +593,12 @@ class PriceHistoryPage(QWidget):
         for product in products:
             combo.addItem(product.name, product.id)
 
+        if selected_product_id is not None and combo.findData(selected_product_id) < 0:
+            with self.get_session() as session:
+                product = session.query(Product).filter(Product.id == selected_product_id).first()
+                if product:
+                    combo.addItem(product.name, product.id)
+
         idx = combo.findData(selected_product_id)
         if idx >= 0:
             combo.setCurrentIndex(idx)
@@ -592,6 +614,12 @@ class PriceHistoryPage(QWidget):
 
         for supplier in suppliers:
             combo.addItem(supplier.name, supplier.id)
+
+        if selected_supplier_id is not None and combo.findData(selected_supplier_id) < 0:
+            with self.get_session() as session:
+                supplier = session.query(Supplier).filter(Supplier.id == selected_supplier_id).first()
+                if supplier:
+                    combo.addItem(supplier.name, supplier.id)
 
         idx = combo.findData(selected_supplier_id)
         if idx >= 0:
@@ -656,7 +684,6 @@ class PriceHistoryPage(QWidget):
         self.table.resizeColumnsToContents()
 
         self._updating_table = False
-        self.table.setSortingEnabled(True)
 
     def on_combo_changed(self, row_key, field_name, value):
         if self._updating_table:
@@ -704,8 +731,12 @@ class PriceHistoryPage(QWidget):
         self._temp_row_id -= 1
         self._new_rows.add(row_key)
 
-        data = self.get_rows_from_db()
-        data.insert(0, {
+        if self._import_preview_active:
+            data = list(self._import_preview_rows)
+        else:
+            data = self.get_rows_from_db()
+
+        new_row = {
             "row_key": row_key,
             "product_id": None,
             "supplier_id": None,
@@ -715,7 +746,11 @@ class PriceHistoryPage(QWidget):
             "price": None,
             "currency": "",
             "is_new": True,
-        })
+        }
+        data.insert(0, new_row)
+
+        if self._import_preview_active:
+            self._import_preview_rows = data
 
         self._pending_changes[row_key] = {
             "product_id": None,
@@ -747,6 +782,8 @@ class PriceHistoryPage(QWidget):
         if row_key in self._new_rows:
             self._new_rows.discard(row_key)
             self._pending_changes.pop(row_key, None)
+            if self._import_preview_active:
+                self._import_preview_rows = [r for r in self._import_preview_rows if r["row_key"] != row_key]
         else:
             self._pending_deletes.add(row_key)
 
@@ -759,7 +796,9 @@ class PriceHistoryPage(QWidget):
             self._pending_deletes.clear()
             self._new_rows.clear()
 
-            if self.get_mode() != MODE_NONE:
+            if self._import_preview_active:
+                self._display_data(self._import_preview_rows)
+            elif self.get_mode() != MODE_NONE:
                 self.find_rows()
             else:
                 self.table.clearContents()
@@ -775,6 +814,42 @@ class PriceHistoryPage(QWidget):
         result = fallback.copy()
         result.update(changes)
         return result
+
+    def _save_price_to_history_and_current(self, session, values):
+        currency = str(values["currency"]).strip().upper()
+        price_date = values["price_date"]
+        price_value = values["price"]
+        product_id = values["product_id"]
+        supplier_id = values["supplier_id"]
+
+        row = PriceHistory(
+            product_id=product_id,
+            supplier_id=supplier_id,
+            price_date=price_date,
+            price=price_value,
+            currency=currency,
+        )
+        session.add(row)
+
+        current_row = session.query(CurrentSupplierPrice).filter(
+            CurrentSupplierPrice.product_id == product_id,
+            CurrentSupplierPrice.supplier_id == supplier_id,
+        ).first()
+
+        if current_row is None:
+            current_row = CurrentSupplierPrice(
+                product_id=product_id,
+                supplier_id=supplier_id,
+                last_update=price_date,
+                price=price_value,
+                currency=currency,
+            )
+            session.add(current_row)
+        else:
+            if current_row.last_update is None or current_row.last_update <= price_date:
+                current_row.last_update = price_date
+                current_row.price = price_value
+                current_row.currency = currency
 
     def apply_pending_changes(self):
         mode = self.get_mode()
@@ -829,16 +904,8 @@ class PriceHistoryPage(QWidget):
                                 currency=str(values["currency"]).strip().upper(),
                             )
                             session.add(row)
-
                         else:
-                            row = PriceHistory(
-                                product_id=values["product_id"],
-                                supplier_id=values["supplier_id"],
-                                price_date=values["price_date"],
-                                price=values["price"],
-                                currency=str(values["currency"]).strip().upper(),
-                            )
-                            session.add(row)
+                            self._save_price_to_history_and_current(session, values)
 
                     else:
                         if mode == MODE_CURRENT:
@@ -910,6 +977,24 @@ class PriceHistoryPage(QWidget):
                             row.price = values["price"]
                             row.currency = str(values["currency"]).strip().upper()
 
+                            current_row = session.query(CurrentSupplierPrice).filter(
+                                CurrentSupplierPrice.product_id == values["product_id"],
+                                CurrentSupplierPrice.supplier_id == values["supplier_id"],
+                            ).first()
+                            if current_row is None:
+                                current_row = CurrentSupplierPrice(
+                                    product_id=values["product_id"],
+                                    supplier_id=values["supplier_id"],
+                                    last_update=values["price_date"],
+                                    price=values["price"],
+                                    currency=str(values["currency"]).strip().upper(),
+                                )
+                                session.add(current_row)
+                            elif current_row.last_update is None or current_row.last_update <= values["price_date"]:
+                                current_row.last_update = values["price_date"]
+                                current_row.price = values["price"]
+                                current_row.currency = str(values["currency"]).strip().upper()
+
                 for row_key in self._pending_deletes:
                     if row_key.startswith("current::"):
                         _, product_id, supplier_id = row_key.split("::")
@@ -926,17 +1011,154 @@ class PriceHistoryPage(QWidget):
 
                 session.commit()
 
+            imported_saved = self._import_preview_active
             self._pending_changes.clear()
             self._pending_deletes.clear()
             self._new_rows.clear()
+            self._import_preview_active = False
+            self._import_preview_rows = []
 
             self.find_rows()
-            self.show_message("Данные успешно сохранены")
+            if imported_saved:
+                self.show_message("История цен успешно импортирована и сохранена")
+            else:
+                self.show_message("Данные успешно сохранены")
 
         except SQLAlchemyError as e:
             self.show_error_message(f"Ошибка сохранения в базу данных: {str(e)}")
         except Exception as e:
             self.show_error_message(f"Ошибка применения изменений: {str(e)}")
+
+    def download_template(self):
+        if self.get_mode() != MODE_HISTORY:
+            self.show_message('Импорт возможен только в таблицу "История цен (вся)"')
+            return
+
+        try:
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Сохранить шаблон",
+                str(Path.home() / "PriceHistoryImportTemplate.xlsx"),
+                "Excel files (*.xlsx)",
+            )
+            if not file_path:
+                return
+
+            if not file_path.lower().endswith(".xlsx"):
+                file_path += ".xlsx"
+
+            exporter = PriceHistoryExcelExporter()
+            exporter.export_template(file_path)
+            self.show_message("Шаблон сохранен")
+        except Exception as e:
+            self.show_error_message(str(e))
+
+    def _find_supplier_id_by_name(self, session, supplier_name: str):
+        if not supplier_name:
+            return None
+        supplier = session.query(Supplier).filter(Supplier.name == supplier_name).first()
+        return supplier.id if supplier else None
+
+    def _find_product_for_import(self, session, row: dict):
+        matching = ProductMatchingService(session)
+
+        our_name = clean_multi_spaces(row.get("our_product_name"))
+        article = clean_multi_spaces(row.get("supplier_article"))
+        supplier_product_name = clean_multi_spaces(row.get("supplier_product_name"))
+
+        if our_name:
+            product = session.query(Product).filter(Product.name == our_name).first()
+            if product:
+                return product
+
+            target = normalize_product_name(our_name)
+            if target:
+                products = session.query(Product).filter(Product.name.isnot(None)).all()
+                for product in products:
+                    if normalize_product_name(product.name) == target:
+                        return product
+
+        product = matching.find_price_import_product(
+            supplier_article=article,
+            supplier_product_name=supplier_product_name,
+        )
+        if product:
+            return product
+
+        return None
+
+    def import_excel(self):
+        if self.get_mode() != MODE_HISTORY:
+            self.show_message('Импорт возможен только в таблицу "История цен (вся)"')
+            return
+
+        try:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Выберите файл истории цен",
+                "",
+                "Excel files (*.xls *.xlsx)",
+            )
+            if not file_path:
+                return
+
+            importer = PriceHistoryImporter()
+            rows = importer.read_excel(file_path)
+            if not rows:
+                self.show_message("Нет строк для импорта")
+                return
+
+            preview_data = []
+            self._pending_changes.clear()
+            self._pending_deletes.clear()
+            self._new_rows.clear()
+
+            with self.get_session() as session:
+                for src_row in rows:
+                    row_key = f"new::{self._temp_row_id}"
+                    self._temp_row_id -= 1
+                    self._new_rows.add(row_key)
+
+                    supplier_name = clean_multi_spaces(src_row.get("supplier_name"))
+                    supplier_id = self._find_supplier_id_by_name(session, supplier_name)
+
+                    product = self._find_product_for_import(session, src_row)
+                    product_id = product.id if product else None
+                    product_name = product.name if product else clean_multi_spaces(src_row.get("our_product_name"))
+
+                    price_date = src_row.get("price_date")
+                    if price_date is not None and hasattr(price_date, "to_pydatetime"):
+                        price_date = price_date.to_pydatetime()
+
+                    price_value = src_row.get("price")
+                    currency = clean_multi_spaces(src_row.get("currency")).upper()
+
+                    preview_row = {
+                        "row_key": row_key,
+                        "product_id": product_id,
+                        "supplier_id": supplier_id,
+                        "product_name": product_name or "",
+                        "supplier_name": supplier_name or "",
+                        "price_date": price_date,
+                        "price": price_value,
+                        "currency": currency,
+                        "is_new": True,
+                    }
+                    preview_data.append(preview_row)
+                    self._pending_changes[row_key] = {
+                        "product_id": product_id,
+                        "supplier_id": supplier_id,
+                        "price_date": price_date,
+                        "price": price_value,
+                        "currency": currency,
+                    }
+
+            self._import_preview_active = True
+            self._import_preview_rows = preview_data
+            self._display_data(preview_data)
+            self.show_message("Файл импортирован. Проверь предпросмотр и нажми Save")
+        except Exception as e:
+            self.show_error_message(str(e))
 
     def save_excel(self):
         mode = self.get_mode()
@@ -945,18 +1167,31 @@ class PriceHistoryPage(QWidget):
             return
 
         try:
+            supplier_name = clean_multi_spaces(self.ui.line_SupplName.currentText())
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+            if supplier_name and supplier_name != "-":
+                safe_supplier = supplier_name
+                for ch in ['\\', '/', ':', '*', '?', '"', '<', '>', '|']:
+                    safe_supplier = safe_supplier.replace(ch, "_")
+                default_name = f"Price history_{safe_supplier}_{timestamp}.xlsx"
+            else:
+                default_name = f"Price history_{timestamp}.xlsx"
+
             file_path, _ = QFileDialog.getSaveFileName(
                 self,
                 "Сохранить Excel",
-                "price_history.xlsx",
+                default_name,
                 "Excel files (*.xlsx)",
             )
             if not file_path:
                 return
 
             data = self.get_rows_from_db()
-            exporter = PriceHistoryExport()
-            exporter.export_rows(data, file_path)
+            exporter = PriceHistoryExcelExporter()
+
+            report_type = "current" if mode == MODE_CURRENT else "history"
+            exporter.export_rows(data, file_path, report_type=report_type)
 
             self.show_message("Excel файл сохранен")
 

@@ -18,6 +18,7 @@ class QuickCostCalculationResult:
     transport_used: Decimal
     reexport_used: Decimal
     fx_markup_used: Decimal
+    agent_fee_used: Decimal
 
     has_customs_used: bool
     via_novo_used: bool
@@ -114,6 +115,7 @@ class QuickCostCalculationService:
         d_vat = self._to_decimal(fixed.vat)
         d_customs_fee = self._to_decimal(fixed.customs_fee)
         d_bank_fee = self._to_decimal(fixed.bank_fee)
+        d_agent_fee = self._to_decimal(getattr(supplier, "agent_fee", None))
         d_money = self._to_decimal(fixed.money)
         d_storage = self._to_decimal(fixed.storage)
         d_move_novo = self._to_decimal(fixed.move_novo_tamozh)
@@ -134,7 +136,7 @@ class QuickCostCalculationService:
                 * d_fx_rate
                 * (Decimal("1") + d_fx_markup)
             )
-            base = base_before_add + d_marking
+            base = base_before_add + d_marking + (d_agent_fee * d_fx_rate)
         else:
             base_before_add = (
                 (d_price + d_transport)
@@ -144,7 +146,7 @@ class QuickCostCalculationService:
                 * d_fx_rate
                 * (Decimal("1") + d_fx_markup)
             )
-            base = base_before_add + d_additional_customs + d_marking
+            base = base_before_add + d_additional_customs + d_marking + (d_agent_fee * d_fx_rate)
 
         if not supplier_is_rf:
             base = (
@@ -175,6 +177,7 @@ class QuickCostCalculationService:
             transport_used=d_transport,
             reexport_used=d_reexport,
             fx_markup_used=d_fx_markup,
+            agent_fee_used=d_agent_fee,
             has_customs_used=has_customs,
             via_novo_used=via_novo,
             supplier_is_rf_used=supplier_is_rf,

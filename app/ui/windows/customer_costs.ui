@@ -415,7 +415,7 @@ QScrollBar::handle:vertical {
               </property>
               <property name="sizeHint" stdset="0">
                <size>
-                <width>50</width>
+                <width>140</width>
                 <height>20</height>
                </size>
               </property>
@@ -572,26 +572,65 @@ QScrollBar::handle:vertical {
              </spacer>
             </item>
             <item>
-             <widget class="QPushButton" name="btn_CalcCost">
+             <widget class="QFrame" name="frame_27">
               <property name="minimumSize">
                <size>
-                <width>140</width>
-                <height>30</height>
+                <width>145</width>
+                <height>0</height>
                </size>
               </property>
               <property name="maximumSize">
                <size>
-                <width>140</width>
-                <height>30</height>
+                <width>160</width>
+                <height>16777215</height>
                </size>
               </property>
-              <property name="text">
-               <string>Расчет себ-ти</string>
+              <property name="frameShape">
+               <enum>QFrame::Shape::StyledPanel</enum>
               </property>
-              <property name="icon">
-               <iconset resource="../resource.qrc">
-                <normaloff>:/icon/icon/hard-drive — копия — копия.svg</normaloff>:/icon/icon/hard-drive — копия — копия.svg</iconset>
+              <property name="frameShadow">
+               <enum>QFrame::Shadow::Raised</enum>
               </property>
+              <layout class="QHBoxLayout" name="horizontalLayout_27">
+               <property name="spacing">
+                <number>0</number>
+               </property>
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QPushButton" name="btn_Reset">
+                 <property name="minimumSize">
+                  <size>
+                   <width>140</width>
+                   <height>30</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>140</width>
+                   <height>30</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>Сбросить все</string>
+                 </property>
+                 <property name="icon">
+                  <iconset resource="../resource.qrc">
+                   <normaloff>:/icon/icon/loader — копия — копия.svg</normaloff>:/icon/icon/loader — копия — копия.svg</iconset>
+                 </property>
+                </widget>
+               </item>
+              </layout>
              </widget>
             </item>
             <item>
@@ -601,7 +640,7 @@ QScrollBar::handle:vertical {
               </property>
               <property name="sizeHint" stdset="0">
                <size>
-                <width>150</width>
+                <width>40</width>
                 <height>20</height>
                </size>
               </property>
@@ -741,7 +780,7 @@ QScrollBar::handle:vertical {
            <property name="frameShadow">
             <enum>QFrame::Shadow::Raised</enum>
            </property>
-           <layout class="QHBoxLayout" name="horizontalLayout_4">
+           <layout class="QHBoxLayout" name="horizontalLayout_5">
             <property name="spacing">
              <number>0</number>
             </property>
@@ -765,79 +804,17 @@ QScrollBar::handle:vertical {
              </widget>
             </item>
             <item>
-             <widget class="QFrame" name="frame_27">
-              <property name="minimumSize">
-               <size>
-                <width>145</width>
-                <height>0</height>
-               </size>
-              </property>
-              <property name="maximumSize">
-               <size>
-                <width>160</width>
-                <height>16777215</height>
-               </size>
-              </property>
-              <property name="frameShape">
-               <enum>QFrame::Shape::StyledPanel</enum>
-              </property>
-              <property name="frameShadow">
-               <enum>QFrame::Shadow::Raised</enum>
-              </property>
-              <layout class="QHBoxLayout" name="horizontalLayout_27">
-               <property name="spacing">
-                <number>0</number>
-               </property>
-               <property name="leftMargin">
-                <number>0</number>
-               </property>
-               <property name="topMargin">
-                <number>0</number>
-               </property>
-               <property name="rightMargin">
-                <number>0</number>
-               </property>
-               <property name="bottomMargin">
-                <number>0</number>
-               </property>
-               <item>
-                <widget class="QPushButton" name="btn_Reset">
-                 <property name="minimumSize">
-                  <size>
-                   <width>140</width>
-                   <height>30</height>
-                  </size>
-                 </property>
-                 <property name="maximumSize">
-                  <size>
-                   <width>140</width>
-                   <height>30</height>
-                  </size>
-                 </property>
-                 <property name="text">
-                  <string>Сбросить все</string>
-                 </property>
-                 <property name="icon">
-                  <iconset resource="../resource.qrc">
-                   <normaloff>:/icon/icon/loader — копия — копия.svg</normaloff>:/icon/icon/loader — копия — копия.svg</iconset>
-                 </property>
-                </widget>
-               </item>
-              </layout>
-             </widget>
-            </item>
-            <item>
              <widget class="QFrame" name="frame_22">
               <property name="minimumSize">
                <size>
-                <width>145</width>
-                <height>0</height>
+                <width>170</width>
+                <height>32</height>
                </size>
               </property>
               <property name="maximumSize">
                <size>
-                <width>160</width>
-                <height>16777215</height>
+                <width>170</width>
+                <height>32</height>
                </size>
               </property>
               <property name="frameShape">
@@ -889,16 +866,78 @@ QScrollBar::handle:vertical {
              </widget>
             </item>
             <item>
+             <widget class="QFrame" name="frame_2">
+              <property name="minimumSize">
+               <size>
+                <width>170</width>
+                <height>32</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>170</width>
+                <height>32</height>
+               </size>
+              </property>
+              <property name="frameShape">
+               <enum>QFrame::Shape::StyledPanel</enum>
+              </property>
+              <property name="frameShadow">
+               <enum>QFrame::Shadow::Raised</enum>
+              </property>
+              <layout class="QHBoxLayout" name="horizontalLayout_4">
+               <property name="spacing">
+                <number>0</number>
+               </property>
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QPushButton" name="btn_CalcCost">
+                 <property name="minimumSize">
+                  <size>
+                   <width>140</width>
+                   <height>30</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>140</width>
+                   <height>30</height>
+                  </size>
+                 </property>
+                 <property name="text">
+                  <string>Расчет себ-ти</string>
+                 </property>
+                 <property name="icon">
+                  <iconset resource="../resource.qrc">
+                   <normaloff>:/icon/icon/hard-drive — копия — копия.svg</normaloff>:/icon/icon/hard-drive — копия — копия.svg</iconset>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
              <widget class="QFrame" name="frame_5">
               <property name="minimumSize">
                <size>
-                <width>145</width>
+                <width>170</width>
                 <height>0</height>
                </size>
               </property>
               <property name="maximumSize">
                <size>
-                <width>160</width>
+                <width>170</width>
                 <height>16777215</height>
                </size>
               </property>

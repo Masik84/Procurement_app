@@ -333,7 +333,13 @@ class SupplierPriceImportService:
         self.session.flush()
         return filled_count
 
-    def save_prices_to_history_and_current(self, batch_id: str, imported_by: str, currency_code: str) -> int:
+    def save_prices_to_history_and_current(
+        self,
+        batch_id: str,
+        imported_by: str,
+        currency_code: str,
+        rf_prices_include_vat: bool = False,
+    ) -> int:
         rows = (
             self.session.query(TempPriceImport)
             .filter(
@@ -367,7 +373,14 @@ class SupplierPriceImportService:
         self.session.flush()
         return saved_count
 
-    def save_supplier_price_calculations(self, batch_id: str, imported_by: str, fx_rate: Decimal, currency_code: str) -> int:
+    def save_supplier_price_calculations(
+        self,
+        batch_id: str,
+        imported_by: str,
+        fx_rate: Decimal,
+        currency_code: str,
+        rf_prices_include_vat: bool = False,
+    ) -> int:
         self.delete_supplier_price_calculations(batch_id, imported_by)
 
         rows = (
@@ -403,6 +416,7 @@ class SupplierPriceImportService:
                 calc_date=datetime.now(),
                 batch_id=batch_id,
                 imported_by=imported_by,
+                import_row_no=row.import_row_no,
                 supplier_id=row.supplier_id,
                 product_id=row.selected_product_id,
                 supplier_article=row.supplier_article,
@@ -415,6 +429,7 @@ class SupplierPriceImportService:
                 fx_markup_used=calc_result.fx_markup_used,
                 transport_used=calc_result.transport_used,
                 reexport_used=calc_result.reexport_used,
+                agent_fee_used=calc_result.agent_fee_used,
                 has_customs_used=calc_result.has_customs_used,
                 via_novo_used=calc_result.via_novo_used,
                 bank_fee_used=calc_result.bank_fee_used,
@@ -462,12 +477,14 @@ class SupplierPriceImportService:
             batch_id=batch_id,
             imported_by=imported_by,
             currency_code=currency_code,
+            rf_prices_include_vat=rf_prices_include_vat,
         )
         saved_calculations_count = self.save_supplier_price_calculations(
             batch_id=batch_id,
             imported_by=imported_by,
             fx_rate=fx_rate,
             currency_code=currency_code,
+            rf_prices_include_vat=rf_prices_include_vat,
         )
 
         return {

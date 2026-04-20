@@ -517,9 +517,9 @@ QScrollBar::handle:vertical {
                 <height>16777215</height>
                </size>
               </property>
-              <layout class="QVBoxLayout" name="verticalLayout_4" stretch="0">
+              <layout class="QVBoxLayout" name="verticalLayout_4" stretch="0,0,0">
                <property name="spacing">
-                <number>0</number>
+                <number>6</number>
                </property>
                <property name="leftMargin">
                 <number>0</number>
@@ -553,6 +553,28 @@ QScrollBar::handle:vertical {
                  <property name="icon">
                   <iconset resource="../resource.qrc">
                    <normaloff>:/icon/icon/search — копия — копия.svg</normaloff>:/icon/icon/search — копия — копия.svg</iconset>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="btn_DownFile">
+                 <property name="text">
+                  <string>Скачать Шаблон</string>
+                 </property>
+                 <property name="icon">
+                  <iconset resource="../resource.qrc">
+                   <normaloff>:/icon/icon/arrow-down-circle — копия — копия.svg</normaloff>:/icon/icon/arrow-down-circle — копия — копия.svg</iconset>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QPushButton" name="btn_Import">
+                 <property name="text">
+                  <string>Импорт</string>
+                 </property>
+                 <property name="icon">
+                  <iconset resource="../resource.qrc">
+                   <normaloff>:/icon/icon/arrow-up-circle — копия — копия.svg</normaloff>:/icon/icon/arrow-up-circle — копия — копия.svg</iconset>
                  </property>
                 </widget>
                </item>

@@ -44,7 +44,7 @@ except Exception:
     engine = None
 
 
-# alembic revision --autogenerate -m "fixed_naming"
+# alembic revision --autogenerate -m "changed SupplierPriceCalculation"
 # alembic upgrade head
 # pyside6-rcc -o resource_rc.py resource.qrc
 

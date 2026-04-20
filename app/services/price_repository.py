@@ -129,6 +129,70 @@ class PriceRepository:
             )
         return result
 
+    def get_latest_history_prices_for_product(
+        self,
+        product_id: int,
+        only_rating_calc: bool = True,
+    ) -> list[SupplierPriceWithSupplier]:
+        max_dates_subq = (
+            self.session.query(
+                PriceHistory.supplier_id.label("supplier_id"),
+                PriceHistory.product_id.label("product_id"),
+                PriceHistory.price_date.label("max_price_date"),
+            )
+            .filter(
+                PriceHistory.product_id == product_id,
+                PriceHistory.price.isnot(None),
+            )
+            .group_by(
+                PriceHistory.supplier_id,
+                PriceHistory.product_id,
+                PriceHistory.price_date,
+            )
+            .subquery()
+        )
+
+        rows = (
+            self.session.query(PriceHistory, Supplier)
+            .join(
+                max_dates_subq,
+                (PriceHistory.supplier_id == max_dates_subq.c.supplier_id)
+                & (PriceHistory.product_id == max_dates_subq.c.product_id)
+                & (PriceHistory.price_date == max_dates_subq.c.max_price_date),
+            )
+            .join(Supplier, Supplier.id == PriceHistory.supplier_id)
+            .filter(
+                PriceHistory.product_id == product_id,
+                PriceHistory.price.isnot(None),
+            )
+            .order_by(Supplier.name.asc(), PriceHistory.price_date.desc(), PriceHistory.id.desc())
+            .all()
+        )
+
+        result: list[SupplierPriceWithSupplier] = []
+        seen_supplier_ids: set[int] = set()
+
+        for history_row, supplier in rows:
+            if only_rating_calc and not supplier.rating_calc:
+                continue
+
+            if supplier.id in seen_supplier_ids:
+                continue
+
+            seen_supplier_ids.add(supplier.id)
+            result.append(
+                SupplierPriceWithSupplier(
+                    supplier_id=supplier.id,
+                    supplier_name=supplier.name,
+                    product_id=history_row.product_id,
+                    price=self._to_decimal(history_row.price),
+                    currency_code=history_row.currency,
+                    price_date=history_row.price_date,
+                )
+            )
+
+        return result
+
     def save_supplier_price(self, *, supplier_id: int, product_id: int, price: object, currency_code: str, price_date: datetime) -> None:
         price_value = self._to_decimal(price)
 

@@ -3,19 +3,25 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
-import pandas as pd
-from openpyxl.styles import Font, PatternFill, Alignment
+import pythoncom
+import win32com.client as win32
 from sqlalchemy.orm import Session
 
-from app.db.models import CurrentSupplierPrice, PriceHistory, Product, ProductStock, Supplier, SupplierPriceCalculation, TempPriceImport
+from app.db.models import PriceHistory, Product, ProductStock, Supplier, SupplierPriceCalculation, TempPriceImport
 from app.services.cost_calculation import CostCalculationService
+from app.services.price_repository import PriceRepository
 
 
 class SupplierPriceExport:
     def __init__(self, session: Session):
         self.session = session
         self.cost_calculation = CostCalculationService(session)
+        self.price_repository = PriceRepository(session)
+
+        self._xl_center = -4108
+        self._xl_vcenter = -4160
 
     @staticmethod
     def _to_decimal(value: object) -> Decimal:
@@ -28,25 +34,79 @@ class SupplierPriceExport:
     @staticmethod
     def _safe_filename(value: str) -> str:
         s = (value or "").strip()
-        for ch in ['\\', '/', ':', '*', '?', '"', '<', '>', '|']:
+        for ch in ["\\", "/", ":", "*", "?", '"', "<", ">", "|"]:
             s = s.replace(ch, "_")
         return s or "Supplier"
 
-    def _excel_value(self, value: object):
+    @staticmethod
+    def _excel_value(value: object) -> Any:
         if value is None:
             return None
         if isinstance(value, Decimal):
             return float(value)
         return value
 
-    def _calc_pack_price(self, price_per_l: object, pack: object):
+    @staticmethod
+    def _excel_value_or_blank(value: object):
+        if value is None:
+            return ""
+        if isinstance(value, Decimal):
+            if value == 0:
+                return ""
+            return float(value)
+        if isinstance(value, (int, float)) and value == 0:
+            return ""
+        return value
+
+    @staticmethod
+    def _calc_pack_price(price_per_l: object, pack: object):
         if price_per_l is None or pack is None:
             return None
-        d_price = self._to_decimal(price_per_l)
-        d_pack = self._to_decimal(pack)
+        d_price = SupplierPriceExport._to_decimal(price_per_l)
+        d_pack = SupplierPriceExport._to_decimal(pack)
         if d_pack == 0:
             return None
-        return float((d_price * d_pack).quantize(Decimal("0.0001")))
+        return (d_price * d_pack).quantize(Decimal("0.0001"))
+
+    @staticmethod
+    def _excel_column_letter(col_num: int) -> str:
+        result = ""
+        while col_num > 0:
+            col_num, remainder = divmod(col_num - 1, 26)
+            result = chr(65 + remainder) + result
+        return result
+
+    def _create_excel_app(self):
+        pythoncom.CoInitialize()
+        excel = win32.DispatchEx("Excel.Application")
+        excel.Visible = False
+        excel.DisplayAlerts = False
+        return excel
+
+    def _apply_font_to_all_cells(self, ws):
+        ws.Cells.Font.Name = "Aptos Narrow"
+        ws.Cells.Font.Size = 11
+
+    def _apply_header_common(self, ws, headers_count: int):
+        self._apply_font_to_all_cells(ws)
+        last_col = self._excel_column_letter(headers_count)
+        header_range = ws.Range(f"A1:{last_col}1")
+        header_range.Font.Name = "Aptos Narrow"
+        header_range.Font.Size = 11
+        header_range.Font.Bold = True
+        header_range.WrapText = True
+        header_range.HorizontalAlignment = self._xl_center
+        header_range.VerticalAlignment = self._xl_vcenter
+        ws.Rows(1).EntireRow.AutoFit()
+
+    def _set_number_format_safe(self, target, format_en: str, format_local: str | None = None):
+        try:
+            target.NumberFormat = format_en
+        except Exception:
+            if format_local:
+                target.NumberFormatLocal = format_local
+            else:
+                raise
 
     def _calc_supplier_full_cost_from_db(self, supplier_id: int, product_id: int, supplier_price: object):
         if supplier_price is None:
@@ -56,14 +116,10 @@ class SupplierPriceExport:
         if supplier is None:
             return None
 
-        fx_rate = self.session.query(Supplier.base_currency).filter(Supplier.id == supplier_id).scalar()
-        if not fx_rate:
-            return None
-
         from app.services.supplier import SupplierService
+
         supplier_service = SupplierService(self.session)
         rate_to_rub = supplier_service.get_rate_to_rub(supplier.base_currency)
-
         if rate_to_rub is None or float(rate_to_rub) == 0:
             return None
 
@@ -101,7 +157,14 @@ class SupplierPriceExport:
 
         return best1, best2
 
-    def _get_best_two_suppliers_for_export(self, current_supplier_id: int, product_id: int, current_supplier_name: str, current_imported_full_cost, current_imported_date):
+    def _get_best_two_suppliers_for_export(
+        self,
+        current_supplier_id: int,
+        product_id: int,
+        current_supplier_name: str,
+        current_imported_full_cost,
+        current_imported_date,
+    ):
         best1 = {"supplier": "", "price": None, "date": None}
         best2 = {"supplier": "", "price": None, "date": None}
         seen = set()
@@ -110,80 +173,133 @@ class SupplierPriceExport:
         current_supplier_in_rating = bool(current_supplier.rating_calc) if current_supplier else False
 
         if current_supplier_in_rating:
-            best1, best2 = self._consider_best_candidate(current_supplier_name, current_imported_full_cost, current_imported_date, best1, best2)
+            best1, best2 = self._consider_best_candidate(
+                current_supplier_name,
+                current_imported_full_cost,
+                current_imported_date,
+                best1,
+                best2,
+            )
 
         seen.add(current_supplier_id)
 
-        current_rows = self.session.query(CurrentSupplierPrice, Supplier).join(
-            Supplier, Supplier.id == CurrentSupplierPrice.supplier_id
-        ).filter(
-            CurrentSupplierPrice.product_id == product_id,
-            CurrentSupplierPrice.supplier_id != current_supplier_id,
-            CurrentSupplierPrice.price.isnot(None),
-            Supplier.rating_calc.is_(True),
-        ).all()
-
-        for current_price, supplier in current_rows:
-            if supplier.id in seen:
+        current_rows = self.price_repository.get_suppliers_with_current_prices_for_product(
+            product_id=product_id,
+            only_rating_calc=True,
+        )
+        for current_row in current_rows:
+            if current_row.supplier_id == current_supplier_id or current_row.supplier_id in seen:
                 continue
-            v_full_cost = self._calc_supplier_full_cost_from_db(supplier.id, product_id, current_price.price)
-            best1, best2 = self._consider_best_candidate(supplier.name, v_full_cost, current_price.last_update, best1, best2)
-            seen.add(supplier.id)
+            v_full_cost = self._calc_supplier_full_cost_from_db(
+                current_row.supplier_id,
+                product_id,
+                current_row.price,
+            )
+            best1, best2 = self._consider_best_candidate(
+                current_row.supplier_name,
+                v_full_cost,
+                current_row.price_date,
+                best1,
+                best2,
+            )
+            seen.add(current_row.supplier_id)
 
-        history_subq = self.session.query(
-            PriceHistory.supplier_id,
-            PriceHistory.product_id,
-            PriceHistory.price_date,
-            PriceHistory.price,
-        ).filter(
-            PriceHistory.product_id == product_id,
-            PriceHistory.supplier_id != current_supplier_id,
-            PriceHistory.price.isnot(None),
-        ).order_by(
-            PriceHistory.supplier_id.asc(),
-            PriceHistory.price_date.desc(),
-            PriceHistory.id.desc(),
-        ).all()
+        history_rows = (
+            self.session.query(PriceHistory, Supplier)
+            .join(Supplier, Supplier.id == PriceHistory.supplier_id)
+            .filter(
+                PriceHistory.product_id == product_id,
+                PriceHistory.supplier_id != current_supplier_id,
+                PriceHistory.price.isnot(None),
+                Supplier.rating_calc.is_(True),
+            )
+            .order_by(PriceHistory.supplier_id.asc(), PriceHistory.price_date.desc(), PriceHistory.id.desc())
+            .all()
+        )
+        latest_history_by_supplier: dict[int, tuple[PriceHistory, Supplier]] = {}
+        for history_row, supplier_row in history_rows:
+            if history_row.supplier_id not in latest_history_by_supplier:
+                latest_history_by_supplier[history_row.supplier_id] = (history_row, supplier_row)
 
-        latest_history_by_supplier = {}
-        for row in history_subq:
-            if row.supplier_id not in latest_history_by_supplier:
-                latest_history_by_supplier[row.supplier_id] = row
-
-        for supplier_id, row in latest_history_by_supplier.items():
-            if supplier_id in seen:
+        for supplier_key, data in latest_history_by_supplier.items():
+            if supplier_key in seen:
                 continue
-            supplier = self.session.query(Supplier).filter(Supplier.id == supplier_id, Supplier.rating_calc.is_(True)).first()
-            if supplier is None:
-                continue
-            v_full_cost = self._calc_supplier_full_cost_from_db(supplier.id, product_id, row.price)
-            best1, best2 = self._consider_best_candidate(supplier.name, v_full_cost, row.price_date, best1, best2)
-            seen.add(supplier.id)
+            history_row, supplier_row = data
+            v_full_cost = self._calc_supplier_full_cost_from_db(supplier_row.id, product_id, history_row.price)
+            best1, best2 = self._consider_best_candidate(
+                supplier_row.name,
+                v_full_cost,
+                history_row.price_date,
+                best1,
+                best2,
+            )
+            seen.add(supplier_key)
 
         return best1, best2
 
-    def build_export_dataframe(self, batch_id: str, imported_by: str) -> pd.DataFrame:
-        rows = self.session.query(TempPriceImport, SupplierPriceCalculation, Product, ProductStock, Supplier).outerjoin(
-            SupplierPriceCalculation,
-            (TempPriceImport.batch_id == SupplierPriceCalculation.batch_id)
-            & (TempPriceImport.imported_by == SupplierPriceCalculation.imported_by)
-            & (TempPriceImport.import_row_no == SupplierPriceCalculation.import_row_no),
-        ).outerjoin(
-            Product, TempPriceImport.selected_product_id == Product.id
-        ).outerjoin(
-            ProductStock, TempPriceImport.selected_product_id == ProductStock.product_id
-        ).outerjoin(
-            Supplier, TempPriceImport.supplier_id == Supplier.id
-        ).filter(
-            TempPriceImport.batch_id == batch_id,
-            TempPriceImport.imported_by == imported_by,
-        ).order_by(TempPriceImport.import_row_no.asc()).all()
+    def _get_previous_same_supplier_values(self, supplier_id: int, product_id: int, current_price_date):
+        if not supplier_id or not product_id or current_price_date is None:
+            return None, None, None, None
 
-        out_rows = []
+        prev_snapshot = self.price_repository.get_previous_supplier_price_snapshot(
+            supplier_id=supplier_id,
+            product_id=product_id,
+            last_price_date=current_price_date,
+        )
+        if prev_snapshot is None:
+            return None, None, None, None
+
+        prev_price = prev_snapshot.price
+        prev_full_cost = self._calc_supplier_full_cost_from_db(supplier_id, product_id, prev_price)
+        prev_cost_novo = None
+        if prev_full_cost is not None:
+            try:
+                supplier = self.session.query(Supplier).filter(Supplier.id == supplier_id).first()
+                if supplier is not None:
+                    from app.services.supplier import SupplierService
+
+                    supplier_service = SupplierService(self.session)
+                    rate_to_rub = supplier_service.get_rate_to_rub(supplier.base_currency)
+                    if rate_to_rub is not None and float(rate_to_rub) != 0:
+                        calc_result = self.cost_calculation.calculate_supplier_costs(
+                            supplier_id=supplier_id,
+                            product_id=product_id,
+                            supplier_price=self._to_decimal(prev_price),
+                            fx_rate=self._to_decimal(rate_to_rub),
+                            currency_code=supplier.base_currency,
+                        )
+                        prev_cost_novo = calc_result.cost_novo_wvat
+            except Exception:
+                prev_cost_novo = None
+
+        return prev_price, prev_cost_novo, prev_full_cost, prev_snapshot.price_date
+
+    def build_export_rows(self, batch_id: str, imported_by: str) -> list[dict]:
+        rows = (
+            self.session.query(TempPriceImport, SupplierPriceCalculation, Product, ProductStock, Supplier)
+            .outerjoin(
+                SupplierPriceCalculation,
+                (TempPriceImport.batch_id == SupplierPriceCalculation.batch_id)
+                & (TempPriceImport.imported_by == SupplierPriceCalculation.imported_by)
+                & (TempPriceImport.import_row_no == SupplierPriceCalculation.import_row_no),
+            )
+            .outerjoin(Product, TempPriceImport.selected_product_id == Product.id)
+            .outerjoin(ProductStock, TempPriceImport.selected_product_id == ProductStock.product_id)
+            .outerjoin(Supplier, TempPriceImport.supplier_id == Supplier.id)
+            .filter(
+                TempPriceImport.batch_id == batch_id,
+                TempPriceImport.imported_by == imported_by,
+            )
+            .order_by(TempPriceImport.import_row_no.asc())
+            .all()
+        )
+
+        out_rows: list[dict] = []
 
         for temp_row, calc_row, product, stock, supplier in rows:
             current_supplier_name = supplier.name if supplier else ""
             product_id_for_row = temp_row.selected_product_id or 0
+            current_price_date = temp_row.import_date
 
             best1 = {"supplier": "", "price": None, "date": None}
             best2 = {"supplier": "", "price": None, "date": None}
@@ -194,49 +310,131 @@ class SupplierPriceExport:
                     product_id=product_id_for_row,
                     current_supplier_name=current_supplier_name,
                     current_imported_full_cost=calc_row.full_cost_msk if calc_row else None,
-                    current_imported_date=calc_row.calc_date if calc_row else None,
+                    current_imported_date=calc_row.calc_date if calc_row else current_price_date,
                 )
 
             pack_value = product.pack if product is not None else temp_row.new_pack
             price_per_l = temp_row.price
-            price_pack_export = temp_row.price_pack if temp_row.price_pack is not None else self._calc_pack_price(price_per_l, pack_value)
+            price_pack_export = (
+                temp_row.price_pack if temp_row.price_pack is not None else self._calc_pack_price(price_per_l, pack_value)
+            )
+
+            prev_price = None
+            prev_cost_novo = None
+            prev_full_cost = None
+            prev_price_date = None
+            if temp_row.supplier_id and product_id_for_row > 0:
+                prev_price, prev_cost_novo, prev_full_cost, prev_price_date = self._get_previous_same_supplier_values(
+                    supplier_id=temp_row.supplier_id,
+                    product_id=product_id_for_row,
+                    current_price_date=current_price_date,
+                )
 
             transit_total = None
             if stock is not None:
                 transit_total = self._to_decimal(stock.transit_qty) + self._to_decimal(stock.is_confirmed_order_qty)
 
-            out_rows.append({
-                "Supplier Article": temp_row.supplier_article or "",
-                "Supplier Product Name": temp_row.product_name or "",
-                "Our Product Name": product.name if product else "",
-                "Pack": self._excel_value(pack_value),
-                "Price, L": self._excel_value(price_per_l),
-                "Price (Pack)": self._excel_value(price_pack_export),
-                "Currency": calc_row.currency_code if calc_row else (supplier.base_currency if supplier else ""),
-                "Cost Novo withVAT": self._excel_value(calc_row.cost_novo_wvat if calc_row else None),
-                "Full Cost Msk": self._excel_value(calc_row.full_cost_msk if calc_row else None),
-                "Дистр цена": self._excel_value(stock.distr_price if stock else None),
-                "Промо цена": self._excel_value(stock.promo_price if stock else None),
-                "curr LPC": self._excel_value(stock.lpc if stock else None),
-                "curr Landed cost": self._excel_value(stock.landed_cost if stock else None),
-                "Best Suppl": best1["supplier"],
-                "Best full Price, L": self._excel_value(best1["price"]),
-                "last update Best1": best1["date"],
-                "Best Suppl 2": best2["supplier"],
-                "Best full Price, L 2": self._excel_value(best2["price"]),
-                "last update Best2": best2["date"],
-                "Stock": self._excel_value(stock.stock_qty if stock else None),
-                "Transit": self._excel_value(transit_total),
-                "Purchase Order": self._excel_value(stock.order_qty if stock else None),
-                "Order IS": self._excel_value(stock.is_order_qty if stock else None),
-                "Stock IS": self._excel_value(stock.is_stock_qty if stock else None),
-                "Reserve cust": self._excel_value(stock.reserve_qty if stock else None),
-                "Damaged": self._excel_value(stock.markdown_qty if stock else None),
-            })
+            out_rows.append(
+                {
+                    "Supplier Article": temp_row.supplier_article or "",
+                    "Supplier Product Name": temp_row.product_name or "",
+                    "Our Product Name": product.name if product else "",
+                    "Pack": self._excel_value(pack_value),
+                    "Price, L": self._excel_value(price_per_l),
+                    "Price (Pack)": self._excel_value(price_pack_export),
+                    "Currency": calc_row.currency_code if calc_row else (supplier.base_currency if supplier else ""),
+                    "Cost Novo withVAT": self._excel_value(calc_row.cost_novo_wvat if calc_row else None),
+                    "Full Cost Msk": self._excel_value(calc_row.full_cost_msk if calc_row else None),
+                    "last update (prev)": prev_price_date,
+                    "Price, L (prev)": self._excel_value(prev_price),
+                    "Cost Novo withVAT (prev)": self._excel_value(prev_cost_novo),
+                    "Full Cost Msk (prev)": self._excel_value(prev_full_cost),
+                    "Дистр цена": self._excel_value(stock.distr_price if stock else None),
+                    "Промо цена": self._excel_value(stock.promo_price if stock else None),
+                    "curr LPC": self._excel_value(stock.lpc if stock else None),
+                    "curr Landed cost": self._excel_value(stock.landed_cost if stock else None),
+                    "Best Suppl": best1["supplier"],
+                    "Best full Price, L": self._excel_value(best1["price"]),
+                    "last update Best1": best1["date"],
+                    "Best Suppl 2": best2["supplier"],
+                    "Best full Price, L 2": self._excel_value(best2["price"]),
+                    "last update Best2": best2["date"],
+                    "Stock": self._excel_value(stock.stock_qty if stock else None),
+                    "Transit": self._excel_value(transit_total),
+                    "Purchase Order": self._excel_value(stock.order_qty if stock else None),
+                    "Order IS": self._excel_value(stock.is_order_qty if stock else None),
+                    "Stock IS": self._excel_value(stock.is_stock_qty if stock else None),
+                    "Reserve cust": self._excel_value(stock.reserve_qty if stock else None),
+                    "Damaged": self._excel_value(stock.markdown_qty if stock else None),
+                }
+            )
 
-        return pd.DataFrame(out_rows)
+        return out_rows
 
-    def export_calculated(self, batch_id: str, imported_by: str, supplier_id: int, output_path: str | Path | None = None) -> Path:
+    def export_template(self, file_path: str | Path) -> Path:
+        file_path = Path(file_path)
+        if file_path.suffix.lower() != ".xlsx":
+            file_path = file_path.with_suffix(".xlsx")
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        excel = None
+        wb = None
+        try:
+            target_path = file_path.resolve()
+
+            # если файл уже существует, удаляем его заранее,
+            # чтобы SaveAs не упирался в блокировку/перезапись
+            if target_path.exists():
+                try:
+                    target_path.unlink()
+                except PermissionError:
+                    raise PermissionError(
+                        f"Не удается перезаписать файл:\n{target_path}\n\n"
+                        f"Скорее всего, он открыт в Excel. Закрой файл и попробуй снова."
+                    )
+
+            excel = self._create_excel_app()
+            wb = excel.Workbooks.Add()
+            ws = wb.Worksheets(1)
+            ws.Name = "Sheet1"
+
+            headers = ["Material number", "Material", "Price, L", "Price, Pack"]
+            for col_index, header in enumerate(headers, start=1):
+                ws.Cells(1, col_index).Value = header
+
+            self._apply_header_common(ws, len(headers))
+            ws.Range("A1:D1").Interior.Color = 0xCDCDCD
+
+            ws.Columns("A:A").ColumnWidth = 18
+            ws.Columns("B:B").ColumnWidth = 31.14
+            ws.Columns("C:D").ColumnWidth = 12
+
+            self._set_number_format_safe(ws.Columns("A:A"), "@", "@")
+            self._set_number_format_safe(ws.Columns("C:D"), "0.00", "0,00")
+
+            wb.SaveAs(str(target_path))
+            return target_path
+        finally:
+            try:
+                if wb is not None:
+                    wb.Close(SaveChanges=False)
+            except Exception:
+                pass
+            try:
+                if excel is not None:
+                    excel.Quit()
+            except Exception:
+                pass
+            pythoncom.CoUninitialize()
+
+
+    def export_calculated(
+        self,
+        batch_id: str,
+        imported_by: str,
+        supplier_id: int,
+        output_path: str | Path | None = None,
+    ) -> Path:
         supplier = self.session.query(Supplier).filter(Supplier.id == supplier_id).first()
         supplier_name = self._safe_filename(supplier.name if supplier else "Supplier")
 
@@ -248,81 +446,154 @@ class SupplierPriceExport:
 
         if output_path.suffix.lower() != ".xlsx":
             output_path = output_path.with_suffix(".xlsx")
-
-        df = self.build_export_dataframe(batch_id=batch_id, imported_by=imported_by)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="Sheet1")
-            ws = writer.book["Sheet1"]
+        rows = self.build_export_rows(batch_id=batch_id, imported_by=imported_by)
 
-            header_fill_gray = PatternFill("solid", fgColor="CDCDCD")
-            header_fill_red = PatternFill("solid", fgColor="C00000")
-            header_fill_blue = PatternFill("solid", fgColor="00B0F0")
-            header_fill_green = PatternFill("solid", fgColor="92D050")
-            header_fill_dark_blue = PatternFill("solid", fgColor="215C98")
-            white_font = Font(color="FFFFFF", bold=True)
-            bold_font = Font(bold=True)
-            center = Alignment(horizontal="center", vertical="top", wrap_text=True)
+        excel = None
+        wb = None
+        try:
+            excel = self._create_excel_app()
+            wb = excel.Workbooks.Add()
+            ws = wb.Worksheets(1)
+            ws.Name = "Sheet1"
 
-            for cell in ws[1]:
-                cell.font = bold_font
-                cell.alignment = center
+            headers = [
+                "Supplier Article",
+                "Supplier Product Name",
+                "Our Product Name",
+                "Pack",
+                "Price, L",
+                "Price (Pack)",
+                "Currency",
+                "Cost Novo withVAT",
+                "Full Cost Msk",
+                "last update (prev)",
+                "Price, L (prev)",
+                "Cost Novo withVAT (prev)",
+                "Full Cost Msk (prev)",
+                "Дистр цена",
+                "Промо цена",
+                "curr LPC",
+                "curr Landed cost",
+                "Best Suppl",
+                "Best full Price, L",
+                "last update Best1",
+                "Best Suppl 2",
+                "Best full Price, L 2",
+                "last update Best2",
+                "Stock",
+                "Transit",
+                "Purchase Order",
+                "Order IS",
+                "Stock IS",
+                "Reserve cust",
+                "Damaged",
+            ]
 
-            for col in range(1, 10):
-                ws.cell(1, col).fill = header_fill_gray
+            for col_index, header in enumerate(headers, start=1):
+                ws.Cells(1, col_index).Value = header
 
-            for col in range(10, 14):
-                ws.cell(1, col).fill = header_fill_red
-                ws.cell(1, col).font = white_font
+            row_num = 2
+            for row in rows:
+                for col_index, header in enumerate(headers, start=1):
+                    ws.Cells(row_num, col_index).Value = self._excel_value_or_blank(row.get(header))
+                row_num += 1
 
-            for col in range(14, 17):
-                ws.cell(1, col).fill = header_fill_blue
+            self._apply_header_common(ws, len(headers))
 
-            for col in range(17, 20):
-                ws.cell(1, col).fill = header_fill_green
+            # ===== Header colors: one-to-one with the Access export layout,
+            # shifted for the inserted "(prev)" block =====
+            ws.Range("A1:I1").Interior.Color = self._rgb(205, 205, 205)
 
-            for col in range(20, 23):
-                ws.cell(1, col).fill = header_fill_dark_blue
-                ws.cell(1, col).font = white_font
+            # prev block
+            ws.Range("J1:M1").Interior.Color = self._rgb(166, 166, 166)
 
-            for col in range(23, 25):
-                ws.cell(1, col).fill = header_fill_red
-                ws.cell(1, col).font = white_font
+            # price / stock price block
+            ws.Range("N1:Q1").Interior.Color = self._rgb(192, 0, 0)
+            ws.Range("N1:Q1").Font.Color = self._rgb(255, 255, 255)
 
-            for col in range(25, 27):
-                ws.cell(1, col).fill = header_fill_dark_blue
-                ws.cell(1, col).font = white_font
+            # best supplier 1
+            ws.Range("R1:T1").Interior.Color = self._rgb(0, 176, 240)
 
-            for col in ["A"]:
-                ws.column_dimensions[col].width = 16
-            for col in ["B", "C"]:
-                ws.column_dimensions[col].width = 31.14
-            ws.column_dimensions["D"].width = 10
-            for col in ["N", "Q"]:
-                ws.column_dimensions[col].width = 16.14
-            ws.column_dimensions["P"].width = 9.43
-            ws.column_dimensions["S"].width = 9.86
-            for col in ["T", "U", "V", "W", "X", "Y", "Z"]:
-                ws.column_dimensions[col].width = 8.14
+            # best supplier 2
+            ws.Range("U1:W1").Interior.Color = self._rgb(146, 208, 80)
 
-            for col in ["E", "F"]:
-                for cell in ws[col][1:]:
-                    cell.number_format = "#,##0.00"
+            # stock / transit / purchase order
+            ws.Range("X1:Z1").Interior.Color = self._rgb(33, 92, 152)
+            ws.Range("X1:Z1").Font.Color = self._rgb(255, 255, 255)
 
-            for col in ["H", "I", "J", "K", "L", "M", "O", "R"]:
-                for cell in ws[col][1:]:
-                    cell.number_format = '#,##0 "$"'
+            # order is / stock is
+            ws.Range("AA1:AB1").Interior.Color = self._rgb(192, 0, 0)
+            ws.Range("AA1:AB1").Font.Color = self._rgb(255, 255, 255)
 
-            for col in ["P", "S"]:
-                for cell in ws[col][1:]:
-                    cell.number_format = "dd/mm/yy;@"
+            # reserve / damaged
+            ws.Range("AC1:AD1").Interior.Color = self._rgb(33, 92, 152)
+            ws.Range("AC1:AD1").Font.Color = self._rgb(255, 255, 255)
 
-            for col in ["T", "U", "V", "W", "X", "Y", "Z"]:
-                for cell in ws[col][1:]:
-                    cell.number_format = '#,##0;[Red]-#,##0;"-"'
+            # ===== Number/date formats: use local Excel formats directly =====
+            last_row = max(2, row_num - 1)
 
-            ws.auto_filter.ref = "A1:Z1"
-            ws.freeze_panes = "L2"
+            ws.Columns("A:A").NumberFormatLocal = "@"
+            # ws.Columns("D:D").NumberFormat = "General"
 
-        return output_path
+            ws.Columns("E:F").NumberFormatLocal = "# ##0,00_ ;[Red]-# ##0,00_ ;'-'"
+
+            ws.Columns("H:I").NumberFormatLocal = "# ##0 ₽"
+            ws.Columns("J:J").NumberFormatLocal = "ДД.ММ.ГГ;@"
+            ws.Columns("K:K").NumberFormatLocal = "# ##0,00_ ;[Red]-# ##0,00_ ;'-'"
+            ws.Columns("L:M").NumberFormatLocal = "# ##0 ₽"
+
+            ws.Columns("N:Q").NumberFormatLocal = "# ##0 ₽"
+
+            ws.Columns("S:S").NumberFormatLocal = "# ##0 ₽"
+            ws.Columns("T:T").NumberFormatLocal = "ДД.ММ.ГГ;@"
+
+            ws.Columns("V:V").NumberFormatLocal = "# ##0 ₽"
+            ws.Columns("W:W").NumberFormatLocal = "ДД.ММ.ГГ;@"
+
+            ws.Columns("X:AD").NumberFormatLocal = '# ##0;[Red]-# ##0;"-"'
+
+            # ===== Column widths =====
+            ws.Columns("B:C").ColumnWidth = 31.14
+
+            ws.Columns("R:R").ColumnWidth = 16.14
+            ws.Columns("U:U").ColumnWidth = 16.14
+
+            ws.Columns("J:J").ColumnWidth = 11.00
+            ws.Columns("T:T").ColumnWidth = 9.43
+            ws.Columns("W:W").ColumnWidth = 9.86
+
+            ws.Columns("X:AD").ColumnWidth = 8.14
+
+            ws.Range("A1:AD1").AutoFilter(1)
+
+            try:
+                excel.ActiveWindow.Zoom = 90
+                ws.Activate()
+                ws.Range("P2").Select()
+                excel.ActiveWindow.FreezePanes = True
+            except Exception:
+                pass
+
+            wb.SaveAs(str(output_path.resolve()))
+            return output_path
+        finally:
+            try:
+                if wb is not None:
+                    wb.Close(SaveChanges=False)
+            except Exception:
+                pass
+            try:
+                if excel is not None:
+                    excel.Quit()
+            except Exception:
+                pass
+            pythoncom.CoUninitialize()
+
+    @staticmethod
+    def _rgb(r: int, g: int, b: int) -> int:
+        return r + g * 256 + b * 65536
+
+
+

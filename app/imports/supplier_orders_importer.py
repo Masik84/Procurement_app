@@ -4,7 +4,6 @@ from pathlib import Path
 import pandas as pd
 
 from app.imports.stock_importer import is_excluded_brand
-from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces, normalize_product_name
 
 
@@ -59,40 +58,55 @@ class SupplierOrdersImporter:
         if any(x < 0 for x in required):
             raise ValueError("Не найдены обязательные колонки в листе Закупки в пути.")
 
-        agg = {}
+        df2 = pd.DataFrame({
+            'status': data.iloc[:, col_status].fillna('').map(_norm).str.lower(),
+            'brand': data.iloc[:, col_brand].fillna('').map(_norm),
+            'supplier1': data.iloc[:, col_supplier1].fillna('').map(_norm),
+            'article': data.iloc[:, col_article].fillna('').map(_norm),
+            'product_name': data.iloc[:, col_prod].fillna('').map(_norm),
+            'order_qty': pd.to_numeric(data.iloc[:, col_qty], errors='coerce').fillna(0).astype(float),
+        })
+        df2['import_row_no'] = df2.index + 3
 
-        for idx, rec in data.iterrows():
-            src_status = _norm(rec.iloc[col_status]).lower()
-            if src_status == "":
-                break
-            if src_status not in {"in transit", "order"}:
-                continue
+        non_empty_mask = (df2['status'] != '') | (df2['article'] != '') | (df2['product_name'] != '')
+        df2 = df2.loc[non_empty_mask]
+        if df2.empty:
+            return []
 
-            src_brand = _norm(rec.iloc[col_brand])
-            if is_excluded_brand(src_brand):
-                continue
+        df2 = df2.loc[df2['status'] == 'order']
+        if df2.empty:
+            return []
 
-            src_supplier = _norm(rec.iloc[col_supplier1])
-            if src_status == "order" and normalize_product_name(src_supplier) == "coral":
-                continue
+        df2 = df2.loc[~df2['brand'].map(is_excluded_brand)]
+        if df2.empty:
+            return []
 
-            src_article = _norm(rec.iloc[col_article])
-            src_prod_name = _norm(rec.iloc[col_prod])
-            qty_num = float(parse_loose_number(rec.iloc[col_qty]) or 0)
+        df2 = df2.loc[df2['supplier1'].map(normalize_product_name) != 'coral']
+        if df2.empty:
+            return []
 
-            key = f"A|{src_article.upper()}" if src_article else f"R|{idx+3}"
-            if key not in agg:
-                agg[key] = {
-                    "import_row_no": idx + 3,
-                    "source_article": src_article or None,
-                    "source_product_name": src_prod_name or None,
-                    "transit_qty": 0.0,
-                    "order_qty": 0.0,
-                }
+        df2['key'] = df2.apply(
+            lambda r: f"A|{r['article'].upper()}" if r['article'] else f"R|{int(r['import_row_no'])}",
+            axis=1,
+        )
 
-            if src_status == "in transit":
-                agg[key]["transit_qty"] += qty_num
-            else:
-                agg[key]["order_qty"] += qty_num
+        grouped = (
+            df2.groupby('key', sort=False)
+            .agg(
+                import_row_no=('import_row_no', 'min'),
+                source_article=('article', lambda s: next((x for x in s if x), '')),
+                source_product_name=('product_name', lambda s: next((x for x in s if x), '')),
+                order_qty=('order_qty', 'sum'),
+            )
+            .reset_index(drop=True)
+        )
 
-        return list(agg.values())
+        rows = []
+        for rec in grouped.to_dict('records'):
+            rows.append({
+                'import_row_no': int(rec['import_row_no']),
+                'source_article': rec['source_article'] or None,
+                'source_product_name': rec['source_product_name'] or None,
+                'order_qty': float(rec['order_qty'] or 0),
+            })
+        return rows

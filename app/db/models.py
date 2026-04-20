@@ -60,6 +60,7 @@ class Supplier(Base):
     transport_cost_per_l = Column(Numeric, nullable=False, default=0)
     reexport_percent = Column(Numeric, nullable=False, default=0)
     fx_rate_markup = Column(Numeric, nullable=False, default=0)
+    agent_fee = Column(Numeric, nullable=False, default=0)
 
     is_via_novo = Column(Boolean, nullable=False, default=False)
     has_import_duty = Column(Boolean, nullable=False, default=False)
@@ -211,6 +212,7 @@ class SupplierPriceCalculation(Base):
     calc_date = Column(DateTime, nullable=False)
     batch_id = Column(String(64), nullable=False, index=True)
     imported_by = Column(String(255), nullable=False, index=True)
+    import_row_no = Column(Integer, nullable=True)
 
     supplier_id = Column(
         Integer,
@@ -237,6 +239,7 @@ class SupplierPriceCalculation(Base):
     fx_markup_used = Column(Numeric, nullable=False)
     transport_used = Column(Numeric, nullable=False)
     reexport_used = Column(Numeric, nullable=False)
+    agent_fee_used = Column(Numeric, nullable=False)
 
     has_customs_used = Column(Boolean, nullable=False)
     via_novo_used = Column(Boolean, nullable=False)
@@ -436,6 +439,7 @@ class TempCustomerCostOption(Base):
     fx_markup_used = Column(Numeric, nullable=False)
     transport_used = Column(Numeric, nullable=False)
     reexport_used = Column(Numeric, nullable=False)
+    agent_fee_used = Column(Numeric, nullable=False)
 
     has_customs_used = Column(Boolean, nullable=False)
     via_novo_used = Column(Boolean, nullable=False)
@@ -485,9 +489,10 @@ class TempStockImport(Base):
     promo_price = Column(Numeric, nullable=True)
 
     stock_qty = Column(Numeric, nullable=False, default=0)
+    transit_qty = Column(Numeric, nullable=False, default=0)
     markdown_qty = Column(Numeric, nullable=False, default=0)
     reserve_qty = Column(Numeric, nullable=False, default=0)
-
+    
     selected_product_id = Column(
         Integer,
         ForeignKey("products.id", ondelete="CASCADE"),
@@ -522,7 +527,6 @@ class TempSupplierOrdersImport(Base):
     source_article = Column(String(255), nullable=True)
     source_product_name = Column(String(500), nullable=True)
 
-    transit_qty = Column(Numeric, nullable=False, default=0)
     order_qty = Column(Numeric, nullable=False, default=0)
 
     selected_product_id = Column(
@@ -655,6 +659,7 @@ class CustomerPriceCalculation(Base):
     fx_markup_used = Column(Numeric, nullable=False)
     transport_used = Column(Numeric, nullable=False)
     reexport_used = Column(Numeric, nullable=False)
+    agent_fee_used = Column(Numeric, nullable=False)
 
     has_customs_used = Column(Boolean, nullable=False)
     via_novo_used = Column(Boolean, nullable=False)

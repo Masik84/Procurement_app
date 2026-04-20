@@ -27,6 +27,51 @@ class ProductCreateData:
 class ProductMatchingService:
     def __init__(self, session: Session) -> None:
         self.session = session
+        self._normalized_products_cache: dict[str, Product] | None = None
+        self._article_links_cache: dict[str, ProductArticle] | None = None
+        self._name_links_cache: dict[str, ProductArticle] | None = None
+
+    def _build_normalized_products_cache(self) -> dict[str, Product]:
+        cache: dict[str, Product] = {}
+        products = (
+            self.session.query(Product)
+            .filter(Product.name.isnot(None))
+            .order_by(Product.id.asc())
+            .all()
+        )
+        for product in products:
+            key = normalize_product_name(product.name)
+            if key and key not in cache:
+                cache[key] = product
+        return cache
+
+    def _build_article_links_cache(self) -> dict[str, ProductArticle]:
+        cache: dict[str, ProductArticle] = {}
+        links = (
+            self.session.query(ProductArticle)
+            .filter(ProductArticle.article.isnot(None), ProductArticle.article != "")
+            .order_by(ProductArticle.id.asc())
+            .all()
+        )
+        for link in links:
+            key = clean_multi_spaces(link.article)
+            if key and key not in cache:
+                cache[key] = link
+        return cache
+
+    def _build_name_links_cache(self) -> dict[str, ProductArticle]:
+        cache: dict[str, ProductArticle] = {}
+        links = (
+            self.session.query(ProductArticle)
+            .filter(ProductArticle.name.isnot(None), ProductArticle.name != "")
+            .order_by(ProductArticle.id.asc())
+            .all()
+        )
+        for link in links:
+            key = clean_multi_spaces(link.name)
+            if key and key not in cache:
+                cache[key] = link
+        return cache
 
     # =========================================================
     # Article helpers
@@ -147,37 +192,28 @@ class ProductMatchingService:
         )
 
     def _get_article_link_by_exact_article(self, article: str) -> Optional[ProductArticle]:
-        return (
-            self.session.query(ProductArticle)
-            .filter(ProductArticle.article == article)
-            .order_by(ProductArticle.id.asc())
-            .first()
-        )
+        key = clean_multi_spaces(article)
+        if not key:
+            return None
+        if self._article_links_cache is None:
+            self._article_links_cache = self._build_article_links_cache()
+        return self._article_links_cache.get(key)
 
     def _get_article_link_by_exact_name(self, supplier_name: str) -> Optional[ProductArticle]:
-        return (
-            self.session.query(ProductArticle)
-            .filter(ProductArticle.name == supplier_name)
-            .order_by(ProductArticle.id.asc())
-            .first()
-        )
+        key = clean_multi_spaces(supplier_name)
+        if not key:
+            return None
+        if self._name_links_cache is None:
+            self._name_links_cache = self._build_name_links_cache()
+        return self._name_links_cache.get(key)
 
     def find_by_normalized_product_name(self, source_name: object) -> Optional[Product]:
         target = normalize_product_name(source_name)
         if not target:
             return None
-
-        products = (
-            self.session.query(Product)
-            .filter(Product.name.isnot(None))
-            .all()
-        )
-
-        for product in products:
-            if normalize_product_name(product.name) == target:
-                return product
-
-        return None
+        if self._normalized_products_cache is None:
+            self._normalized_products_cache = self._build_normalized_products_cache()
+        return self._normalized_products_cache.get(target)
 
     def find_product_by_split_articles(self, supplier_article: object) -> Optional[Product]:
         first_product: Optional[Product] = None

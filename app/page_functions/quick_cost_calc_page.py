@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtCore import QFile, QEvent, QPoint
+from PySide6.QtCore import QFile, QEvent, QPoint, Qt
 from PySide6.QtWidgets import QMessageBox, QToolTip, QVBoxLayout, QWidget
 from PySide6.QtUiTools import QUiLoader
 
@@ -55,13 +55,12 @@ class QuickCostCalcPage(QWidget):
         return SessionLocal()
 
     def setup_ui(self):
-        self.ui.label_msg.setText("Сообщений нет")
-
         self.ui.line_CostNovo.setReadOnly(True)
         self.ui.line_FullCost.setReadOnly(True)
 
         self._setup_number_field(self.ui.line_ExchangeRate, "Формат: 82,0000")
         self._setup_number_field(self.ui.line_Transport, "Формат: 1,2500")
+        self._setup_number_field(self.ui.line_AgentFee, "Формат: 2,6500")
         self._setup_number_field(self.ui.line_Reexport, "Формат: 3,5% / 0,24%")
         self._setup_number_field(self.ui.line_FXMarkup, "Формат: 3,5% / 0,24%")
         self._setup_number_field(self.ui.line_Price, "Формат: 125,4500")
@@ -72,6 +71,7 @@ class QuickCostCalcPage(QWidget):
 
         self.ui.line_ExchangeRate.editingFinished.connect(self.normalize_exchange_rate)
         self.ui.line_Transport.editingFinished.connect(self.normalize_transport)
+        self.ui.line_AgentFee.editingFinished.connect(self.normalize_agent_fee)
         self.ui.line_Reexport.editingFinished.connect(self.normalize_reexport)
         self.ui.line_FXMarkup.editingFinished.connect(self.normalize_fx_markup)
         self.ui.line_Price.editingFinished.connect(self.normalize_price)
@@ -87,6 +87,7 @@ class QuickCostCalcPage(QWidget):
         watched_fields = {
             self.ui.line_ExchangeRate,
             self.ui.line_Transport,
+            self.ui.line_AgentFee,
             self.ui.line_Reexport,
             self.ui.line_FXMarkup,
             self.ui.line_Price,
@@ -100,13 +101,6 @@ class QuickCostCalcPage(QWidget):
                 )
 
         return super().eventFilter(watched, event)
-
-    def show_message(self, text: str):
-        self.ui.label_msg.setText(text)
-
-    def show_error_message(self, text: str):
-        self.ui.label_msg.setText(text)
-        QMessageBox.warning(self, "Ошибка", text)
 
     def set_combo_text(self, combo, value: str):
         index = combo.findText(value)
@@ -143,6 +137,7 @@ class QuickCostCalcPage(QWidget):
 
         self.ui.line_ExchangeRate.clear()
         self.ui.line_Transport.clear()
+        self.ui.line_AgentFee.clear()
         self.ui.line_Reexport.setText("0,0%")
         self.ui.line_FXMarkup.setText("0,0%")
         self.ui.line_Price.clear()
@@ -225,6 +220,7 @@ class QuickCostCalcPage(QWidget):
             self.set_combo_text(self.ui.cbo_Marking, "Феникс")
             self.ui.line_ExchangeRate.clear()
             self.ui.line_Transport.clear()
+            self.ui.line_AgentFee.clear()
             self.ui.line_Reexport.setText("0,0%")
             self.ui.line_FXMarkup.setText("0,0%")
             return
@@ -250,6 +246,7 @@ class QuickCostCalcPage(QWidget):
             self.format_number(rate_row.rate_to_rub, 4) if rate_row is not None else ""
         )
         self.ui.line_Transport.setText(self.format_number(supplier.transport_cost_per_l, 4))
+        self.ui.line_AgentFee.setText(self.format_number(getattr(supplier, "agent_fee", None), 4))
         self.set_combo_text(self.ui.cbo_viaNovo, "через Ново" if supplier.is_via_novo else "в Мск")
         self.ui.line_Reexport.setText(self.format_percent(supplier.reexport_percent))
         self.ui.line_FXMarkup.setText(self.format_percent(supplier.fx_rate_markup))
@@ -320,6 +317,9 @@ class QuickCostCalcPage(QWidget):
     def normalize_transport(self):
         self._normalize_number_widget(self.ui.line_Transport, digits=4)
 
+    def normalize_agent_fee(self):
+        self._normalize_number_widget(self.ui.line_AgentFee, digits=4)
+
     def normalize_price(self):
         self._normalize_number_widget(self.ui.line_Price, digits=4)
 
@@ -381,6 +381,7 @@ class QuickCostCalcPage(QWidget):
             supplier_price = self.parse_decimal_field(self.ui.line_Price, "Цена поставщика", allow_zero=False)
             fx_rate = self.parse_decimal_field(self.ui.line_ExchangeRate, "Курс", allow_zero=False)
             transport = self.parse_decimal_field(self.ui.line_Transport, "Транспорт")
+            agent_fee = self.parse_decimal_field(self.ui.line_AgentFee, "Agent fee")
             reexport = self.parse_percent_field(self.ui.line_Reexport, "Реэкспорт")
             fx_markup = self.parse_percent_field(self.ui.line_FXMarkup, "FX markup")
 
@@ -399,6 +400,7 @@ class QuickCostCalcPage(QWidget):
                     pack_type_name=pack_type_name,
                     fx_rate=fx_rate,
                     transport=transport,
+                    agent_fee=agent_fee,
                     reexport=reexport,
                     fx_markup=fx_markup,
                     has_customs=has_customs,

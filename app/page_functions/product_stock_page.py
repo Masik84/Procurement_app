@@ -4,9 +4,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from math import isnan
 
-from PySide6.QtCore import QFile, Qt, QUrl, QTimer
-from PySide6.QtGui import QDesktopServices
+from openpyxl import Workbook
+
+from PySide6.QtCore import QFile, Qt, QUrl, QTimer, QEvent, QPoint
+from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -61,9 +64,10 @@ COLUMN_DEFS: dict[str, list[ColumnDef]] = {
         ColumnDef("source_sku", "SKU", editable=True),
         ColumnDef("source_product_name", "Source product", editable=True),
         ColumnDef("stock_qty", "Stock qty", editable=True),
+        ColumnDef("transit_qty", "Transit qty", editable=True),
         ColumnDef("markdown_qty", "Markdown qty", editable=True),
         ColumnDef("reserve_qty", "Reserve qty", editable=True),
-        ColumnDef("has_lpc_warning", "LPC !", kind="indicator"),
+        ColumnDef("has_lpc_warning", "LPC err", kind="indicator"),
         ColumnDef("lpc", "LPC", editable=True),
         ColumnDef("landed_cost", "Landed cost", editable=True),
         ColumnDef("distr_price", "Distr price", editable=True),
@@ -77,7 +81,6 @@ COLUMN_DEFS: dict[str, list[ColumnDef]] = {
         ColumnDef("selected_product_id", "Our product", kind="product_combo"),
         ColumnDef("source_article", "Source article", editable=True),
         ColumnDef("source_product_name", "Source product", editable=True),
-        ColumnDef("transit_qty", "Transit qty", editable=True),
         ColumnDef("order_qty", "Order qty", editable=True),
         ColumnDef("new_product_name", "Product name (new)", editable=True),
         ColumnDef("new_brand", "Brand (new)", kind="brand_combo"),
@@ -133,31 +136,42 @@ class ProductStockPage(QWidget):
         self._imported_by = get_current_username()
         self._current_file_path = ""
         self._mode = MODE_STOCK
+        self._product_name_cache: dict[int, str] = {}
+        self._editing_table_cell = False
 
         self.setup_ui()
         self.setup_connections()
         self.start_new_batch()
         self.refresh_filters()
         self.apply_mode(MODE_STOCK)
-        self.show_message("")
+        self.clear_message()
 
     def get_session(self):
         return SessionLocal()
 
+    def eventFilter(self, watched, event):
+        return super().eventFilter(watched, event)
+
     def setup_ui(self):
         setup_data_table(self.table, sorting=False)
+        self.table.horizontalHeader().setSectionsMovable(False)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
 
+        font = QFont("Tahoma", 10)
         for widget in (self.ui.line_RowsLoaded, self.ui.line_TotalQty, self.ui.line_RowsError):
             widget.setReadOnly(True)
+            widget.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            widget.setFont(font)
+
+        self.clear_table()
 
     def setup_connections(self):
         self.ui.radio_Stock.toggled.connect(lambda checked: checked and self.apply_mode(MODE_STOCK))
         self.ui.radio_Orders.toggled.connect(lambda checked: checked and self.apply_mode(MODE_ORDERS))
         self.ui.radio_IS.toggled.connect(lambda checked: checked and self.apply_mode(MODE_IS))
 
-        self.ui.line_FindProduct.textChanged.connect(self.refresh_product_combos)
-        self.ui.cbo_FindBrand.currentTextChanged.connect(self.refresh_product_combos)
+        self.ui.line_FindProduct.textChanged.connect(self.refresh_current_product_combo)
+        self.ui.cbo_FindBrand.currentTextChanged.connect(self.refresh_current_product_combo)
 
         self.ui.btn_Import.clicked.connect(self.import_file)
         self.ui.btn_Save.clicked.connect(self.save_all)
@@ -166,11 +180,37 @@ class ProductStockPage(QWidget):
         self.table.cellDoubleClicked.connect(self.start_cell_edit)
         self.table.itemChanged.connect(self.on_item_changed)
 
+
     def show_message(self, text: str):
         self.ui.label_msg.setText(text)
+        self.ui.label_msg.setProperty("active", True)
+        self.ui.label_msg.style().unpolish(self.ui.label_msg)
+        self.ui.label_msg.style().polish(self.ui.label_msg)
+        self.ui.label_msg.setVisible(True)
+        QTimer.singleShot(10000, self.clear_message)
+
+    def clear_message(self):
+        self.ui.label_msg.setText("")
+        self.ui.label_msg.setProperty("active", False)
+        self.ui.label_msg.style().unpolish(self.ui.label_msg)
+        self.ui.label_msg.style().polish(self.ui.label_msg)
+        self.ui.label_msg.setVisible(True)
 
     def show_error_message(self, text: str):
-        self.ui.label_msg.setText(text)
+        self.clear_message()
+
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("Ошибка")
+        msg.setText(text)
+
+        copy_btn = msg.addButton("Copy", QMessageBox.ActionRole)
+        msg.addButton(QMessageBox.Ok)
+
+        msg.exec()
+
+        if msg.clickedButton() == copy_btn:
+            QApplication.clipboard().setText(text)
 
     def start_new_batch(self):
         self._batch_id = datetime.now().strftime("PS_%Y%m%d_%H%M%S_%f")
@@ -179,14 +219,19 @@ class ProductStockPage(QWidget):
 
     def apply_mode(self, mode: str):
         self._mode = mode
-        titles = {
-            MODE_STOCK: "Update stock",
-            MODE_ORDERS: "Update supplier orders",
-            MODE_IS: "Update IS",
-        }
-        self.ui.Title_label.setText(titles[mode])
-        self.load_table()
+        self.clear_table()
         self.refresh_counters()
+
+    def clear_table(self):
+        self._updating_table = True
+        try:
+            self.table.blockSignals(True)
+            self.table.clear()
+            self.table.setRowCount(0)
+            self.table.setColumnCount(0)
+        finally:
+            self.table.blockSignals(False)
+            self._updating_table = False
 
     def refresh_filters(self):
         with self.get_session() as session:
@@ -250,7 +295,15 @@ class ProductStockPage(QWidget):
         with self.get_session() as session:
             rows = self._query_mode_rows(session)
             data = [self._row_to_dict(row) for row in rows]
-        self.display_table(data)
+            product_ids = sorted({int(row.selected_product_id) for row in rows if row.selected_product_id is not None})
+            self._product_name_cache = {}
+            if product_ids:
+                products = session.query(Product.id, Product.name).filter(Product.id.in_(product_ids)).all()
+                self._product_name_cache = {int(pid): (name or "") for pid, name in products}
+        if not data:
+            self.clear_table()
+        else:
+            self.display_table(data)
         self.refresh_counters()
 
     def _row_to_dict(self, row) -> dict[str, Any]:
@@ -268,6 +321,7 @@ class ProductStockPage(QWidget):
             base.update({
                 "source_sku": row.source_sku,
                 "stock_qty": row.stock_qty,
+                "transit_qty": row.transit_qty,
                 "markdown_qty": row.markdown_qty,
                 "reserve_qty": row.reserve_qty,
                 "has_lpc_warning": bool(row.has_lpc_warning),
@@ -278,7 +332,6 @@ class ProductStockPage(QWidget):
             })
         elif isinstance(row, TempSupplierOrdersImport):
             base.update({
-                "transit_qty": row.transit_qty,
                 "order_qty": row.order_qty,
             })
         elif isinstance(row, TempIsImport):
@@ -288,6 +341,62 @@ class ProductStockPage(QWidget):
                 "stock_qty": row.stock_qty,
             })
         return base
+
+    def _safe_float(self, value: Any) -> float | None:
+        if value is None:
+            return None
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return None
+        if isnan(value):
+            return None
+        return value
+
+    def _format_int_like(self, value: Any, blank_zero: bool = False) -> str:
+        num = self._safe_float(value)
+        if num is None:
+            return ""
+        rounded = int(round(num))
+        if blank_zero and rounded == 0:
+            return ""
+        return f"{rounded:,}".replace(",", " ")
+
+    def _format_decimal1(self, value: Any, blank_zero: bool = False) -> str:
+        num = self._safe_float(value)
+        if num is None:
+            return ""
+        if blank_zero and abs(num) < 1e-12:
+            return ""
+        return f"{num:,.1f}".replace(",", " ")
+
+    def _format_cell_value(self, field_name: str, value: Any) -> str:
+        if field_name in {"stock_qty", "transit_qty", "markdown_qty", "reserve_qty", "order_qty", "confirmed_qty", "remains_qty"}:
+            return self._format_int_like(value, blank_zero=True)
+        if field_name in {"lpc", "landed_cost", "distr_price", "promo_price"}:
+            return self._format_decimal1(value, blank_zero=True)
+        if field_name == "new_pack":
+            num = self._safe_float(value)
+            if num is None:
+                return ""
+            if abs(num - round(num)) < 1e-12:
+                return self._format_int_like(num)
+            return self._format_decimal1(num)
+        if value is None:
+            return ""
+        text = str(value).strip()
+        return "" if text.lower() == "nan" else text
+
+    def _apply_table_column_layout(self):
+        for col_index, col in enumerate(COLUMN_DEFS[self._mode]):
+            if col.key == "selected_product_id":
+                self.table.setColumnWidth(col_index, 150)
+            elif col.key == "source_article":
+                self.table.setColumnWidth(col_index, 130)
+            elif col.key == "source_sku":
+                self.table.setColumnWidth(col_index, 95)
+            elif col.key == "source_product_name":
+                self.table.setColumnWidth(col_index, 110)
 
     def display_table(self, data: list[dict[str, Any]]):
         self._updating_table = True
@@ -299,6 +408,10 @@ class ProductStockPage(QWidget):
             self.table.setHorizontalHeaderLabels([c.header for c in columns])
             self.table.setRowCount(len(data))
 
+            font = QFont("Tahoma", 10)
+            self.table.setFont(font)
+            self.table.horizontalHeader().setFont(font)
+
             for row_index, row_data in enumerate(data):
                 row_id = row_data["id"]
                 for col_index, col in enumerate(columns):
@@ -308,20 +421,25 @@ class ProductStockPage(QWidget):
                     elif col.kind == "indicator":
                         self.table.setCellWidget(row_index, col_index, self._build_indicator(bool(value)))
                     elif col.kind == "product_combo":
-                        text = self._get_product_name_by_id(value)
+                        text = self._product_name_cache.get(int(value), "") if value is not None else ""
                         self.table.setItem(row_index, col_index, self._build_display_item(row_id, col.key, text))
                     elif col.kind == "brand_combo":
-                        self.table.setItem(row_index, col_index, self._build_display_item(row_id, col.key, format_table_value(value)))
+                        self.table.setItem(row_index, col_index, self._build_display_item(row_id, col.key, self._format_cell_value(col.key, value)))
                     else:
-                        item = QTableWidgetItem(format_table_value(value))
+                        item = QTableWidgetItem(self._format_cell_value(col.key, value))
                         item.setData(Qt.UserRole, row_id)
                         flags = Qt.ItemIsSelectable | Qt.ItemIsEnabled
                         if col.editable:
                             flags |= Qt.ItemIsEditable
                         item.setFlags(flags)
+                        if col.key in NUMERIC_FIELDS:
+                            item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                        else:
+                            item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                         self.table.setItem(row_index, col_index, item)
 
             self.table.resizeColumnsToContents()
+            self._apply_table_column_layout()
         finally:
             self.table.blockSignals(False)
             self._updating_table = False
@@ -355,11 +473,19 @@ class ProductStockPage(QWidget):
             QTimer.singleShot(0, combo.showPopup)
         elif col.kind == "brand_combo":
             combo = self._build_brand_combo(row_id, self._get_brand_text(row_id), self._get_brand_values())
-            combo.activated.connect(lambda _, r=row, rid=row_id, c=combo, key=col.key: self.finish_brand_edit(r, rid, c, key))
+            combo.activated.connect(
+                lambda _, r=row, rid=row_id, c=combo, key=col.key: self.finish_brand_edit(r, rid, c, key)
+            )
+
             if combo.lineEdit() is not None:
-                combo.lineEdit().returnPressed.connect(lambda r=row, rid=row_id, c=combo, key=col.key: self.finish_brand_edit(r, rid, c, key))
+                combo.lineEdit().returnPressed.connect(
+                    lambda r=row, rid=row_id, c=combo, key=col.key: self.finish_brand_edit(r, rid, c, key)
+                )
+
             self.table.setCellWidget(row, column, combo)
             combo.setFocus()
+            if combo.lineEdit() is not None:
+                combo.lineEdit().selectAll()
             QTimer.singleShot(0, combo.showPopup)
 
     def _build_display_item(self, row_id: int, field_name: str, value: str):
@@ -367,15 +493,27 @@ class ProductStockPage(QWidget):
         item.setData(Qt.UserRole, row_id)
         item.setData(Qt.UserRole + 1, field_name)
         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-        item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        if field_name in NUMERIC_FIELDS:
+            item.setTextAlignment(Qt.AlignCenter)
+        else:
+            item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         return item
 
     def _get_product_name_by_id(self, product_id):
         if not product_id:
             return ""
+        try:
+            product_id = int(product_id)
+        except (TypeError, ValueError):
+            return ""
+        cached = self._product_name_cache.get(product_id)
+        if cached is not None:
+            return cached
         with self.get_session() as session:
             product = session.query(Product).filter(Product.id == product_id).first()
-            return product.name or "" if product else ""
+            name = product.name or "" if product else ""
+            self._product_name_cache[product_id] = name
+            return name
 
     def _get_selected_product_id(self, row_id: int):
         with self.get_session() as session:
@@ -389,17 +527,54 @@ class ProductStockPage(QWidget):
 
     def finish_product_edit(self, row: int, row_id: int, combo: QComboBox, field_name: str):
         value = combo.currentData()
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            value = None
+
+        current_col = self.table.currentColumn()
+        current_row = self.table.currentRow()
         self.update_temp_field(row_id, field_name, value, reload=False)
+        self._updating_table = True
         self.table.removeCellWidget(row, self._column_index_by_key(field_name))
-        self.table.setItem(row, self._column_index_by_key(field_name), self._build_display_item(row_id, field_name, combo.currentText().strip()))
-        self.table.resizeColumnsToContents()
+        self.table.setItem(
+            row,
+            self._column_index_by_key(field_name),
+            self._build_display_item(row_id, field_name, combo.currentText().strip()),
+        )
+        self._updating_table = False
+        if value is not None:
+            self._product_name_cache[int(value)] = combo.currentText().strip()
+        self.table.setCurrentCell(current_row if current_row >= 0 else row, current_col if current_col >= 0 else self._column_index_by_key(field_name))
 
     def finish_brand_edit(self, row: int, row_id: int, combo: QComboBox, field_name: str):
-        value = clean_multi_spaces(combo.currentText()) or None
-        self.update_temp_field(row_id, field_name, value, reload=False, clear_selected=True)
-        self.table.removeCellWidget(row, self._column_index_by_key(field_name))
-        self.table.setItem(row, self._column_index_by_key(field_name), self._build_display_item(row_id, field_name, format_table_value(value)))
-        self.table.resizeColumnsToContents()
+        if self._editing_table_cell:
+            return
+        self._editing_table_cell = True
+        try:
+            text = clean_multi_spaces(combo.currentText()) or None
+            current_col = self.table.currentColumn()
+            current_row = self.table.currentRow()
+
+            self.update_temp_field(
+                row_id,
+                field_name,
+                text,
+                reload=False,
+                clear_selected=True,
+            )
+
+            self._updating_table = True
+            self.table.removeCellWidget(row, self._column_index_by_key(field_name))
+            self.table.setItem(
+                row,
+                self._column_index_by_key(field_name),
+                self._build_display_item(row_id, field_name, text or ""),
+            )
+            self._updating_table = False
+            self.table.setCurrentCell(current_row if current_row >= 0 else row, current_col if current_col >= 0 else self._column_index_by_key(field_name))
+        finally:
+            self._editing_table_cell = False
 
     def _column_index_by_key(self, field_name: str) -> int:
         for index, col in enumerate(COLUMN_DEFS[self._mode]):
@@ -432,28 +607,78 @@ class ProductStockPage(QWidget):
     def _build_brand_combo(self, row_id: int, value: str | None, brands: list[str]):
         combo = QComboBox()
         combo.setEditable(True)
-        combo.addItem("")
-        combo.addItems(brands)
-        combo.setCurrentText(value or "")
+        combo.setInsertPolicy(QComboBox.NoInsert)
+        combo.setProperty("row_id", row_id)
+        combo.setProperty("combo_role", "brand_combo")
+        combo.installEventFilter(self)
+        combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.populate_brand_combo(combo, keep_current=False, current_text=value or "")
         return combo
+
+    def populate_brand_combo(self, combo: QComboBox, keep_current: bool, current_text: str = ""):
+        brand_value = combo.currentText().strip() if keep_current else current_text
+        brands = self._get_brand_values()
+
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("")
+        if brands:
+            combo.addItems(brands)
+        if brand_value and combo.findText(brand_value) < 0:
+            combo.addItem(brand_value)
+        combo.setCurrentText(brand_value)
+        combo.blockSignals(False)
 
     def _build_product_combo(self, row_id: int, selected_product_id: int | None):
         combo = QComboBox()
+        combo.setProperty("row_id", row_id)
+        combo.setProperty("combo_role", "product_combo")
+        combo.setToolTip("Выберите продукт из базы")
+        self.populate_product_combo(
+            combo,
+            row_id=row_id,
+            keep_current=False,
+            selected_product_id=selected_product_id,
+        )
+        return combo
+
+    def populate_product_combo(
+        self,
+        combo: QComboBox,
+        row_id: int,
+        keep_current: bool,
+        selected_product_id: int | None = None,
+    ):
+        current_id = combo.currentData() if keep_current else selected_product_id
+
+        if current_id is not None:
+            try:
+                current_id = int(current_id)
+            except (TypeError, ValueError):
+                current_id = None
+
+        products = self._get_filtered_products()
+
+        combo.blockSignals(True)
+        combo.clear()
         combo.addItem("", None)
-        selected_present = False
-        for product in self._get_filtered_products():
-            combo.addItem(product.name, product.id)
-            if selected_product_id == product.id:
-                selected_present = True
-        if selected_product_id and not selected_present:
+
+        for product in products:
+            combo.addItem(product.name, int(product.id))
+
+        if current_id is not None and combo.findData(current_id) < 0:
             with self.get_session() as session:
-                product = session.query(Product).filter(Product.id == selected_product_id).first()
+                product = session.query(Product).filter(Product.id == current_id).first()
                 if product is not None:
-                    combo.addItem(product.name, product.id)
-        idx = combo.findData(selected_product_id)
+                    combo.addItem(product.name, int(product.id))
+
+        idx = combo.findData(current_id)
         if idx >= 0:
             combo.setCurrentIndex(idx)
-        return combo
+        else:
+            combo.setCurrentIndex(0)
+
+        combo.blockSignals(False)
 
     def on_item_changed(self, item: QTableWidgetItem):
         if self._updating_table:
@@ -484,6 +709,8 @@ class ProductStockPage(QWidget):
     def update_temp_field(self, row_id: int, field_name: str, value: Any, reload: bool = False, clear_selected: bool = False):
         if self._updating_table:
             return
+        if field_name == "new_brand" and isinstance(value, str):
+            value = clean_multi_spaces(value) or None
         try:
             with self.get_session() as session:
                 row = self._get_row_by_id(session, row_id)
@@ -527,8 +754,21 @@ class ProductStockPage(QWidget):
         except Exception as e:
             self.show_error_message(str(e))
 
-    def refresh_product_combos(self):
-        self.load_table()
+    def refresh_current_product_combo(self):
+        row = self.table.currentRow()
+        if row < 0:
+            return
+
+        product_col = self._column_index_by_key("selected_product_id")
+        combo = self.table.cellWidget(row, product_col)
+        if isinstance(combo, QComboBox):
+            row_id = combo.property("row_id")
+            if row_id is not None:
+                self.populate_product_combo(
+                    combo,
+                    row_id=int(row_id),
+                    keep_current=True,
+                )
 
     def refresh_counters(self):
         with self.get_session() as session:
@@ -539,15 +779,15 @@ class ProductStockPage(QWidget):
             total_qty = 0
             for row in rows:
                 if model is TempStockImport:
-                    total_qty += float(row.stock_qty or 0) + float(row.markdown_qty or 0) + float(row.reserve_qty or 0)
+                    total_qty += float(row.stock_qty or 0) + float(row.transit_qty or 0) + float(row.markdown_qty or 0) + float(row.reserve_qty or 0)
                 elif model is TempSupplierOrdersImport:
-                    total_qty += float(row.transit_qty or 0) + float(row.order_qty or 0)
+                    total_qty += float(row.order_qty or 0)
                 else:
                     total_qty += float(row.confirmed_qty or 0) + float(row.remains_qty or 0) + float(row.stock_qty or 0)
 
-        self.ui.line_RowsLoaded.setText(str(row_count))
-        self.ui.line_RowsError.setText(str(error_count))
-        self.ui.line_TotalQty.setText(f"{total_qty:.4f}".rstrip("0").rstrip("."))
+        self.ui.line_RowsLoaded.setText(self._format_int_like(row_count))
+        self.ui.line_RowsError.setText(self._format_int_like(error_count))
+        self.ui.line_TotalQty.setText(self._format_int_like(total_qty))
 
     def import_file(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Выберите Excel файл", "", "Excel files (*.xls *.xlsx *.xlsm)")
@@ -559,54 +799,176 @@ class ProductStockPage(QWidget):
                 runner = ProductStockImportRun(session)
                 self.start_new_batch()
                 if self._mode == MODE_STOCK:
-                    stats = runner.import_stock(file_path=file_path, imported_by=self._imported_by, batch_id=self._batch_id)
+                    runner.import_stock(file_path=file_path, imported_by=self._imported_by, batch_id=self._batch_id)
                 elif self._mode == MODE_ORDERS:
-                    stats = runner.import_supplier_orders(file_path=file_path, imported_by=self._imported_by, batch_id=self._batch_id)
+                    runner.import_supplier_orders(file_path=file_path, imported_by=self._imported_by, batch_id=self._batch_id)
                 else:
-                    stats = runner.import_is(file_path=file_path, imported_by=self._imported_by, batch_id=self._batch_id)
+                    runner.import_is(file_path=file_path, imported_by=self._imported_by, batch_id=self._batch_id)
                 session.commit()
 
-            files = self.export_issue_files()
             self.load_table()
-            self.show_message(self._build_import_message(stats, files))
+            self.offer_save_issue_file()
+            self.show_message("Импорт завершен")
         except Exception as e:
             self.show_error_message(str(e))
 
-    def _build_import_message(self, stats: dict[str, Any], files: list[str]) -> str:
-        base = f"Импорт завершен. Загружено: {stats.get('imported_count', 0)}. Автоподбор: {stats.get('matched_count', 0)}."
-        if not files:
-            return base
-        return base + " Файлы: " + "; ".join(files)
+    def _default_issue_filename(self) -> str:
+        suffix = {
+            MODE_STOCK: "Stock_Errors",
+            MODE_ORDERS: "SupplierOrders_Errors",
+            MODE_IS: "IS_Errors",
+        }[self._mode]
+        return f"{suffix}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
 
-    def _build_sibling_path(self, suffix: str) -> Path:
-        source = Path(self._current_file_path)
-        return source.parent / f"{suffix}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
-
-    def export_issue_files(self) -> list[str]:
-        created: list[str] = []
-        if not self._current_file_path:
-            return created
+    def _collect_issue_sheets(self) -> list[tuple[str, list[dict[str, Any]]]]:
         with self.get_session() as session:
-            runner = ProductStockImportRun(session)
+            sheets: list[tuple[str, list[dict[str, Any]]]] = []
             if self._mode == MODE_STOCK:
-                issue_path = runner.export_stock_product_issues(self._batch_id, self._imported_by, self._build_sibling_path("Stock_ProductIssues"))
-                warn_path = runner.export_stock_lpc_warnings(self._batch_id, self._imported_by, self._build_sibling_path("Stock_LPCWarnings"))
-                session.commit()
-                if issue_path:
-                    created.append(str(issue_path))
-                if warn_path:
-                    created.append(str(warn_path))
+                rows = (
+                    session.query(TempStockImport)
+                    .filter(
+                        TempStockImport.batch_id == self._batch_id,
+                        TempStockImport.imported_by == self._imported_by,
+                        TempStockImport.selected_product_id.is_(None),
+                    )
+                    .order_by(TempStockImport.import_row_no.asc(), TempStockImport.id.asc())
+                    .all()
+                )
+                product_errors = [{
+                    "ImportRowNo": row.import_row_no,
+                    "SourceArticle": row.source_article,
+                    "SourceSKU": row.source_sku,
+                    "SourceProductName": row.source_product_name,
+                    "Comment": "Не найден SelectedProductID. Требуется сопоставление или создание нового продукта.",
+                } for row in rows]
+                if product_errors:
+                    sheets.append(("Product errors", product_errors))
+
+                warn_rows = (
+                    session.query(TempStockImport)
+                    .filter(
+                        TempStockImport.batch_id == self._batch_id,
+                        TempStockImport.imported_by == self._imported_by,
+                        TempStockImport.has_lpc_warning.is_(True),
+                    )
+                    .order_by(TempStockImport.import_row_no.asc(), TempStockImport.id.asc())
+                    .all()
+                )
+                lpc_warnings = [{
+                    "ImportRowNo": row.import_row_no,
+                    "SourceArticle": row.source_article,
+                    "SourceSKU": row.source_sku,
+                    "SourceProductName": row.source_product_name,
+                    "StockQty": self._format_int_like(row.stock_qty, blank_zero=True),
+                    "TransitQty": self._format_int_like(getattr(row, "transit_qty", None), blank_zero=True),
+                    "MarkdownQty": self._format_int_like(row.markdown_qty, blank_zero=True),
+                    "ReserveQty": self._format_int_like(row.reserve_qty, blank_zero=True),
+                    "LPC": self._format_decimal1(row.lpc, blank_zero=True),
+                    "Comment": "Есть остаток, но LPC пустой или 0. В расчете будет использовано LPC = 0.",
+                } for row in warn_rows]
+                if lpc_warnings:
+                    sheets.append(("LPC warnings", lpc_warnings))
+
             elif self._mode == MODE_ORDERS:
-                issue_path = runner.export_supplier_orders_product_issues(self._batch_id, self._imported_by, self._build_sibling_path("SupplierOrders_ProductIssues"))
-                session.commit()
-                if issue_path:
-                    created.append(str(issue_path))
+                rows = (
+                    session.query(TempSupplierOrdersImport)
+                    .filter(
+                        TempSupplierOrdersImport.batch_id == self._batch_id,
+                        TempSupplierOrdersImport.imported_by == self._imported_by,
+                        TempSupplierOrdersImport.selected_product_id.is_(None),
+                    )
+                    .order_by(TempSupplierOrdersImport.import_row_no.asc(), TempSupplierOrdersImport.id.asc())
+                    .all()
+                )
+                data = [{
+                    "ImportRowNo": row.import_row_no,
+                    "SourceArticle": row.source_article,
+                    "SourceProductName": row.source_product_name,
+                    "OrderQty": self._format_int_like(row.order_qty, blank_zero=True),
+                    "Comment": "Не найден SelectedProductID. Требуется сопоставление или создание нового продукта.",
+                } for row in rows]
+                if data:
+                    sheets.append(("Product errors", data))
+
             else:
-                issue_path = runner.export_is_product_issues(self._batch_id, self._imported_by, self._build_sibling_path("IS_ProductIssues"))
-                session.commit()
-                if issue_path:
-                    created.append(str(issue_path))
-        return created
+                rows = (
+                    session.query(TempIsImport)
+                    .filter(
+                        TempIsImport.batch_id == self._batch_id,
+                        TempIsImport.imported_by == self._imported_by,
+                        TempIsImport.selected_product_id.is_(None),
+                    )
+                    .order_by(TempIsImport.import_row_no.asc(), TempIsImport.id.asc())
+                    .all()
+                )
+                data = [{
+                    "ImportRowNo": row.import_row_no,
+                    "SourceArticle": row.source_article,
+                    "SourceProductName": row.source_product_name,
+                    "ConfirmedQty": self._format_int_like(row.confirmed_qty, blank_zero=True),
+                    "RemainsQty": self._format_int_like(row.remains_qty, blank_zero=True),
+                    "StockQty": self._format_int_like(row.stock_qty, blank_zero=True),
+                    "Comment": "Не найден SelectedProductID. Требуется сопоставление или создание нового продукта.",
+                } for row in rows]
+                if data:
+                    sheets.append(("Product errors", data))
+            return sheets
+
+    def _save_issue_workbook(self, output_path: str, sheets: list[tuple[str, list[dict[str, Any]]]]):
+        wb = Workbook()
+        first = True
+        for title, rows in sheets:
+            ws = wb.active if first else wb.create_sheet(title=title[:31])
+            ws.title = title[:31]
+            first = False
+
+            headers = list(rows[0].keys()) if rows else []
+            if headers:
+                ws.append(headers)
+                for row in rows:
+                    ws.append([row.get(h, "") for h in headers])
+
+            for cell in ws[1]:
+                cell.font = cell.font.copy(bold=True)
+
+            for col_cells in ws.columns:
+                max_len = 0
+                col_letter = col_cells[0].column_letter
+                for cell in col_cells:
+                    val = "" if cell.value is None else str(cell.value)
+                    max_len = max(max_len, len(val))
+                ws.column_dimensions[col_letter].width = min(max(max_len + 2, 12), 40)
+
+        wb.save(output_path)
+
+    def offer_save_issue_file(self):
+        sheets = self._collect_issue_sheets()
+        if not sheets:
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "Ошибки импорта",
+            "Сохранить файл с ошибками?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        output_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить файл с ошибками",
+            str(Path.home() / self._default_issue_filename()),
+            "Excel files (*.xlsx)",
+        )
+        if not output_path:
+            return
+
+        if not output_path.lower().endswith(".xlsx"):
+            output_path += ".xlsx"
+
+        self._save_issue_workbook(output_path, sheets)
 
     def save_all(self):
         try:
@@ -633,13 +995,9 @@ class ProductStockPage(QWidget):
                 session.commit()
 
             self.start_new_batch()
-            self.load_table()
-            self.show_message(
-                msg +
-                f" Создано продуктов: {stats.get('created_products_count', 0)}. "
-                f"Обновлено связей: {stats.get('product_articles_count', 0)}. "
-                f"Сохранено строк: {stats.get('saved_count', 0)}."
-            )
+            self.clear_table()
+            self.refresh_counters()
+            self.show_message(msg)
         except Exception as e:
             self.show_error_message(str(e))
 
@@ -659,8 +1017,9 @@ class ProductStockPage(QWidget):
             self.ui.line_FindProduct.clear()
             self.ui.cbo_FindBrand.setCurrentIndex(0)
             self.start_new_batch()
-            self.load_table()
-            self.show_message("Форма очищена. Можно начинать новый импорт.")
+            self.clear_table()
+            self.refresh_counters()
+            self.show_message("Форма очищена")
         except Exception as e:
             self.show_error_message(str(e))
 

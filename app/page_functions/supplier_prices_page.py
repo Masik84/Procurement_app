@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 from datetime import datetime, date
 from decimal import Decimal
 from pathlib import Path
@@ -31,6 +30,7 @@ from sqlalchemy.orm import joinedload
 from app.db.db import SessionLocal
 from app.db.models import ExchangeRate, Product, Supplier, TempPriceImport
 from app.imports.supplier_price_importer import SupplierPriceImporter
+from app.exports.supplier_price_export import SupplierPriceExport
 from app.services.supplier import SupplierService, SupplierUpsertData
 from app.services.supplier_price_import import SupplierPriceImportService
 from app.utils.batch import get_current_username
@@ -41,7 +41,6 @@ from app.ui.table_style import *
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 SUPPLIER_PRICES_UI = BASE_DIR / "app" / "ui" / "windows" / "supplier_prices.ui"
-IMPORT_TEMPLATE = BASE_DIR / "ImportTemplate.xlsx"
 
 
 def load_ui(ui_path: Path):
@@ -72,6 +71,7 @@ class SupplierPricesPage(QWidget):
         self.imported_by = get_current_username()
         self.batch_id = ""
         self.selected_file_path = ""
+        self.rf_prices_include_vat = False
 
         self._updating_table = False
         self._pending_changes: dict[int, dict] = {}
@@ -123,6 +123,8 @@ class SupplierPricesPage(QWidget):
 
         self._setup_number_field(self.ui.line_ExchangeRate, "Формат: 82,0000")
         self._setup_number_field(self.ui.line_Transport, "Формат: 1,2500")
+        if hasattr(self.ui, "line_AgentFee"):
+            self._setup_number_field(self.ui.line_AgentFee, "Формат: 0,2500")
         self._setup_number_field(self.ui.line_Reexport, "Формат: 3,5% / 0,24%")
         self._setup_number_field(self.ui.line_FXMarkup, "Формат: 3,5% / 0,24%")
 
@@ -146,6 +148,8 @@ class SupplierPricesPage(QWidget):
 
         self.ui.line_ExchangeRate.editingFinished.connect(self.normalize_exchange_rate)
         self.ui.line_Transport.editingFinished.connect(self.normalize_transport)
+        if hasattr(self.ui, "line_AgentFee"):
+            self.ui.line_AgentFee.editingFinished.connect(self.normalize_agent_fee)
         self.ui.line_Reexport.editingFinished.connect(self.normalize_reexport)
         self.ui.line_FXMarkup.editingFinished.connect(self.normalize_fx_markup)
 
@@ -169,6 +173,7 @@ class SupplierPricesPage(QWidget):
         if watched in {
             self.ui.line_ExchangeRate,
             self.ui.line_Transport,
+            *([self.ui.line_AgentFee] if hasattr(self.ui, "line_AgentFee") else []),
             self.ui.line_Reexport,
             self.ui.line_FXMarkup,
         }:
@@ -183,9 +188,7 @@ class SupplierPricesPage(QWidget):
             row_id = watched.property("row_id")
             role = watched.property("combo_role")
             if row_id and role and event.type() in {QEvent.FocusIn, QEvent.MouseButtonPress}:
-                if role == "product_combo":
-                    self.populate_product_combo(watched, int(row_id), keep_current=True)
-                elif role == "brand_combo":
+                if role == "brand_combo":
                     self.populate_brand_combo(watched, keep_current=True)
 
         return super().eventFilter(watched, event)
@@ -229,12 +232,63 @@ class SupplierPricesPage(QWidget):
         elif combo.isEditable():
             combo.setCurrentText(value)
 
-    def show_message(self, text: str):
-        self.ui.label_msg.setText(text)
+    def ask_rf_prices_include_vat(self) -> bool:
+        return (
+            QMessageBox.question(
+                self,
+                "Поставщик РФ",
+                "Цены поставщика с НДС?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            == QMessageBox.Yes
+        )
 
-    def show_error_message(self, text: str):
-        self.ui.label_msg.setText(text)
-        QMessageBox.warning(self, "Ошибка", text)
+    def ask_export_calculated_excel(self) -> bool:
+        return (
+            QMessageBox.question(
+                self,
+                "Excel",
+                "Сохранить рассчитанные данные в Excel?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            == QMessageBox.Yes
+        )
+
+    def export_calculated_excel(self, supplier_id: int):
+        supplier_name = (
+            clean_multi_spaces(self.ui.line_NewSupplier.text())
+            or clean_multi_spaces(self.ui.cbo_SupplName.currentText())
+            or "Supplier"
+        )
+        safe_supplier_name = supplier_name
+        for ch in ['\\', '/', ':', '*', '?', '"', '<', '>', '|']:
+            safe_supplier_name = safe_supplier_name.replace(ch, '_')
+
+        default_name = f"CostCalc_{safe_supplier_name}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить Excel файл",
+            str(Path.home() / default_name),
+            "Excel files (*.xlsx)",
+        )
+        if not file_path:
+            return
+        if not file_path.lower().endswith('.xlsx'):
+            file_path += '.xlsx'
+
+        with self.get_session() as session:
+            exporter = SupplierPriceExport(session)
+            output_path = exporter.export_calculated(
+                batch_id=self.batch_id,
+                imported_by=self.imported_by,
+                supplier_id=supplier_id,
+                output_path=file_path,
+            )
+
+        QDesktopServices.openUrl(Path(output_path).as_uri())
+        self.show_message("Excel файл сохранен")
 
     def load_suppliers(self):
         current_text = self.ui.cbo_SupplName.currentText().strip()
@@ -305,6 +359,8 @@ class SupplierPricesPage(QWidget):
             self.ui.line_NewSupplier.clear()
             self.ui.line_ExchangeRate.clear()
             self.ui.line_Transport.clear()
+            if hasattr(self.ui, "line_AgentFee"):
+                self.ui.line_AgentFee.clear()
             self.ui.line_Reexport.setText("0,0%")
             self.ui.line_FXMarkup.setText("0,0%")
             self.set_combo_text(self.ui.cbo_Currency, "-")
@@ -344,6 +400,8 @@ class SupplierPricesPage(QWidget):
         self.set_combo_text(self.ui.cbo_Currency, supplier_data.base_currency or "-")
         self.ui.line_ExchangeRate.setText(self.format_number(rate, 4) if rate is not None else "")
         self.ui.line_Transport.setText(self.format_number(supplier_data.transport_cost_per_l, 4))
+        if hasattr(self.ui, "line_AgentFee"):
+            self.ui.line_AgentFee.setText(self.format_number(supplier_data.agent_fee, 4))
         self.set_combo_text(self.ui.cbo_viaNovo, "через Ново" if supplier_data.is_via_novo else "в Мск")
         self.ui.line_Reexport.setText(self.format_percent(supplier_data.reexport_percent))
         self.ui.line_FXMarkup.setText(self.format_percent(supplier_data.fx_rate_markup))
@@ -377,6 +435,7 @@ class SupplierPricesPage(QWidget):
             name=supplier_name,
             base_currency=currency,
             transport_cost_per_l=self.parse_decimal_field(self.ui.line_Transport, "Транспорт"),
+            agent_fee=self.parse_decimal_field(self.ui.line_AgentFee, "Agent fee") if hasattr(self.ui, "line_AgentFee") else Decimal("0"),
             reexport_percent=self.parse_percent_field(self.ui.line_Reexport, "Реэкспорт"),
             fx_rate_markup=self.parse_percent_field(self.ui.line_FXMarkup, "FX markup"),
             is_via_novo=self.ui.cbo_viaNovo.currentText() == "через Ново",
@@ -453,6 +512,10 @@ class SupplierPricesPage(QWidget):
     def normalize_transport(self):
         self._normalize_number_widget(self.ui.line_Transport, digits=4)
 
+    def normalize_agent_fee(self):
+        if hasattr(self.ui, "line_AgentFee"):
+            self._normalize_number_widget(self.ui.line_AgentFee, digits=4)
+
     def normalize_reexport(self):
         self._normalize_percent_widget(self.ui.line_Reexport)
 
@@ -495,10 +558,6 @@ class SupplierPricesPage(QWidget):
         return datetime(parsed.year, parsed.month, parsed.day)
 
     def download_template(self):
-        if not IMPORT_TEMPLATE.exists():
-            self.show_error_message("Шаблон не найден")
-            return
-
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Сохранить шаблон",
@@ -511,9 +570,14 @@ class SupplierPricesPage(QWidget):
         if not file_path.lower().endswith(".xlsx"):
             file_path += ".xlsx"
 
-        shutil.copyfile(IMPORT_TEMPLATE, file_path)
-        QDesktopServices.openUrl(Path(file_path).as_uri())
-        self.show_message("Шаблон сохранен")
+        try:
+            with self.get_session() as session:
+                exporter = SupplierPriceExport(session)
+                output_path = exporter.export_template(file_path)
+            QDesktopServices.openUrl(Path(output_path).as_uri())
+            self.show_message("Шаблон сформирован")
+        except Exception as e:
+            self.show_error_message(str(e))
 
     def import_file(self):
         try:
@@ -587,13 +651,18 @@ class SupplierPricesPage(QWidget):
             product_item = self.build_display_item(row.id, "selected_product_id", product_text)
             self.table.setItem(row_index, 0, product_item)
 
-            self.table.setItem(row_index, 1, self.build_table_item("supplier_article", row.supplier_article or ""))
-            self.table.setItem(row_index, 2, self.build_table_item("product_name", row.product_name or ""))
+            article_text = self._clean_table_text(row.supplier_article)
+            supplier_product_name_text = self._clean_table_text(row.product_name)
+            new_product_name_text = self._clean_table_text(row.new_product_name)
+            brand_text = self._clean_table_text(row.new_brand)
+
+            self.table.setItem(row_index, 1, self.build_table_item("supplier_article", article_text))
+            self.table.setItem(row_index, 2, self.build_table_item("product_name", supplier_product_name_text))
             self.table.setItem(row_index, 3, self.build_table_item("price", self.value_to_text(row.price)))
             self.table.setItem(row_index, 4, self.build_table_item("price_pack", self.value_to_text(row.price_pack)))
-            self.table.setItem(row_index, 5, self.build_table_item("new_product_name", row.new_product_name or ""))
+            self.table.setItem(row_index, 5, self.build_table_item("new_product_name", new_product_name_text))
 
-            brand_item = self.build_display_item(row.id, "new_brand", row.new_brand or "")
+            brand_item = self.build_display_item(row.id, "new_brand", brand_text)
             self.table.setItem(row_index, 6, brand_item)
 
             self.table.setItem(row_index, 7, self.build_table_item("new_pack", self.value_to_text(row.new_pack)))
@@ -620,34 +689,46 @@ class SupplierPricesPage(QWidget):
 
         if column == 0:
             current_product_id = self._get_row_selected_product_id(row_id)
-            current_product_name = self._get_row_selected_product_name(row_id)
-            combo = self.build_product_combo(row_id, current_product_id, current_product_name)
-            combo.activated.connect(lambda _, r=row, rid=row_id, c=combo: self.finish_product_edit(r, rid, c))
+            combo = self._build_product_combo(row_id, current_product_id)
+            combo.activated.connect(
+                lambda _, r=row, rid=row_id, c=combo: self.finish_product_edit(r, rid, c)
+            )
             self.table.setCellWidget(row, column, combo)
+            combo.setFocus()
             QTimer.singleShot(0, combo.showPopup)
 
         elif column == 6:
             current_brand = self._get_row_brand(row_id)
             combo = self.build_brand_combo(row_id, current_brand)
-            combo.activated.connect(lambda _, r=row, rid=row_id, c=combo: self.finish_brand_edit(r, rid, c))
+            combo.activated.connect(
+                lambda _, r=row, rid=row_id, c=combo: self.finish_brand_edit(r, rid, c)
+            )
             if combo.lineEdit() is not None:
-                combo.lineEdit().returnPressed.connect(lambda r=row, rid=row_id, c=combo: self.finish_brand_edit(r, rid, c))
+                combo.lineEdit().returnPressed.connect(
+                    lambda r=row, rid=row_id, c=combo: self.finish_brand_edit(r, rid, c)
+                )
             self.table.setCellWidget(row, column, combo)
             combo.setFocus()
-            QTimer.singleShot(0, combo.showPopup)
+            combo.lineEdit().selectAll()
 
     def _get_row_selected_product_id(self, row_id: int):
         with self.get_session() as session:
-            row = session.query(TempPriceImport).options(joinedload(TempPriceImport.selected_product)).filter(
-                TempPriceImport.id == row_id
-            ).first()
+            row = (
+                session.query(TempPriceImport)
+                .options(joinedload(TempPriceImport.selected_product))
+                .filter(TempPriceImport.id == row_id)
+                .first()
+            )
             return row.selected_product_id if row else None
 
     def _get_row_selected_product_name(self, row_id: int) -> str:
         with self.get_session() as session:
-            row = session.query(TempPriceImport).options(joinedload(TempPriceImport.selected_product)).filter(
-                TempPriceImport.id == row_id
-            ).first()
+            row = (
+                session.query(TempPriceImport)
+                .options(joinedload(TempPriceImport.selected_product))
+                .filter(TempPriceImport.id == row_id)
+                .first()
+            )
             if row and row.selected_product:
                 return row.selected_product.name or ""
             return ""
@@ -658,25 +739,62 @@ class SupplierPricesPage(QWidget):
             return row.new_brand or "" if row else ""
 
     def finish_product_edit(self, row: int, row_id: int, combo: QComboBox):
-        self.on_product_combo_changed(row_id, combo)
+        product_id = combo.currentData()
+
+        try:
+            product_id = int(product_id)
+        except (TypeError, ValueError):
+            self._updating_table = True
+            self.table.removeCellWidget(row, 0)
+            self._updating_table = False
+            return
+
+        self._pending_changes.setdefault(row_id, {})
+        self._pending_changes[row_id]["selected_product_id"] = product_id
+
+        with self.get_session() as session:
+            product = session.query(Product).filter(Product.id == product_id).first()
+            product_name = product.name if product else ""
+
+        self._updating_table = True
         self.table.removeCellWidget(row, 0)
-        item = self.build_display_item(row_id, "selected_product_id", combo.currentText().strip())
-        self.table.setItem(row, 0, item)
+        self.table.setItem(
+            row,
+            0,
+            self.build_display_item(row_id, "selected_product_id", product_name),
+        )
+        self._updating_table = False
         self.table.resizeColumnsToContents()
 
     def finish_brand_edit(self, row: int, row_id: int, combo: QComboBox):
-        self.on_brand_combo_changed(row_id, combo)
+        text = clean_multi_spaces(combo.currentText()) or None
+
+        self._pending_changes.setdefault(row_id, {})
+        self._pending_changes[row_id]["new_brand"] = text
+
+        self._updating_table = True
         self.table.removeCellWidget(row, 6)
-        item = self.build_display_item(row_id, "new_brand", combo.currentText().strip())
-        self.table.setItem(row, 6, item)
+        self.table.setItem(
+            row,
+            6,
+            self.build_display_item(row_id, "new_brand", text or ""),
+        )
+        self._updating_table = False
+
         self.table.resizeColumnsToContents()
 
     def value_to_text(self, value: object) -> str:
         if value is None:
             return ""
+
+        text = str(value).strip()
+        if text.lower() == "nan":
+            return ""
+
         number = parse_loose_number(value)
         if number is None:
-            return str(value)
+            return text
+
         return str(number).replace(".", ",")
 
     def build_table_item(self, column_name: str, value: str) -> QTableWidgetItem:
@@ -697,13 +815,17 @@ class SupplierPricesPage(QWidget):
         item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         return item
 
-    def build_product_combo(self, row_id: int, selected_product_id: int | None, selected_name: str) -> QComboBox:
+    def _build_product_combo(self, row_id: int, selected_product_id: int | None) -> QComboBox:
         combo = QComboBox()
         combo.setProperty("row_id", row_id)
         combo.setProperty("combo_role", "product_combo")
-        combo.installEventFilter(self)
         combo.setToolTip("Выберите продукт из базы")
-        self.populate_product_combo(combo, row_id, keep_current=False, selected_product_id=selected_product_id, selected_name=selected_name)
+        self.populate_product_combo(
+            combo,
+            row_id=row_id,
+            keep_current=False,
+            selected_product_id=selected_product_id,
+        )
         return combo
 
     def populate_product_combo(
@@ -712,31 +834,36 @@ class SupplierPricesPage(QWidget):
         row_id: int,
         keep_current: bool,
         selected_product_id: int | None = None,
-        selected_name: str = "",
     ):
         current_id = combo.currentData() if keep_current else selected_product_id
-        current_name = combo.currentText().strip() if keep_current else selected_name
+
+        if current_id is not None:
+            try:
+                current_id = int(current_id)
+            except (TypeError, ValueError):
+                current_id = None
 
         products = self.get_filtered_products()
+
         combo.blockSignals(True)
         combo.clear()
         combo.addItem("", None)
 
-        added_ids: set[int] = set()
         for product in products:
-            combo.addItem(product.name, product.id)
-            added_ids.add(product.id)
+            combo.addItem(product.name, int(product.id))
 
-        if current_id and current_id not in added_ids and current_name:
-            combo.insertItem(1, current_name, current_id)
+        if current_id is not None and combo.findData(current_id) < 0:
+            with self.get_session() as session:
+                product = session.query(Product).filter(Product.id == current_id).first()
+                if product:
+                    combo.addItem(product.name, int(product.id))
 
-        index = combo.findData(current_id)
-        if index >= 0:
-            combo.setCurrentIndex(index)
-        elif current_name and combo.findText(current_name) >= 0:
-            combo.setCurrentText(current_name)
+        idx = combo.findData(current_id)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
         else:
             combo.setCurrentIndex(0)
+
         combo.blockSignals(False)
 
     def build_brand_combo(self, row_id: int, brand_name: str) -> QComboBox:
@@ -745,7 +872,6 @@ class SupplierPricesPage(QWidget):
         combo.setInsertPolicy(QComboBox.NoInsert)
         combo.setProperty("row_id", row_id)
         combo.setProperty("combo_role", "brand_combo")
-        combo.installEventFilter(self)
         self.populate_brand_combo(combo, keep_current=False, current_text=brand_name)
         return combo
 
@@ -789,8 +915,15 @@ class SupplierPricesPage(QWidget):
     def on_product_combo_changed(self, row_id: int, combo: QComboBox):
         if self._updating_table:
             return
+
+        value = combo.currentData()
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return
+
         self._pending_changes.setdefault(row_id, {})
-        self._pending_changes[row_id]["selected_product_id"] = combo.currentData()
+        self._pending_changes[row_id]["selected_product_id"] = value
 
     def on_brand_combo_changed(self, row_id: int, combo: QComboBox):
         if self._updating_table:
@@ -815,6 +948,9 @@ class SupplierPricesPage(QWidget):
         row_id = self._table_row_ids[row]
         column_name = item.data(Qt.UserRole)
         if not column_name:
+            return
+
+        if column_name == "selected_product_id":
             return
 
         value = clean_multi_spaces(item.text())
@@ -874,11 +1010,16 @@ class SupplierPricesPage(QWidget):
         row = self.table.currentRow()
         if row < 0:
             return
+
         combo = self.table.cellWidget(row, 0)
         if isinstance(combo, QComboBox):
             row_id = combo.property("row_id")
-            if row_id:
-                self.populate_product_combo(combo, int(row_id), keep_current=True)
+            if row_id is not None:
+                self.populate_product_combo(
+                    combo,
+                    row_id=int(row_id),
+                    keep_current=True,
+                )
 
     def get_filtered_products(self) -> list[Product]:
         brand_filter = clean_multi_spaces(self.ui.cbo_FindBrand.currentText())
@@ -938,7 +1079,15 @@ class SupplierPricesPage(QWidget):
                     row.import_date = self.get_price_date()
 
                     for key, value in changes.items():
-                        if key in {"price", "price_pack", "new_pack"}:
+                        if key == "selected_product_id":
+                            if value is None:
+                                setattr(row, key, None)
+                                continue
+                            try:
+                                setattr(row, key, int(value))
+                            except (TypeError, ValueError):
+                                continue
+                        elif key in {"price", "price_pack", "new_pack"}:
                             parsed = parse_loose_number(value)
                             setattr(row, key, parsed if parsed is not None else None)
                         else:
@@ -954,11 +1103,17 @@ class SupplierPricesPage(QWidget):
                 service.create_or_update_product_articles(self.batch_id, self.imported_by)
                 service.fill_price_from_price_pack(self.batch_id, self.imported_by)
 
+                rf_prices_include_vat = False
+                if self.ui.cbo_SupplierRF.currentText() == "да":
+                    rf_prices_include_vat = self.ask_rf_prices_include_vat()
+                self.rf_prices_include_vat = rf_prices_include_vat
+
                 if self.ui.cbo_History.currentText() == "да":
                     service.save_prices_to_history_and_current(
                         batch_id=self.batch_id,
                         imported_by=self.imported_by,
                         currency_code=currency_code,
+                        rf_prices_include_vat=rf_prices_include_vat,
                     )
 
                 fx_rate = self.parse_decimal_field(self.ui.line_ExchangeRate, "Курс")
@@ -967,6 +1122,7 @@ class SupplierPricesPage(QWidget):
                     imported_by=self.imported_by,
                     fx_rate=fx_rate,
                     currency_code=currency_code,
+                    rf_prices_include_vat=rf_prices_include_vat,
                 )
                 session.commit()
 
@@ -975,6 +1131,9 @@ class SupplierPricesPage(QWidget):
             self.load_find_brands()
             self.load_table_rows()
             self.show_message("Данные сохранены")
+
+            if self.ask_export_calculated_excel():
+                self.export_calculated_excel(supplier_id)
         except Exception as e:
             self.show_error_message(str(e))
 
@@ -993,3 +1152,44 @@ class SupplierPricesPage(QWidget):
             self.show_message("Форма очищена")
         except Exception as e:
             self.show_error_message(str(e))
+
+    def _clean_table_text(self, value) -> str:
+        if value is None:
+            return ""
+
+        text = str(value).strip()
+        if text.lower() == "nan":
+            return ""
+
+        return text
+
+    def show_message(self, text):
+        self.ui.label_msg.setText(text)
+        self.ui.label_msg.setProperty("active", True)
+        self.ui.label_msg.style().unpolish(self.ui.label_msg)
+        self.ui.label_msg.style().polish(self.ui.label_msg)
+        self.ui.label_msg.setVisible(True)
+
+    def clear_message(self):
+        self.ui.label_msg.setText("")
+        self.ui.label_msg.setProperty("active", False)
+        self.ui.label_msg.style().unpolish(self.ui.label_msg)
+        self.ui.label_msg.style().polish(self.ui.label_msg)
+        self.ui.label_msg.setVisible(False)
+
+    def show_error_message(self, text: str):
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("Ошибка")
+        msg.setText(text)
+
+        copy_btn = msg.addButton("Copy", QMessageBox.ActionRole)
+        msg.addButton(QMessageBox.Ok)
+
+        msg.exec()
+
+        if msg.clickedButton() == copy_btn:
+            QApplication.clipboard().setText(text)
+
+
+

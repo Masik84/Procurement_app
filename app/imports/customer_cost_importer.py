@@ -3,6 +3,7 @@ import pandas as pd
 
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces, normalize_customer_product_name
+from app.utils.parsers import parse_loose_number, parse_flexible_date
 
 
 class CustomerCostImporter:
@@ -44,9 +45,9 @@ class CustomerCostImporter:
         df["Pack"] = df["Pack"].apply(parse_loose_number)
         df["QtyPcs"] = df["QtyPcs"].apply(parse_loose_number)
         df["VolumeL"] = df["VolumeL"].apply(parse_loose_number)
-        df["RequestDate"] = pd.to_datetime(df["RequestDate"], errors="coerce")
+        df["RequestDate"] = df["RequestDate"].apply(lambda x: parse_flexible_date(x, default_to_today=True))
 
-        df = df[df["ProductName"] != ""].copy()
+        df = df[(df["SupplierArticle"] != "") | (df["ProductName"] != "")].copy()
         df = df.reset_index(drop=True)
         df = df.where(pd.notna(df), None)
         df["import_row_no"] = df.index + 2

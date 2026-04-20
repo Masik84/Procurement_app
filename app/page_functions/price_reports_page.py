@@ -108,7 +108,6 @@ class PriceReportsPage(QWidget):
         self.fx_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.fx_table.setColumnCount(2)
         self.fx_table.setHorizontalHeaderLabels(["Currency", "Rate to RUB"])
-        self.fx_table.setSortingEnabled(False)
 
         self.ui.radio_ByProduct.setChecked(True)
         self.ui.cbx_ShowPrevPrice.setChecked(False)
@@ -636,15 +635,15 @@ class PriceReportsPage(QWidget):
 
     def _display_preview(self, headers: Sequence[str], rows: Sequence[Sequence[object]]):
         self.preview_table.clear()
-        self.preview_table.setSortingEnabled(False)
         self.preview_table.setColumnCount(len(headers))
         self.preview_table.setHorizontalHeaderLabels(list(headers))
         self.preview_table.setRowCount(len(rows))
 
         for row_index, row in enumerate(rows):
             for col_index, value in enumerate(row):
-                item = QTableWidgetItem(self._to_display_text(value))
-                if isinstance(value, (int, float, Decimal)):
+                header = headers[col_index]
+                item = QTableWidgetItem(self._to_display_text(value, header))
+                if self._is_numeric_header(header):
                     item.setTextAlignment(Qt.AlignCenter)
                 else:
                     item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
@@ -654,7 +653,6 @@ class PriceReportsPage(QWidget):
         for i in range(self.preview_table.columnCount()):
             if self.preview_table.columnWidth(i) < 110:
                 self.preview_table.setColumnWidth(i, 110)
-        self.preview_table.setSortingEnabled(True)
 
     def clear_preview_table(self):
         self._preview_headers = []
@@ -694,14 +692,9 @@ class PriceReportsPage(QWidget):
 
             for row_idx, row in enumerate(self._export_rows, start=2):
                 for col_idx, value in enumerate(row, start=1):
+                    header = self._export_headers[col_idx - 1]
                     cell = sheet.cell(row=row_idx, column=col_idx)
-                    if isinstance(value, datetime):
-                        cell.value = value
-                        cell.number_format = "dd/mm/yy"
-                    elif isinstance(value, Decimal):
-                        cell.value = float(value)
-                    else:
-                        cell.value = value
+                    self._write_excel_value(cell, header, value)
 
             for column_cells in sheet.columns:
                 max_len = 0
@@ -925,6 +918,7 @@ class PriceReportsPage(QWidget):
         transport = self._to_decimal(getattr(supplier, "transport_cost_per_l", None), Decimal("0"))
         reexport = self._to_decimal(getattr(supplier, "reexport_percent", None), Decimal("0"))
         fx_markup = self._to_decimal(getattr(supplier, "fx_rate_markup", None), Decimal("0"))
+        agent_fee = self._to_decimal(getattr(supplier, "agent_fee", None), Decimal("0"))
 
         customs_clearance = self._fixed_cost(fixed_costs, "customs_clearance")
         additional_customs = self._fixed_cost(fixed_costs, "additional_customs")
@@ -949,7 +943,7 @@ class PriceReportsPage(QWidget):
                 * fx_rate
                 * (Decimal("1") + fx_markup)
             )
-            base = base_before_add + marking
+            base = base_before_add + marking + (agent_fee * fx_rate)
         else:
             base_before_add = (
                 (supplier_price + transport)
@@ -959,7 +953,7 @@ class PriceReportsPage(QWidget):
                 * fx_rate
                 * (Decimal("1") + fx_markup)
             )
-            base = base_before_add + additional_customs + marking
+            base = base_before_add + additional_customs + marking + (agent_fee * fx_rate)
             base = base + customs_fee + (excise if bool(getattr(product, "is_excise", False)) else Decimal("0")) + eco_fee
 
         return self._round4(base * (Decimal("1") + vat))
@@ -1057,17 +1051,99 @@ class PriceReportsPage(QWidget):
             text = text.rstrip("0").rstrip(".")
         return text
 
-    def _to_display_text(self, value) -> str:
+    def _is_date_header(self, header: str) -> bool:
+        h = (header or "").strip().lower()
+        return "last update" in h
+
+    def _is_int_like_header(self, header: str) -> bool:
+        h = (header or "").strip().lower()
+        return (
+            h in {"curr lpc", "curr landed cost", "stock", "transit", "purchase order", "order is", "stock is", "reserve cust", "damaged"}
+            or h.startswith("costnovowvat_")
+            or h.startswith("fullcostmsk_")
+            or h in {"cost novo withvat", "full cost msk", "cost novo withvat (prev)", "full cost msk (prev)", "best full price, l", "best full price, l 2"}
+        )
+
+    def _is_decimal1_header(self, header: str) -> bool:
+        h = (header or "").strip().lower()
+        return h in {"дистр цена", "промо цена"}
+
+    def _is_numeric_header(self, header: str) -> bool:
+        return self._is_int_like_header(header) or self._is_decimal1_header(header) or self._is_date_header(header)
+
+    def _format_int_like_text(self, value, blank_zero: bool = False) -> str:
+        decimal_value = self._to_decimal(value)
+        if decimal_value is None:
+            return ""
+        rounded = int(decimal_value.quantize(Decimal("1")))
+        if blank_zero and rounded == 0:
+            return ""
+        return f"{rounded:,}".replace(",", " ")
+
+    def _format_decimal1_text(self, value, blank_zero: bool = False) -> str:
+        decimal_value = self._to_decimal(value)
+        if decimal_value is None:
+            return ""
+        if blank_zero and decimal_value == 0:
+            return ""
+        text = f"{float(decimal_value):,.1f}"
+        return text.replace(",", "_").replace(".", ",").replace("_", " ")
+
+    def _to_display_text(self, value, header: str = "") -> str:
         if value is None or value == "":
             return ""
+        if self._is_date_header(header):
+            if isinstance(value, datetime):
+                return value.strftime("%d.%m.%y")
+            return str(value)
+        if self._is_decimal1_header(header):
+            return self._format_decimal1_text(value, blank_zero=True)
+        if self._is_int_like_header(header):
+            return self._format_int_like_text(value)
         if isinstance(value, datetime):
-            return value.strftime("%d/%m/%y")
+            return value.strftime("%d.%m.%y")
         if isinstance(value, Decimal):
             text = format(value, "f")
             if "." in text:
                 text = text.rstrip("0").rstrip(".")
             return text.replace(".", ",")
         return str(value)
+
+    def _write_excel_value(self, cell, header: str, value):
+        if value is None or value == "":
+            cell.value = ""
+            return
+
+        if self._is_date_header(header):
+            if isinstance(value, datetime):
+                cell.value = value
+                cell.number_format = "dd.mm.yy"
+            else:
+                cell.value = value
+            return
+
+        if self._is_decimal1_header(header):
+            decimal_value = self._to_decimal(value)
+            if decimal_value is None or decimal_value == 0:
+                cell.value = ""
+            else:
+                cell.value = float(decimal_value)
+                cell.number_format = '# ##0.0'
+            return
+
+        if self._is_int_like_header(header):
+            decimal_value = self._to_decimal(value)
+            if decimal_value is None:
+                cell.value = ""
+            else:
+                cell.value = int(decimal_value.quantize(Decimal("1")))
+                cell.number_format = '# ##0'
+            return
+
+        if isinstance(value, Decimal):
+            cell.value = float(value)
+        else:
+            cell.value = value
 
     def show_message(self, text):
         self.ui.label_msg.setText(text)

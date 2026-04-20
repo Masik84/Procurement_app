@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 import pandas as pd
 
-from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces, normalize_product_name
 
 
@@ -41,10 +40,10 @@ class ISImporter:
             raise FileNotFoundError(f"Файл не найден: {file_path}")
 
         book = pd.ExcelFile(file_path)
-        agg = {}
+        parts: list[pd.DataFrame] = []
 
         if self.orders_sheet in book.sheet_names:
-            df = pd.read_excel(file_path, sheet_name=self.orders_sheet, header=None)
+            df = pd.read_excel(book, sheet_name=self.orders_sheet, header=None)
             if len(df) >= 4:
                 headers = [str(x).strip() if pd.notna(x) else "" for x in df.iloc[2].tolist()]
                 data = df.iloc[3:].copy().reset_index(drop=True)
@@ -59,33 +58,22 @@ class ISImporter:
                 if any(x < 0 for x in required):
                     raise ValueError("Не найдены обязательные колонки на листе IS orders tracking.")
 
-                for idx, rec in data.iterrows():
-                    src_article = _norm(rec.iloc[col_code])
-                    src_prod_name = _norm(rec.iloc[col_products])
-                    remains_qty = max(float(parse_loose_number(rec.iloc[col_remains]) or 0), 0)
-                    confirmed_qty = max(float(parse_loose_number(rec.iloc[col_confirmed]) or 0), 0)
-
-                    if src_article == "" and src_prod_name == "":
-                        continue
-                    if remains_qty + confirmed_qty == 0:
-                        continue
-
-                    key = f"A|{src_article.upper()}" if src_article else f"N|{normalize_product_name(src_prod_name)}"
-                    if key not in agg:
-                        agg[key] = {
-                            "import_row_no": idx + 4,
-                            "source_article": src_article or None,
-                            "source_product_name": src_prod_name or None,
-                            "remains_qty": 0.0,
-                            "confirmed_qty": 0.0,
-                            "stock_qty": 0.0,
-                        }
-
-                    agg[key]["remains_qty"] += remains_qty
-                    agg[key]["confirmed_qty"] += confirmed_qty
+                orders = pd.DataFrame({
+                    'source_article': data.iloc[:, col_code].fillna('').map(_norm),
+                    'source_product_name': data.iloc[:, col_products].fillna('').map(_norm),
+                    'remains_qty': pd.to_numeric(data.iloc[:, col_remains], errors='coerce').fillna(0).clip(lower=0).astype(float),
+                    'confirmed_qty': pd.to_numeric(data.iloc[:, col_confirmed], errors='coerce').fillna(0).clip(lower=0).astype(float),
+                })
+                orders['stock_qty'] = 0.0
+                orders['import_row_no'] = orders.index + 4
+                non_empty_mask = (orders['source_article'] != '') | (orders['source_product_name'] != '')
+                qty_mask = (orders['remains_qty'] + orders['confirmed_qty']) > 0
+                orders = orders.loc[non_empty_mask & qty_mask]
+                if not orders.empty:
+                    parts.append(orders)
 
         if self.stock_sheet in book.sheet_names:
-            df = pd.read_excel(file_path, sheet_name=self.stock_sheet, header=None)
+            df = pd.read_excel(book, sheet_name=self.stock_sheet, header=None)
             if len(df) >= 3:
                 headers = [str(x).strip() if pd.notna(x) else "" for x in df.iloc[1].tolist()]
                 data = df.iloc[2:].copy().reset_index(drop=True)
@@ -99,32 +87,55 @@ class ISImporter:
                 if any(x < 0 for x in required):
                     raise ValueError("Не найдены обязательные колонки на листе Stock IS.")
 
-                for idx, rec in data.iterrows():
-                    src_article = _norm(rec.iloc[col_material])
-                    src_prod_name = _norm(rec.iloc[col_description])
-                    stock_qty = max(float(parse_loose_number(rec.iloc[col_volume]) or 0), 0)
+                stock = pd.DataFrame({
+                    'source_article': data.iloc[:, col_material].fillna('').map(_norm),
+                    'source_product_name': data.iloc[:, col_description].fillna('').map(_norm),
+                    'stock_qty': pd.to_numeric(data.iloc[:, col_volume], errors='coerce').fillna(0).clip(lower=0).astype(float),
+                })
+                stock['remains_qty'] = 0.0
+                stock['confirmed_qty'] = 0.0
+                stock['import_row_no'] = stock.index + 3
+                non_empty_mask = (stock['source_article'] != '') | (stock['source_product_name'] != '')
+                qty_mask = stock['stock_qty'] > 0
+                stock = stock.loc[non_empty_mask & qty_mask]
+                if not stock.empty:
+                    parts.append(stock)
 
-                    if src_article == "" and src_prod_name == "":
-                        continue
-                    if stock_qty == 0:
-                        continue
+        if not parts:
+            return []
 
-                    key = f"A|{src_article.upper()}" if src_article else f"N|{normalize_product_name(src_prod_name)}"
-                    if key not in agg:
-                        agg[key] = {
-                            "import_row_no": idx + 3,
-                            "source_article": src_article or None,
-                            "source_product_name": src_prod_name or None,
-                            "remains_qty": 0.0,
-                            "confirmed_qty": 0.0,
-                            "stock_qty": 0.0,
-                        }
+        df_all = pd.concat(parts, ignore_index=True, sort=False)
+        df_all['source_article_key'] = df_all['source_article'].str.upper()
+        df_all['source_name_key'] = df_all['source_product_name'].map(normalize_product_name)
+        df_all['key'] = df_all.apply(
+            lambda r: f"A|{r['source_article_key']}" if r['source_article_key'] else f"N|{r['source_name_key']}",
+            axis=1,
+        )
 
-                    if not agg[key]["source_article"] and src_article:
-                        agg[key]["source_article"] = src_article
-                    if not agg[key]["source_product_name"] and src_prod_name:
-                        agg[key]["source_product_name"] = src_prod_name
+        grouped = (
+            df_all.groupby('key', sort=False)
+            .agg(
+                import_row_no=('import_row_no', 'min'),
+                source_article=('source_article', lambda s: next((x for x in s if x), '')),
+                source_product_name=('source_product_name', lambda s: next((x for x in s if x), '')),
+                remains_qty=('remains_qty', 'sum'),
+                confirmed_qty=('confirmed_qty', 'sum'),
+                stock_qty=('stock_qty', 'sum'),
+            )
+            .reset_index(drop=True)
+        )
 
-                    agg[key]["stock_qty"] += stock_qty
-
-        return [row for row in agg.values() if row["remains_qty"] + row["confirmed_qty"] + row["stock_qty"] > 0]
+        rows = []
+        for rec in grouped.to_dict('records'):
+            total = float(rec['remains_qty'] or 0) + float(rec['confirmed_qty'] or 0) + float(rec['stock_qty'] or 0)
+            if total <= 0:
+                continue
+            rows.append({
+                'import_row_no': int(rec['import_row_no']),
+                'source_article': rec['source_article'] or None,
+                'source_product_name': rec['source_product_name'] or None,
+                'remains_qty': float(rec['remains_qty'] or 0),
+                'confirmed_qty': float(rec['confirmed_qty'] or 0),
+                'stock_qty': float(rec['stock_qty'] or 0),
+            })
+        return rows

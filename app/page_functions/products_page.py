@@ -12,8 +12,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QCheckBox,
     QHBoxLayout,
+    QComboBox,
 )
-from PySide6.QtCore import Qt, QFile
+from PySide6.QtCore import Qt, QFile, QEvent
 from PySide6.QtUiTools import QUiLoader
 
 from decimal import Decimal, InvalidOperation
@@ -74,6 +75,7 @@ class ProductsPage(QWidget):
         setup_data_table(self.table, sorting=True)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
+        self.table.cellDoubleClicked.connect(self.on_cell_double_clicked)
 
     def setup_connections(self):
         self.table.itemChanged.connect(self.on_item_changed)
@@ -329,6 +331,131 @@ class ProductsPage(QWidget):
         if "is_excise" in changes:
             product.is_excise = bool(changes["is_excise"])
 
+    def start_brand_edit(self, row: int):
+        id_item = self.table.item(row, 0)
+        if not id_item:
+            return
+
+        row_id_text = id_item.text().strip()
+        if not row_id_text:
+            return
+
+        row_id = int(row_id_text)
+        brand_col = self.columns.index("brand")
+
+        current_item = self.table.item(row, brand_col)
+        current_value = current_item.text().strip() if current_item else ""
+
+        combo = QComboBox(self.table)
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.NoInsert)
+        combo.setFrame(False)
+
+        brands = self._get_brand_values()
+        combo.addItems(brands)
+
+        if current_value and combo.findText(current_value) < 0:
+            combo.addItem(current_value)
+
+        combo.setCurrentText(current_value)
+
+        combo.setProperty("edit_row", row)
+        combo.setProperty("edit_row_id", row_id)
+
+        combo.activated.connect(lambda *_, c=combo: self.finish_brand_edit_from_combo(c))
+        combo.lineEdit().returnPressed.connect(lambda c=combo: self.finish_brand_edit_from_combo(c))
+
+        self._updating_table = True
+        self.table.setCellWidget(row, brand_col, combo)
+        self._updating_table = False
+
+        combo.setFocus()
+        combo.lineEdit().selectAll()
+        
+        
+    def on_cell_double_clicked(self, row, column):
+        if self._updating_table:
+            return
+
+        if column < 0 or column >= len(self.columns):
+            return
+
+        column_name = self.columns[column]
+
+        if column_name == "brand":
+            self.start_brand_edit(row)
+
+    def finish_brand_edit_from_combo(self, combo: QComboBox):
+        row = combo.property("edit_row")
+        row_id = combo.property("edit_row_id")
+
+        if row is None or row_id is None:
+            return
+
+        brand_col = self.columns.index("brand")
+        text = self.clean_multi_spaces(combo.currentText())
+
+        if row_id not in self._pending_changes:
+            self._pending_changes[row_id] = {}
+
+        self._pending_changes[row_id]["brand"] = text
+
+        self._updating_table = True
+        self.table.removeCellWidget(row, brand_col)
+        self.table.setItem(row, brand_col, self._build_table_item("brand", text))
+        self._updating_table = False
+
+        self.table.resizeColumnsToContents()
+
+    def eventFilter(self, obj, event):
+        if isinstance(obj, QComboBox) and obj.property("edit_row_id") is not None:
+            if event.type() == QEvent.FocusOut:
+                self.finish_brand_edit_from_combo(obj)
+                return False
+
+        return super().eventFilter(obj, event)
+        
+    def eventFilter(self, obj, event):
+        if isinstance(obj, QComboBox) and obj.property("edit_row_id") is not None:
+            if event.type() == QEvent.FocusOut:
+                self.finish_brand_edit_from_combo(obj)
+                return False
+
+        return super().eventFilter(obj, event)
+
+    def finish_brand_edit(self, row: int, row_id: int, combo: QComboBox):
+        text = self.clean_multi_spaces(combo.currentText())
+
+        if row_id not in self._pending_changes:
+            self._pending_changes[row_id] = {}
+
+        self._pending_changes[row_id]["brand"] = text
+
+        self._updating_table = True
+        self.table.removeCellWidget(row, self.columns.index("brand"))
+        self.table.setItem(
+            row,
+            self.columns.index("brand"),
+            self._build_table_item("brand", text),
+        )
+        self._updating_table = False
+
+        self.table.resizeColumnsToContents()
+
+    def _get_brand_values(self):
+        with self.get_session() as session:
+            rows = (
+                session.query(Product.brand)
+                .filter(Product.brand.isnot(None), Product.brand != "")
+                .distinct()
+                .order_by(Product.brand)
+                .all()
+            )
+        return [row[0] for row in rows if row[0]]
+
+    def clean_multi_spaces(self, text: str) -> str:
+        return " ".join((text or "").split())
+
     def refresh_all_comboboxes(self):
         self.fill_in_prod_brand_list()
         self.fill_in_prod_fam_list()
@@ -504,7 +631,6 @@ class ProductsPage(QWidget):
                 self.table.setColumnWidth(i, 100)
 
         self._updating_table = False
-        self.table.setSortingEnabled(True)
 
     def _build_checkbox_widget(self, row_id, checked):
         checkbox = QCheckBox()
@@ -564,14 +690,26 @@ class ProductsPage(QWidget):
             raise Exception(f"Поле '{field_name}' должно быть числом")
     
     def add_line(self):
+        self.clear_message()
         self._updating_table = True
 
         self.table.setSortingEnabled(False)
+
+        # если таблица еще ни разу не была заполнена через поиск,
+        # то сначала создаем структуру колонок
+        if self.table.columnCount() == 0:
+            self.table.setColumnCount(len(self.headers))
+            self.table.setHorizontalHeaderLabels(self.headers)
+
         self.table.insertRow(0)
 
         brand_value = self.ui.line_Brand.currentText()
         if brand_value == "-":
             brand_value = ""
+
+        family_value = self.ui.line_Prod_Fam.currentText()
+        if family_value == "-":
+            family_value = ""
 
         row_id = self._temp_row_id
         self._temp_row_id -= 1
@@ -583,7 +721,7 @@ class ProductsPage(QWidget):
             "brand": brand_value,
             "pack": "",
             "is_excise": False,
-            "family": "",
+            "family": family_value,
         }
 
         self._pending_changes[row_id] = {
@@ -591,8 +729,10 @@ class ProductsPage(QWidget):
             "brand": brand_value,
             "pack": "",
             "is_excise": False,
-            "family": "",
+            "family": family_value,
         }
+
+        self._original_values[row_id] = values.copy()
 
         for col_index, col_name in enumerate(self.columns):
             if col_name == "is_excise":
@@ -601,6 +741,10 @@ class ProductsPage(QWidget):
 
             item = self._build_table_item(col_name, values[col_name])
             self.table.setItem(0, col_index, item)
+
+        for i in range(self.table.columnCount()):
+            if self.table.columnWidth(i) < 100:
+                self.table.setColumnWidth(i, 100)
 
         self._updating_table = False
         self.table.setCurrentCell(0, 1)

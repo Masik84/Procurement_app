@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QWidget,
     QApplication,
     QVBoxLayout,
+    QComboBox,
 )
 from PySide6.QtCore import Qt, QFile
 from PySide6.QtUiTools import QUiLoader
@@ -64,6 +65,7 @@ class ProductArticlesPage(QWidget):
         setup_data_table(self.table, sorting=True)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
+        self.table.cellDoubleClicked.connect(self.on_cell_double_clicked)
 
     def setup_connections(self):
         self.table.itemChanged.connect(self.on_item_changed)
@@ -123,6 +125,105 @@ class ProductArticlesPage(QWidget):
 
         except Exception as e:
             self.show_error_message(f"Ошибка: {str(e)}")
+
+    def on_cell_double_clicked(self, row, column):
+        if self._updating_table:
+            return
+
+        if column < 0:
+            return
+
+        header_item = self.table.horizontalHeaderItem(column)
+        if not header_item:
+            return
+
+        header = header_item.text()
+        if header == "Product name":
+            self.start_product_edit(row)
+
+    def start_product_edit(self, row: int):
+        id_item = self.table.item(row, 0)
+        if not id_item:
+            return
+
+        row_id_text = id_item.text().strip()
+        if not row_id_text:
+            return
+
+        row_id = int(row_id_text)
+        product_col = 1  # колонка Product name
+
+        current_item = self.table.item(row, product_col)
+        current_value = current_item.text().strip() if current_item else ""
+
+        combo = QComboBox(self.table)
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.NoInsert)
+        combo.setFrame(False)
+
+        product_names = self._get_product_name_values()
+        combo.addItems(product_names)
+
+        if current_value and combo.findText(current_value) < 0:
+            combo.addItem(current_value)
+
+        combo.setCurrentText(current_value)
+
+        combo.setProperty("edit_row", row)
+        combo.setProperty("edit_row_id", row_id)
+
+        combo.activated.connect(lambda *_, c=combo: self.finish_product_edit_from_combo(c))
+        combo.lineEdit().returnPressed.connect(lambda c=combo: self.finish_product_edit_from_combo(c))
+
+        self._updating_table = True
+        self.table.setCellWidget(row, product_col, combo)
+        self._updating_table = False
+
+        combo.setFocus()
+        combo.lineEdit().selectAll()
+
+    def finish_product_edit_from_combo(self, combo: QComboBox):
+        row = combo.property("edit_row")
+        row_id = combo.property("edit_row_id")
+
+        if row is None or row_id is None:
+            return
+
+        product_col = 1
+        text = self.clean_multi_spaces(combo.currentText())
+
+        if row_id not in self._pending_changes:
+            self._pending_changes[row_id] = {}
+
+        self._pending_changes[row_id]["Product name"] = text
+
+        self._updating_table = True
+        self.table.removeCellWidget(row, product_col)
+
+        item = QTableWidgetItem(text)
+        item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
+        item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.table.setItem(row, product_col, item)
+
+        self._updating_table = False
+        self.table.resizeColumnsToContents()
+
+    def _get_product_name_values(self):
+        with self.get_session() as session:
+            products = session.query(Product).filter(Product.name.isnot(None), Product.name != "").all()
+
+        products.sort(
+            key=lambda x: (
+                (x.family or "").lower(),
+                -(float(x.pack) if str(x.pack).replace(".", "", 1).isdigit() else -999999),
+                (x.name or "").lower(),
+            )
+        )
+
+        return [row.name for row in products if row.name]
+
+    def clean_multi_spaces(self, text: str) -> str:
+        return " ".join((text or "").split())
 
     def copy_cell_content(self):
         selected_items = self.table.selectedItems()
@@ -467,9 +568,18 @@ class ProductArticlesPage(QWidget):
         self._updating_table = False
 
     def add_line(self):
+        self.clear_message()
         self._updating_table = True
 
         self.table.setSortingEnabled(False)
+
+        columns = ["id", "product_name", "article", "variant_name"]
+        headers = ["id", "Product name", "Article", "Product name (variant)"]
+
+        if self.table.columnCount() == 0:
+            self.table.setColumnCount(len(headers))
+            self.table.setHorizontalHeaderLabels(headers)
+
         self.table.insertRow(0)
 
         selected_product_name = self.ui.line_Prod_name.currentText()
@@ -480,7 +590,6 @@ class ProductArticlesPage(QWidget):
         self._temp_row_id -= 1
         self._new_rows.add(row_id)
 
-        columns = ["id", "product_name", "article", "variant_name"]
         values = {
             "id": str(row_id),
             "product_name": selected_product_name,
@@ -505,6 +614,10 @@ class ProductArticlesPage(QWidget):
                 item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
             self.table.setItem(0, j, item)
+
+        for i in range(self.table.columnCount()):
+            if self.table.columnWidth(i) < 120:
+                self.table.setColumnWidth(i, 120)
 
         self._updating_table = False
         self.table.setCurrentCell(0, 1)

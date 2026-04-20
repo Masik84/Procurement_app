@@ -14,8 +14,22 @@ def clean_multi_spaces(value: object) -> str:
     - converts non-breaking spaces to normal spaces
     - trims
     - collapses repeated spaces
+    - treats None/NaN as empty string
     """
-    s = "" if value is None else str(value)
+    if value is None:
+        return ""
+
+    try:
+        # pandas NaN != NaN
+        if value != value:
+            return ""
+    except Exception:
+        pass
+
+    s = str(value)
+    if s.strip().lower() == "nan":
+        return ""
+
     s = s.replace("\xa0", " ")
     s = s.strip()
     s = _MULTI_SPACES_RE.sub(" ", s)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
 from sqlalchemy.orm import Session
@@ -89,6 +90,7 @@ class ProductStockImportService:
                 distr_price=r.get("distr_price"),
                 promo_price=r.get("promo_price"),
                 stock_qty=r.get("stock_qty") or 0,
+                transit_qty=r.get("transit_qty") or 0,
                 markdown_qty=r.get("markdown_qty") or 0,
                 reserve_qty=r.get("reserve_qty") or 0,
                 selected_product_id=None,
@@ -119,7 +121,6 @@ class ProductStockImportService:
                 import_row_no=r.get("import_row_no"),
                 source_article=r.get("source_article"),
                 source_product_name=r.get("source_product_name"),
-                transit_qty=r.get("transit_qty") or 0,
                 order_qty=r.get("order_qty") or 0,
                 selected_product_id=None,
                 new_product_name=None,
@@ -163,17 +164,17 @@ class ProductStockImportService:
         self.session.flush()
         return len(created)
 
-        def _validate_new_rows(self, rows, name_attr: str = "new_product_name"):
-            for row in rows:
-                if getattr(row, name_attr) is None or not str(getattr(row, name_attr)).strip():
-                    continue
+    def _validate_new_rows(self, rows, name_attr: str = "new_product_name"):
+        for row in rows:
+            if getattr(row, name_attr) is None or not str(getattr(row, name_attr)).strip():
+                continue
 
-                self.product_matching.validate_new_product_fields(
-                    product_name=row.new_product_name,
-                    brand=row.new_brand,
-                    pack=row.new_pack,
-                    is_excise=row.new_is_excise,
-                )
+            self.product_matching.validate_new_product_fields(
+                product_name=row.new_product_name,
+                brand=row.new_brand,
+                pack=row.new_pack,
+                is_excise=row.new_is_excise,
+            )
 
     def validate_new_stock_products_before_save(self, batch_id: str, imported_by: str) -> None:
         rows = self.session.query(TempStockImport).filter(
@@ -357,6 +358,18 @@ class ProductStockImportService:
         ).all()
         return self._create_or_update_articles(rows)
 
+    def _load_products_map(self, product_ids: list[int]) -> dict[int, Product]:
+        if not product_ids:
+            return {}
+        rows = self.session.query(Product).filter(Product.id.in_(product_ids)).all()
+        return {int(row.id): row for row in rows}
+
+    def _load_product_stock_map(self, product_ids: list[int]) -> dict[int, ProductStock]:
+        if not product_ids:
+            return {}
+        rows = self.session.query(ProductStock).filter(ProductStock.product_id.in_(product_ids)).all()
+        return {int(row.product_id): row for row in rows}
+
     def _is_origin_ru(self, value: object) -> bool:
         s = str(value or "").strip().upper()
         return s in {"RU", "РОССИЯ", "RUSSIA"} or s.startswith("RU")
@@ -402,7 +415,12 @@ class ProductStockImportService:
         avg_cnt = 0
 
         for row in rows:
-            row_weight = self._to_decimal(row.stock_qty) + self._to_decimal(row.markdown_qty) + self._to_decimal(row.reserve_qty)
+            row_weight = (
+                self._to_decimal(row.stock_qty)
+                + self._to_decimal(row.transit_qty)
+                + self._to_decimal(row.markdown_qty)
+                + self._to_decimal(row.reserve_qty)
+            )
             val = getattr(row, field_name)
             d_val = self._to_decimal(val)
 
@@ -424,6 +442,7 @@ class ProductStockImportService:
 
         self.session.query(ProductStock).update({
             ProductStock.stock_qty: 0,
+            ProductStock.transit_qty: 0,
             ProductStock.markdown_qty: 0,
             ProductStock.reserve_qty: 0,
             ProductStock.stock_update_date: now,
@@ -446,6 +465,7 @@ class ProductStockImportService:
             sums = self.session.query(
                 TempStockImport.selected_product_id,
                 TempStockImport.stock_qty,
+                TempStockImport.transit_qty,
                 TempStockImport.markdown_qty,
                 TempStockImport.reserve_qty,
             ).filter(
@@ -455,6 +475,7 @@ class ProductStockImportService:
             ).all()
 
             stock_qty = sum(self._to_decimal(x.stock_qty) for x in sums)
+            transit_qty = sum(self._to_decimal(x.transit_qty) for x in sums)
             markdown_qty = sum(self._to_decimal(x.markdown_qty) for x in sums)
             reserve_qty = sum(self._to_decimal(x.reserve_qty) for x in sums)
 
@@ -481,7 +502,7 @@ class ProductStockImportService:
                     landed_cost=landed_val,
                     distr_price=distr_val,
                     promo_price=promo_val,
-                    transit_qty=0,
+                    transit_qty=transit_qty,
                     order_qty=0,
                     is_order_qty=0,
                     is_confirmed_order_qty=0,
@@ -494,6 +515,7 @@ class ProductStockImportService:
                 stock.stock_qty = stock_qty
                 stock.markdown_qty = markdown_qty
                 stock.reserve_qty = reserve_qty
+                stock.transit_qty = transit_qty
                 stock.lpc = lpc_val
                 stock.landed_cost = landed_val
                 stock.distr_price = distr_val
@@ -509,35 +531,39 @@ class ProductStockImportService:
         now = datetime.now()
 
         self.session.query(ProductStock).update({
-            ProductStock.transit_qty: 0,
             ProductStock.order_qty: 0,
             ProductStock.supplier_orders_update_date: now,
         }, synchronize_session=False)
 
-        product_ids = [
-            x[0] for x in self.session.query(TempSupplierOrdersImport.selected_product_id).filter(
-                TempSupplierOrdersImport.batch_id == batch_id,
-                TempSupplierOrdersImport.imported_by == imported_by,
-                TempSupplierOrdersImport.selected_product_id.isnot(None),
-            ).distinct().all()
-        ]
+        rows = self.session.query(TempSupplierOrdersImport).filter(
+            TempSupplierOrdersImport.batch_id == batch_id,
+            TempSupplierOrdersImport.imported_by == imported_by,
+            TempSupplierOrdersImport.selected_product_id.isnot(None),
+        ).all()
+
+        if not rows:
+            self.session.flush()
+            return 0
+
+        grouped = defaultdict(lambda: Decimal('0'))
+        for row in rows:
+            grouped[int(row.selected_product_id)] += self._to_decimal(row.order_qty)
+
+        product_ids = list(grouped.keys())
+        products = {
+            product.id: product
+            for product in self.session.query(Product).filter(Product.id.in_(product_ids)).all()
+        }
+        stocks = {
+            stock.product_id: stock
+            for stock in self.session.query(ProductStock).filter(ProductStock.product_id.in_(product_ids)).all()
+        }
 
         saved = 0
-
-        for product_id in product_ids:
-            rows = self.session.query(TempSupplierOrdersImport).filter(
-                TempSupplierOrdersImport.batch_id == batch_id,
-                TempSupplierOrdersImport.imported_by == imported_by,
-                TempSupplierOrdersImport.selected_product_id == product_id,
-            ).all()
-
-            transit_val = sum(self._to_decimal(x.transit_qty) for x in rows)
-            order_val = sum(self._to_decimal(x.order_qty) for x in rows)
-
-            product = self.session.query(Product).filter(Product.id == product_id).first()
-            p_name = product.name if product else ""
-
-            stock = self.session.query(ProductStock).filter(ProductStock.product_id == product_id).first()
+        for product_id, order_val in grouped.items():
+            product = products.get(product_id)
+            p_name = product.name if product else ''
+            stock = stocks.get(product_id)
             if stock is None:
                 stock = ProductStock(
                     product_id=product_id,
@@ -552,17 +578,17 @@ class ProductStockImportService:
                     landed_cost=0,
                     distr_price=0,
                     promo_price=0,
-                    transit_qty=transit_val,
+                    transit_qty=0,
                     order_qty=order_val,
                     is_order_qty=0,
                     is_confirmed_order_qty=0,
                     is_stock_qty=0,
                 )
                 self.session.add(stock)
+                stocks[product_id] = stock
             else:
                 stock.product_name = p_name
                 stock.supplier_orders_update_date = now
-                stock.transit_qty = transit_val
                 stock.order_qty = order_val
             saved += 1
 

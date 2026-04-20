@@ -405,7 +405,6 @@ class PackTypesPage(QWidget):
                 self.table.setColumnWidth(i, 120)
 
         self._updating_table = False
-        self.table.setSortingEnabled(True)
 
     def add_line(self):
         self._updating_table = True

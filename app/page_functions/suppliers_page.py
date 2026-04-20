@@ -65,6 +65,7 @@ class SuppliersPage(QWidget):
             "transport_cost_per_l",
             "reexport_percent",
             "fx_rate_markup",
+            "agent_fee",
             "is_via_novo",
             "has_import_duty",
             "rating_calc",
@@ -80,6 +81,7 @@ class SuppliersPage(QWidget):
             "Transport cost per L",
             "Reexport percent",
             "FX rate markup",
+            "Agent fee",
             "Via Novo",
             "Import duty",
             "Rating calc",
@@ -93,6 +95,7 @@ class SuppliersPage(QWidget):
             "transport_cost_per_l",
             "reexport_percent",
             "fx_rate_markup",
+            "agent_fee",
         }
         self.bool_columns = {
             "is_via_novo",
@@ -339,6 +342,10 @@ class SuppliersPage(QWidget):
                 changes.get("fx_rate_markup", 0),
                 "FX rate markup",
             ),
+            agent_fee=self._to_decimal(
+                changes.get("agent_fee", 0),
+                "Agent fee",
+            ),
             is_via_novo=bool(changes.get("is_via_novo", False)),
             has_import_duty=bool(changes.get("has_import_duty", False)),
             rating_calc=bool(changes.get("rating_calc", True)),
@@ -390,6 +397,12 @@ class SuppliersPage(QWidget):
             supplier.fx_rate_markup = self._to_decimal(
                 changes["fx_rate_markup"],
                 "FX rate markup",
+            )
+
+        if "agent_fee" in changes:
+            supplier.agent_fee = self._to_decimal(
+                changes["agent_fee"],
+                "Agent fee",
             )
 
         if "is_via_novo" in changes:
@@ -476,6 +489,7 @@ class SuppliersPage(QWidget):
                     "transport_cost_per_l": row.transport_cost_per_l,
                     "reexport_percent": row.reexport_percent,
                     "fx_rate_markup": row.fx_rate_markup,
+                    "agent_fee": row.agent_fee,
                     "is_via_novo": bool(row.is_via_novo),
                     "has_import_duty": bool(row.has_import_duty),
                     "rating_calc": bool(row.rating_calc),
@@ -554,7 +568,6 @@ class SuppliersPage(QWidget):
                 self.table.setColumnWidth(i, 100)
 
         self._updating_table = False
-        self.table.setSortingEnabled(True)
 
     def _build_checkbox_widget(self, row_id, column_name, checked):
         checkbox = QCheckBox()

@@ -20,6 +20,7 @@ class CostCalculationResult:
     fx_markup_used: Decimal
     transport_used: Decimal
     reexport_used: Decimal
+    agent_fee_used: Decimal
 
     has_customs_used: bool
     via_novo_used: bool
@@ -143,6 +144,7 @@ class CostCalculationService:
         d_vat = self._to_decimal(fixed.vat)
         d_customs_fee = self._to_decimal(fixed.customs_fee)
         d_bank_fee = self._to_decimal(fixed.bank_fee)
+        d_agent_fee = self._to_decimal(getattr(supplier, "agent_fee", None))
 
         if supplier.marks_for_us:
             d_marking = Decimal("0")
@@ -162,7 +164,7 @@ class CostCalculationService:
                 * d_fx_rate
                 * (Decimal("1") + d_fx_markup)
             )
-            base = base_before_add + d_marking
+            base = base_before_add + d_marking + (d_agent_fee * d_fx_rate)
         else:
             base_before_add = (
                 (d_price + d_transport)
@@ -172,7 +174,7 @@ class CostCalculationService:
                 * d_fx_rate
                 * (Decimal("1") + d_fx_markup)
             )
-            base = base_before_add + d_additional_customs + d_marking
+            base = base_before_add + d_additional_customs + d_marking + (d_agent_fee * d_fx_rate)
 
         if not supplier_is_rf:
             base = (
@@ -268,6 +270,7 @@ class CostCalculationService:
         via_novo_used = bool(
             supplier.is_via_novo if via_novo is None else via_novo
         )
+        agent_fee_used = self._to_decimal(getattr(supplier, "agent_fee", None))
 
         cost_novo = self.calc_cost_novo_wvat(
             supplier_price=self._to_decimal(supplier_price),
@@ -312,6 +315,7 @@ class CostCalculationService:
             fx_markup_used=fx_markup_used,
             transport_used=transport_used,
             reexport_used=reexport_used,
+            agent_fee_used=agent_fee_used,
             has_customs_used=has_customs_used,
             via_novo_used=via_novo_used,
             bank_fee_used=self._to_decimal(fixed.bank_fee),
