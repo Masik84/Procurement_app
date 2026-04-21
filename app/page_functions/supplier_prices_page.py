@@ -741,6 +741,22 @@ class SupplierPricesPage(QWidget):
     def finish_product_edit(self, row: int, row_id: int, combo: QComboBox):
         product_id = combo.currentData()
 
+        # Пустой пункт в комбобоксе = снять привязку продукта
+        if product_id in (None, "", 0):
+            self._pending_changes.setdefault(row_id, {})
+            self._pending_changes[row_id]["selected_product_id"] = None
+
+            self._updating_table = True
+            self.table.removeCellWidget(row, 0)
+            self.table.setItem(
+                row,
+                0,
+                self.build_display_item(row_id, "selected_product_id", ""),
+            )
+            self._updating_table = False
+            self.table.resizeColumnsToContents()
+            return
+
         try:
             product_id = int(product_id)
         except (TypeError, ValueError):
@@ -963,6 +979,10 @@ class SupplierPricesPage(QWidget):
         self._pending_changes[row_id][column_name] = value or None
 
     def show_context_menu(self, position):
+        item = self.table.itemAt(position)
+        if item is not None:
+            self.table.setCurrentCell(item.row(), item.column())
+
         menu = QMenu()
         copy_action = menu.addAction("Копировать")
         delete_action = menu.addAction("Удалить строку")

@@ -4,18 +4,19 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence
+
+from copy import copy
 
 from openpyxl import Workbook
-from sqlalchemy import or_
-from sqlalchemy.exc import SQLAlchemyError
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 from PySide6.QtCore import QFile, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
-    QComboBox,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -41,6 +42,50 @@ from app.ui.table_style import *
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 PRICE_REPORTS_UI = BASE_DIR / "app" / "ui" / "windows" / "price_reports.ui"
+
+
+# ---------------- Excel style constants ----------------
+EXCEL_BASE_FONT = Font(name="Aptos Narrow", size=11)
+EXCEL_HEADER_FONT = Font(name="Aptos Narrow", size=11, bold=True)
+
+FILL_GRAY = "FFD9D9D9"
+FILL_RED = "FFC00000"
+FILL_BLUE = "FF215C98"
+FILL_SKY = "FF00B0F0"
+FILL_GREEN = "FF92D050"
+WHITE_FONT = "FFFFFFFF"
+
+DATE_FORMAT = "dd/mm/yy"
+MONEY_FORMAT = '#,##0 "₽"'
+DECIMAL1_FORMAT = '#,##0.0'
+INTEGER_FORMAT = '#,##0'
+
+
+# --- helper header groups kept exactly for the USER'S renamed columns ---
+PRODUCT_GRAY_HEADERS = ["Brand", "Product Name", "Pack"]
+PRODUCT_RED_HEADERS = ["Дистр цена", "Промо цена", "curr LPC", "curr Landed cost"]
+PRODUCT_BLUE_HEADERS = ["Stock", "Transit", "Purchase Order", "Reserve cust", "Damaged"]
+PRODUCT_RED_STOCK_HEADERS = ["Order IS", "Stock IS"]
+
+SUPPLIER_GRAY_HEADERS = [
+    "Our Product Name",
+    "Pack",
+    "last update",
+    "Price, L",
+    "Price (Pack)",
+    "Currency",
+    "Cost Novo with VAT",
+    "Full Cost Msk",
+    "Price, L (prev)",
+    "Cost Novo with VAT (prev)",
+    "Full Cost Msk (prev)",
+]
+SUPPLIER_RED_PRICE_HEADERS = ["Дистр цена", "Промо цена", "curr LPC", "curr Landed cost"]
+SUPPLIER_BEST1_HEADERS = ["Best Suppl", "Best full Price, L", "last update Best1"]
+SUPPLIER_BEST2_HEADERS = ["Best Suppl 2", "Best full Price, L 2", "last update Best2"]
+SUPPLIER_BLUE_STOCK_HEADERS = ["Stock", "Transit", "Purchase Order", "Reserve cust", "Damaged"]
+SUPPLIER_RED_STOCK_HEADERS = ["Order IS", "Stock IS"]
+
 
 
 def load_ui(ui_path: Path):
@@ -458,7 +503,7 @@ class PriceReportsPage(QWidget):
     def _build_product_headers(self, supplier_count: int) -> List[str]:
         headers = [
             "Brand",
-            "Our Product Name",
+            "Product Name",
             "Pack",
             "Дистр цена",
             "Промо цена",
@@ -474,8 +519,8 @@ class PriceReportsPage(QWidget):
         ]
         for idx in range(1, supplier_count + 1):
             headers.extend([
-                f"CostNovoWVAT_{idx}",
-                f"FullCostMsk_{idx}",
+                f"Cost Novo with VAT_{idx}",
+                f"Full Cost Msk_{idx}",
                 f"Supplier_{idx}",
                 f"last update_{idx}",
                 f"Currency_{idx}",
@@ -490,14 +535,13 @@ class PriceReportsPage(QWidget):
             "Price, L",
             "Price (Pack)",
             "Currency",
-            "Cost Novo withVAT",
+            "Cost Novo with VAT",
             "Full Cost Msk",
         ]
         if show_prev:
             headers.extend([
-                "last update (prev)",
                 "Price, L (prev)",
-                "Cost Novo withVAT (prev)",
+                "Cost Novo with VAT (prev)",
                 "Full Cost Msk (prev)",
             ])
         headers.extend([
@@ -505,6 +549,12 @@ class PriceReportsPage(QWidget):
             "Промо цена",
             "curr LPC",
             "curr Landed cost",
+            "Best Suppl",
+            "Best full Price, L",
+            "last update Best1",
+            "Best Suppl 2",
+            "Best full Price, L 2",
+            "last update Best2",
             "Stock",
             "Transit",
             "Purchase Order",
@@ -512,17 +562,11 @@ class PriceReportsPage(QWidget):
             "Stock IS",
             "Reserve cust",
             "Damaged",
-            "Best Suppl",
-            "Best full Price, L",
-            "last update Best1",
-            "Best Suppl 2",
-            "Best full Price, L 2",
-            "last update Best2",
         ])
         for idx in range(1, other_count + 1):
             headers.extend([
-                f"CostNovoWVAT_{idx + 2}",
-                f"FullCostMsk_{idx + 2}",
+                f"Cost Novo with VAT_{idx + 2}",
+                f"Full Cost Msk_{idx + 2}",
                 f"Supplier_{idx + 2}",
                 f"last update_{idx + 2}",
                 f"Currency_{idx + 2}",
@@ -586,7 +630,6 @@ class PriceReportsPage(QWidget):
         ]
         if show_prev:
             row.extend([
-                self._date_or_empty(prev.price_date if prev else None),
                 self._decimal_or_empty(prev.supplier_price if prev else None),
                 self._decimal_or_empty(prev.cost_novo if prev else None),
                 self._decimal_or_empty(prev.full_cost if prev else None),
@@ -600,6 +643,12 @@ class PriceReportsPage(QWidget):
             self._decimal_or_empty(getattr(stock, "promo_price", None)),
             self._decimal_or_empty(getattr(stock, "lpc", None)),
             self._decimal_or_empty(getattr(stock, "landed_cost", None)),
+            best1.supplier_name if best1 else "",
+            self._decimal_or_empty(best1.full_cost if best1 else None),
+            self._date_or_empty(best1.price_date if best1 else None),
+            best2.supplier_name if best2 else "",
+            self._decimal_or_empty(best2.full_cost if best2 else None),
+            self._date_or_empty(best2.price_date if best2 else None),
             self._decimal_or_empty(getattr(stock, "stock_qty", None)),
             self._decimal_or_empty(getattr(stock, "transit_qty", None)),
             self._decimal_or_empty(getattr(stock, "order_qty", None)),
@@ -607,12 +656,6 @@ class PriceReportsPage(QWidget):
             self._decimal_or_empty(getattr(stock, "is_stock_qty", None)),
             self._decimal_or_empty(getattr(stock, "reserve_qty", None)),
             self._decimal_or_empty(getattr(stock, "markdown_qty", None)),
-            best1.supplier_name if best1 else "",
-            self._decimal_or_empty(best1.full_cost if best1 else None),
-            self._date_or_empty(best1.price_date if best1 else None),
-            best2.supplier_name if best2 else "",
-            self._decimal_or_empty(best2.full_cost if best2 else None),
-            self._date_or_empty(best2.price_date if best2 else None),
         ])
 
         normalized = list(alternatives[:other_count])
@@ -683,39 +726,194 @@ class PriceReportsPage(QWidget):
 
             workbook = Workbook()
             sheet = workbook.active
-            sheet.title = "Report"
+            sheet.title = "Sheet1"
 
             for col_idx, header in enumerate(self._export_headers, start=1):
                 cell = sheet.cell(row=1, column=col_idx, value=header)
-                cell.font = cell.font.copy(bold=True)
-                cell.fill = cell.fill.copy(fill_type="solid", fgColor="D9D9D9")
+                self._style_header_cell(cell)
 
             for row_idx, row in enumerate(self._export_rows, start=2):
                 for col_idx, value in enumerate(row, start=1):
                     header = self._export_headers[col_idx - 1]
                     cell = sheet.cell(row=row_idx, column=col_idx)
                     self._write_excel_value(cell, header, value)
+                    self._style_data_cell(cell, header)
 
-            for column_cells in sheet.columns:
-                max_len = 0
-                col_letter = column_cells[0].column_letter
-                for cell in column_cells:
-                    value = "" if cell.value is None else str(cell.value)
-                    if len(value) > max_len:
-                        max_len = len(value)
-                sheet.column_dimensions[col_letter].width = min(max(max_len + 2, 12), 28)
+            self._apply_report_excel_formatting(sheet, self._export_headers)
 
             workbook.save(file_path)
             self.show_message("Excel файл сохранен")
         except Exception as e:
             self.show_error_message(f"Ошибка экспорта в Excel: {str(e)}")
 
+    def _style_header_cell(self, cell):
+        cell.font = copy(EXCEL_HEADER_FONT)
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    def _style_data_cell(self, cell, header: str):
+        cell.font = copy(EXCEL_BASE_FONT)
+        if self._is_numeric_header(header) or self._is_date_header(header):
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        else:
+            cell.alignment = Alignment(horizontal="left", vertical="center")
+
+    def _apply_report_excel_formatting(self, sheet, headers: Sequence[str]):
+        if self.ui.radio_BySupplier.isChecked():
+            self._format_supplier_report_sheet(sheet, headers)
+        else:
+            self._format_product_report_sheet(sheet, headers)
+
+    @staticmethod
+    def _header_index_map(headers: Sequence[str]) -> Dict[str, int]:
+        return {header: idx + 1 for idx, header in enumerate(headers)}
+
+    @staticmethod
+    def _set_column_widths(sheet, widths: Dict[str, float]):
+        for letter, width in widths.items():
+            sheet.column_dimensions[letter].width = width
+
+    @staticmethod
+    def _fill_header_cells(sheet, header_map: Dict[str, int], target_headers: Sequence[str], color: str, font_color: Optional[str] = None):
+        fill = PatternFill(fill_type="solid", fgColor=color)
+        for header in target_headers:
+            col_idx = header_map.get(header)
+            if not col_idx:
+                continue
+            cell = sheet.cell(row=1, column=col_idx)
+            cell.fill = copy(fill)
+            if font_color:
+                new_font = copy(cell.font)
+                new_font.color = font_color
+                cell.font = new_font
+
+    @staticmethod
+    def _set_number_format(sheet, headers: Sequence[str], format_code: str, *target_headers: str):
+        header_map = {header: idx + 1 for idx, header in enumerate(headers)}
+        for header in target_headers:
+            col_idx = header_map.get(header)
+            if not col_idx:
+                continue
+            for row_idx in range(2, sheet.max_row + 1):
+                sheet.cell(row=row_idx, column=col_idx).number_format = format_code
+
+    def _format_product_report_sheet(self, sheet, headers: Sequence[str]):
+        header_map = self._header_index_map(headers)
+        sheet.row_dimensions[1].height = 45
+
+        self._fill_header_cells(sheet, header_map, PRODUCT_GRAY_HEADERS, FILL_GRAY)
+        self._fill_header_cells(sheet, header_map, PRODUCT_RED_HEADERS, FILL_RED, WHITE_FONT)
+        self._fill_header_cells(sheet, header_map, PRODUCT_BLUE_HEADERS, FILL_BLUE, WHITE_FONT)
+        self._fill_header_cells(sheet, header_map, PRODUCT_RED_STOCK_HEADERS, FILL_RED, WHITE_FONT)
+
+        self._set_number_format(sheet, headers, DECIMAL1_FORMAT, *[h for h in PRODUCT_RED_HEADERS if h in ("Дистр цена", "Промо цена")])
+        self._set_number_format(sheet, headers, MONEY_FORMAT, "curr LPC", "curr Landed cost")
+        self._set_number_format(sheet, headers, INTEGER_FORMAT, *PRODUCT_BLUE_HEADERS, *PRODUCT_RED_STOCK_HEADERS)
+
+        supplier_idx = 1
+        while f"Cost Novo with VAT_{supplier_idx}" in header_map:
+            self._set_number_format(sheet, headers, MONEY_FORMAT, f"Cost Novo with VAT_{supplier_idx}", f"Full Cost Msk_{supplier_idx}")
+            self._set_number_format(sheet, headers, DATE_FORMAT, f"last update_{supplier_idx}")
+            supplier_idx += 1
+
+        widths = {
+            "A": 13.0,
+            "B": 31.0,
+            "C": 8.71,
+            "D": 11.0,
+            "E": 11.0,
+            "F": 13.0,
+            "G": 16.0,
+            "H": 11.0,
+            "I": 11.0,
+            "J": 15.0,
+            "K": 11.0,
+            "L": 11.0,
+            "M": 13.0,
+            "N": 11.0,
+        }
+        self._set_column_widths(sheet, widths)
+        sheet.freeze_panes = "H2"
+        sheet.sheet_view.zoomScale = 90
+        sheet.sheet_view.zoomScaleNormal = 90
+
+    def _format_supplier_report_sheet(self, sheet, headers: Sequence[str]):
+        header_map = self._header_index_map(headers)
+        sheet.row_dimensions[1].height = 60
+
+        self._fill_header_cells(sheet, header_map, SUPPLIER_GRAY_HEADERS, FILL_GRAY)
+        self._fill_header_cells(sheet, header_map, SUPPLIER_RED_PRICE_HEADERS, FILL_RED, WHITE_FONT)
+        self._fill_header_cells(sheet, header_map, SUPPLIER_BEST1_HEADERS, FILL_SKY)
+        self._fill_header_cells(sheet, header_map, SUPPLIER_BEST2_HEADERS, FILL_GREEN)
+        self._fill_header_cells(sheet, header_map, SUPPLIER_BLUE_STOCK_HEADERS, FILL_BLUE, WHITE_FONT)
+        self._fill_header_cells(sheet, header_map, SUPPLIER_RED_STOCK_HEADERS, FILL_RED, WHITE_FONT)
+
+        self._set_number_format(sheet, headers, DATE_FORMAT, "last update", "last update Best1", "last update Best2")
+        self._set_number_format(sheet, headers, DECIMAL1_FORMAT, "Price, L", "Price (Pack)", "Price, L (prev)")
+        self._set_number_format(
+            sheet,
+            headers,
+            MONEY_FORMAT,
+            "Cost Novo with VAT",
+            "Full Cost Msk",
+            "Cost Novo with VAT (prev)",
+            "Full Cost Msk (prev)",
+            "curr LPC",
+            "curr Landed cost",
+            "Best full Price, L",
+            "Best full Price, L 2",
+        )
+        self._set_number_format(sheet, headers, DECIMAL1_FORMAT, "Дистр цена", "Промо цена")
+        self._set_number_format(sheet, headers, INTEGER_FORMAT, *SUPPLIER_BLUE_STOCK_HEADERS, *SUPPLIER_RED_STOCK_HEADERS)
+
+        supplier_idx = 3
+        while f"Cost Novo with VAT_{supplier_idx}" in header_map:
+            self._set_number_format(sheet, headers, MONEY_FORMAT, f"Cost Novo with VAT_{supplier_idx}", f"Full Cost Msk_{supplier_idx}")
+            self._set_number_format(sheet, headers, DATE_FORMAT, f"last update_{supplier_idx}")
+            supplier_idx += 1
+
+        widths = {
+            "A": 31.86,
+            "B": 9.14,
+            "C": 13.0,
+            "D": 9.14,
+            "E": 13.0,
+            "F": 13.0,
+            "G": 13.0,
+            "H": 13.0,
+            "I": 13.0,
+            "J": 13.0,
+            "K": 13.0,
+            "L": 11.0,
+            "M": 11.0,
+            "N": 13.0,
+            "O": 16.86,
+            "P": 16.86,
+            "Q": 12.0,
+            "R": 16.86,
+            "S": 16.86,
+            "T": 12.0,
+            "U": 10.57,
+            "V": 8.86,
+            "W": 13.0,
+            "X": 13.0,
+            "Y": 13.0,
+            "Z": 13.0,
+            "AA": 13.0,
+            "AB": 13.0,
+        }
+        self._set_column_widths(sheet, widths)
+        freeze_column = header_map.get("Дистр цена", 1)
+        sheet.freeze_panes = f"{get_column_letter(freeze_column)}2"
+        sheet.auto_filter.ref = f"A1:{get_column_letter(sheet.max_column)}1"
+        sheet.sheet_view.zoomScale = 90
+        sheet.sheet_view.zoomScaleNormal = 90
+
     def _build_export_file_name(self) -> str:
         now_text = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         if self.ui.radio_BySupplier.isChecked() and self.ui.cbo_Supplier.currentData():
             supplier_name = self.ui.cbo_Supplier.currentText().strip().replace("/", "_")
-            return f"supplier_prices_{supplier_name}_{now_text}.xlsx"
-        return f"product_prices_{now_text}.xlsx"
+            return f"SupplierPrices_{supplier_name}_{now_text}.xlsx"
+        return f"ProductPrices_{now_text}.xlsx"
 
     def reset_filters(self):
         self.ui.radio_ByProduct.setChecked(True)
@@ -1055,21 +1253,33 @@ class PriceReportsPage(QWidget):
         h = (header or "").strip().lower()
         return "last update" in h
 
-    def _is_int_like_header(self, header: str) -> bool:
+    def _is_money_header(self, header: str) -> bool:
         h = (header or "").strip().lower()
         return (
-            h in {"curr lpc", "curr landed cost", "stock", "transit", "purchase order", "order is", "stock is", "reserve cust", "damaged"}
-            or h.startswith("costnovowvat_")
-            or h.startswith("fullcostmsk_")
-            or h in {"cost novo withvat", "full cost msk", "cost novo withvat (prev)", "full cost msk (prev)", "best full price, l", "best full price, l 2"}
+            h.startswith("cost novo with vat_")
+            or h.startswith("full cost msk_")
+            or h in {
+                "curr lpc",
+                "curr landed cost",
+                "cost novo with vat",
+                "full cost msk",
+                "cost novo with vat (prev)",
+                "full cost msk (prev)",
+                "best full price, l",
+                "best full price, l 2",
+            }
         )
+
+    def _is_integer_header(self, header: str) -> bool:
+        h = (header or "").strip().lower()
+        return h in {"stock", "transit", "purchase order", "order is", "stock is", "reserve cust", "damaged"}
 
     def _is_decimal1_header(self, header: str) -> bool:
         h = (header or "").strip().lower()
-        return h in {"дистр цена", "промо цена"}
+        return h in {"дистр цена", "промо цена", "price, l", "price (pack)", "price, l (prev)"}
 
     def _is_numeric_header(self, header: str) -> bool:
-        return self._is_int_like_header(header) or self._is_decimal1_header(header) or self._is_date_header(header)
+        return self._is_money_header(header) or self._is_integer_header(header) or self._is_decimal1_header(header) or self._is_date_header(header)
 
     def _format_int_like_text(self, value, blank_zero: bool = False) -> str:
         decimal_value = self._to_decimal(value)
@@ -1098,7 +1308,7 @@ class PriceReportsPage(QWidget):
             return str(value)
         if self._is_decimal1_header(header):
             return self._format_decimal1_text(value, blank_zero=True)
-        if self._is_int_like_header(header):
+        if self._is_integer_header(header) or self._is_money_header(header):
             return self._format_int_like_text(value)
         if isinstance(value, datetime):
             return value.strftime("%d.%m.%y")
@@ -1117,7 +1327,7 @@ class PriceReportsPage(QWidget):
         if self._is_date_header(header):
             if isinstance(value, datetime):
                 cell.value = value
-                cell.number_format = "dd.mm.yy"
+                cell.number_format = DATE_FORMAT
             else:
                 cell.value = value
             return
@@ -1128,16 +1338,25 @@ class PriceReportsPage(QWidget):
                 cell.value = ""
             else:
                 cell.value = float(decimal_value)
-                cell.number_format = '# ##0.0'
+                cell.number_format = DECIMAL1_FORMAT
             return
 
-        if self._is_int_like_header(header):
+        if self._is_money_header(header):
+            decimal_value = self._to_decimal(value)
+            if decimal_value is None:
+                cell.value = ""
+            else:
+                cell.value = float(decimal_value)
+                cell.number_format = MONEY_FORMAT
+            return
+
+        if self._is_integer_header(header):
             decimal_value = self._to_decimal(value)
             if decimal_value is None:
                 cell.value = ""
             else:
                 cell.value = int(decimal_value.quantize(Decimal("1")))
-                cell.number_format = '# ##0'
+                cell.number_format = INTEGER_FORMAT
             return
 
         if isinstance(value, Decimal):
