@@ -7,7 +7,7 @@ import pythoncom
 import win32com.client as win32
 
 
-class PriceHistoryExcelExporter:
+class PriceHistoryExporter:
     def __init__(self):
         self._xl_center = -4108
         self._xl_vcenter = -4160
@@ -160,3 +160,5 @@ class PriceHistoryExcelExporter:
     
     
     
+# Backward-compatible alias.
+PriceHistoryExcelExporter = PriceHistoryExporter

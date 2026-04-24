@@ -121,7 +121,29 @@ class ProductMatchingService:
 
     @staticmethod
     def _normalize_pack_text(value: object) -> str:
-        s = clean_multi_spaces(value)
+        num = parse_loose_number(value)
+        if num is None:
+            return ""
+
+        if float(num).is_integer():
+            return str(int(float(num)))
+
+        s = str(num)
+        if "." in s:
+            s = s.rstrip("0").rstrip(".")
+        return s
+
+    @staticmethod
+    def _pack_to_name_format(pack_value: object) -> str:
+        s = ProductMatchingService._normalize_pack_text(pack_value)
+        if not s:
+            return ""
+
+        if "." in s:
+            return s.replace(".", ",")
+
+        return s
+
         s = s.replace(",", ".")
         return s
 
@@ -135,13 +157,14 @@ class ProductMatchingService:
     @classmethod
     def build_name_with_pack_unit(cls, product_name: object, pack_value: object, unit_text: str) -> str:
         s = normalize_customer_product_name(product_name)
-        p = cls._normalize_pack_text(pack_value)
+        p_norm = cls._normalize_pack_text(pack_value)
+        p_name = cls._pack_to_name_format(pack_value)
         unit_text = clean_multi_spaces(unit_text).upper()
 
         if not s:
             return ""
 
-        if not p:
+        if not p_norm:
             return s
 
         if re.search(r"([0-9]+(?:[.,][0-9]+)?)\s*(L|KG|л|Л|кг|КГ)\s*$", s, flags=re.IGNORECASE):
@@ -153,32 +176,56 @@ class ProductMatchingService:
             )
 
         tail_num = cls._get_trailing_number(s)
-        if tail_num and tail_num == p:
-            return f"{s} {unit_text}"
+        if tail_num:
+            try:
+                if float(tail_num) == float(p_norm):
+                    return f"{s} {unit_text}"
+            except Exception:
+                pass
 
-        return f"{s} {p} {unit_text}"
+        return f"{s} {p_name} {unit_text}"
     
-    @staticmethod
-    def build_product_family_from_name(product_name: str, pack_value: object) -> str:
+    @classmethod
+    def build_product_family_from_name(cls, product_name: str, pack_value: object) -> str:
         s_name = clean_multi_spaces(product_name).upper()
-        s_pack = clean_multi_spaces(pack_value).replace(",", ".")
+        expected_pack = ProductMatchingService._pack_to_name_format(pack_value)
 
         if not s_name:
             raise ValueError("Не заполнен ProductName.")
 
-        if not s_pack:
+        if not expected_pack:
             raise ValueError("Не заполнен Pack.")
 
-        pattern = rf"^(.*)\s{re.escape(s_pack)}\s*(L|KG)$"
-        match = re.search(pattern, s_name, flags=re.IGNORECASE)
+        pack_num = parse_loose_number(expected_pack)
+        if pack_num is None:
+            raise ValueError("Некорректный Pack.")
 
-        if not match:
-            raise ValueError(
-                f"Для '{s_name}' проверь упаковку в названии. "
-                f"Ожидается формат с пробелом перед упаковкой, например: '... {s_pack}L' или '... {s_pack}KG'."
+        matches = list(
+            re.finditer(
+                r"(?<!\d)([0-9]+(?:[.,][0-9]+)?)\s*(L|KG)\b",
+                s_name,
+                flags=re.IGNORECASE,
             )
+        )
 
-        return match.group(1).strip()
+        for match in matches:
+            found_num = parse_loose_number(match.group(1))
+            if found_num is None:
+                continue
+
+            if float(found_num) == float(pack_num):
+                family = s_name[:match.start()].strip()
+                if not family:
+                    raise ValueError(
+                        f"Для '{product_name}' не удалось определить family до упаковки."
+                    )
+                return family
+
+        raise ValueError(
+            f"Для '{product_name}' проверь упаковку в названии. "
+            f"Ожидается наличие упаковки '{expected_pack}L' или '{expected_pack}KG' "
+            f"внутри названия, например: '... {expected_pack}L BIB'."
+        )
 
     # =========================================================
     # Search helpers
@@ -376,7 +423,7 @@ class ProductMatchingService:
         pack: object,
         is_excise: object,
     ) -> None:
-        clean_name = clean_multi_spaces(product_name)
+        clean_name = clean_multi_spaces(product_name).upper()
         clean_brand = clean_multi_spaces(brand)
         pack_num = parse_loose_number(pack)
 
@@ -405,64 +452,85 @@ class ProductMatchingService:
     @classmethod
     def validate_product_name_pack_format(cls, *, product_name: str, pack_value: object) -> None:
         s_name = clean_multi_spaces(product_name).upper()
-        s_pack = cls._normalize_pack_text(pack_value)
+        expected_pack = cls._pack_to_name_format(pack_value)
 
         if not s_name:
             raise ValueError("Не заполнено название нового продукта.")
 
-        if not s_pack:
+        if not expected_pack:
             raise ValueError(f"Для '{s_name}' не заполнено поле 'Упаковка'.")
 
-        # ВАЖНО: ожидаем именно пробел перед упаковкой
-        pattern = rf"\s{re.escape(s_pack)}\s*(L|KG)$"
+        pack_num = parse_loose_number(expected_pack)
+        if pack_num is None:
+            raise ValueError(f"Для '{product_name}' некорректное поле 'Упаковка'.")
 
-        if not re.search(pattern, s_name, flags=re.IGNORECASE):
-            raise ValueError(
-                f"Для '{s_name}' проверь упаковку в названии. "
-                f"Ожидается формат с пробелом перед упаковкой, например: '... {s_pack}L' или '... {s_pack}KG'."
+        matches = list(
+            re.finditer(
+                r"(?<!\d)([0-9]+(?:[.,][0-9]+)?)\s*(L|KG)\b",
+                s_name,
+                flags=re.IGNORECASE,
             )
+        )
 
-    # =========================================================
-    # Create / link methods
-    # =========================================================
+        for match in matches:
+            found_num = parse_loose_number(match.group(1))
+            if found_num is None:
+                continue
+
+            if float(found_num) == float(pack_num):
+                return
+
+        raise ValueError(
+            f"Для '{product_name}' проверь упаковку в названии. "
+            f"Ожидается наличие упаковки '{expected_pack}L' или '{expected_pack}KG' "
+            f"внутри названия, например: '... {expected_pack}L BIB'."
+        )
+
 
     def get_or_create_product(
         self,
         *,
-        name: str,
-        brand: str,
+        name: object,
+        brand: object,
         pack: object,
-        is_excise: bool,
+        is_excise: object,
     ) -> Product:
         clean_name = clean_multi_spaces(name).upper()
-        clean_brand = clean_multi_spaces(brand).upper()
+        clean_brand = clean_multi_spaces(brand)
         pack_num = parse_loose_number(pack)
 
-        if not clean_name:
-            raise ValueError("Не заполнен NewProductName.")
-
-        if not clean_brand:
-            raise ValueError("Не заполнен NewBrand.")
-
-        if pack_num is None:
-            raise ValueError("NewPack должен быть числом")
-
-        family = self.build_product_family_from_name(clean_name, pack_num)
+        self.validate_new_product_fields(
+            product_name=clean_name,
+            brand=clean_brand,
+            pack=pack_num,
+            is_excise=is_excise,
+        )
 
         existing = self._get_product_by_exact_name(clean_name)
         if existing:
             return existing
 
-        product = Product(
-            name=clean_name,
-            brand=clean_brand,
-            family=family,
-            pack=pack_num,
-            is_excise=bool(is_excise),
-        )
+        normalized_existing = self.find_by_normalized_product_name(clean_name)
+        if normalized_existing:
+            return normalized_existing
+
+        product = Product()
+
+        if hasattr(product, "name"):
+            product.name = clean_name
+        if hasattr(product, "brand"):
+            product.brand = clean_brand
+        if hasattr(product, "pack"):
+            product.pack = pack_num
+        if hasattr(product, "is_excise"):
+            product.is_excise = bool(is_excise)
+        if hasattr(product, "family"):
+            product.family = self.build_product_family_from_name(clean_name, pack_num)
+
         self.session.add(product)
         self.session.flush()
 
+        self._normalized_products_cache = None
         return product
 
     def create_product_article_if_missing(

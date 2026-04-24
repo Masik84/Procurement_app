@@ -9,7 +9,7 @@ from PySide6.QtUiTools import QUiLoader
 
 from app.db.db import SessionLocal
 from app.db.models import ExchangeRate, MarkingRate, Supplier
-from app.services.quick_cost_calculation import QuickCostCalculationService
+from app.services.quick_cost_calculation_service import QuickCostCalculationService
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
 

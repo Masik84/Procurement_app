@@ -4,9 +4,7 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy.exc import SQLAlchemyError
 from PySide6.QtWidgets import (
     QMessageBox,
-    QHeaderView,
     QMenu,
-    QTableWidget,
     QTableWidgetItem,
     QWidget,
     QApplication,
@@ -521,12 +519,14 @@ class SuppliersPage(QWidget):
             self.show_message("Нет данных по заданным фильтрам")
 
     def _display_data(self, data):
-        self.table.clear()
-        self.table.setColumnCount(0)
+        self.table.setSortingEnabled(False)
+        self.table.clearContents()
         self.table.setRowCount(0)
+        self.table.setColumnCount(0)
 
         if not data:
             self.show_message("Нет данных для отображения")
+            self.table.setSortingEnabled(True)
             return
 
         self._updating_table = True
@@ -536,12 +536,14 @@ class SuppliersPage(QWidget):
         self.table.setRowCount(len(data))
         self.table.setHorizontalHeaderLabels(self.headers)
 
+        setup_data_table(self.table, sorting=True)
+
         for row_index, row_data in enumerate(data):
             row_id = int(row_data["id"])
             self._original_values[row_id] = {}
 
             for col_index, col_name in enumerate(self.columns):
-                value = row_data[col_name]
+                value = row_data.get(col_name)
 
                 if col_name in self.bool_columns:
                     checked = bool(value)
@@ -557,6 +559,7 @@ class SuppliersPage(QWidget):
                     text_value = self._format_percent(value)
                 else:
                     text_value = "" if value is None else str(value).replace(".", ",")
+
                 item = self._build_table_item(col_name, text_value)
                 self._original_values[row_id][col_name] = text_value
                 self.table.setItem(row_index, col_index, item)
@@ -568,6 +571,7 @@ class SuppliersPage(QWidget):
                 self.table.setColumnWidth(i, 100)
 
         self._updating_table = False
+        self.table.setSortingEnabled(True)
 
     def _build_checkbox_widget(self, row_id, column_name, checked):
         checkbox = QCheckBox()
@@ -590,7 +594,6 @@ class SuppliersPage(QWidget):
         layout.addWidget(checkbox)
         layout.setAlignment(Qt.AlignCenter)
         layout.setContentsMargins(0, 0, 0, 0)
-        container.setLayout(layout)
 
         return container
 
@@ -621,11 +624,17 @@ class SuppliersPage(QWidget):
             return f"{float(value) * 100:.1f}".replace(".", ",") + "%"
         except Exception:
             return str(value)
-    
+
     def add_line(self):
         self._updating_table = True
 
         self.table.setSortingEnabled(False)
+
+        if self.table.columnCount() == 0:
+            self.table.setColumnCount(len(self.headers))
+            self.table.setHorizontalHeaderLabels(self.headers)
+            setup_data_table(self.table, sorting=True)
+
         self.table.insertRow(0)
 
         row_id = self._temp_row_id
@@ -639,6 +648,7 @@ class SuppliersPage(QWidget):
             "transport_cost_per_l": "0",
             "reexport_percent": "0",
             "fx_rate_markup": "0",
+            "agent_fee": "0",
             "is_via_novo": False,
             "has_import_duty": False,
             "rating_calc": True,
@@ -653,6 +663,7 @@ class SuppliersPage(QWidget):
             "transport_cost_per_l": "0",
             "reexport_percent": "0",
             "fx_rate_markup": "0",
+            "agent_fee": "0",
             "is_via_novo": False,
             "has_import_duty": False,
             "rating_calc": True,
@@ -670,10 +681,11 @@ class SuppliersPage(QWidget):
                 )
                 continue
 
-            item = self._build_table_item(col_name, values[col_name])
+            item = self._build_table_item(col_name, values.get(col_name, ""))
             self.table.setItem(0, col_index, item)
 
         self._updating_table = False
+        self.table.setSortingEnabled(True)
         self.table.setCurrentCell(0, 1)
         self.show_message("Добавлена новая строка")
 

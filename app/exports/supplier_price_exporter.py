@@ -10,11 +10,11 @@ import win32com.client as win32
 from sqlalchemy.orm import Session
 
 from app.db.models import PriceHistory, Product, ProductStock, Supplier, SupplierPriceCalculation, TempPriceImport
-from app.services.cost_calculation import CostCalculationService
+from app.services.cost_calculation_service import CostCalculationService
 from app.services.price_repository import PriceRepository
 
 
-class SupplierPriceExport:
+class SupplierPriceExporter:
     def __init__(self, session: Session):
         self.session = session
         self.cost_calculation = CostCalculationService(session)
@@ -62,11 +62,108 @@ class SupplierPriceExport:
     def _calc_pack_price(price_per_l: object, pack: object):
         if price_per_l is None or pack is None:
             return None
-        d_price = SupplierPriceExport._to_decimal(price_per_l)
-        d_pack = SupplierPriceExport._to_decimal(pack)
+        d_price = SupplierPriceExporter._to_decimal(price_per_l)
+        d_pack = SupplierPriceExporter._to_decimal(pack)
         if d_pack == 0:
             return None
         return (d_price * d_pack).quantize(Decimal("0.0001"))
+
+    @staticmethod
+    def _is_blank_excel_value(value: object) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, str):
+            return value.strip() == ""
+        return False
+
+    @staticmethod
+    def _normalize_header(value: object) -> str:
+        return "".join(ch for ch in str(value or "").lower() if ch.isalnum())
+
+    @staticmethod
+    def _to_decimal_excel_value(value: object) -> Decimal:
+        if isinstance(value, str):
+            cleaned = value.strip().replace(" ", "").replace("\u00a0", "").replace(",", ".")
+            return Decimal(cleaned)
+        return SupplierPriceExporter._to_decimal(value)
+
+    @staticmethod
+    def _calc_qty_volume_for_export(qty: object, volume: object, pack: object):
+        qty_is_blank = SupplierPriceExporter._is_blank_excel_value(qty)
+        volume_is_blank = SupplierPriceExporter._is_blank_excel_value(volume)
+
+        if qty_is_blank and volume_is_blank:
+            return None, None
+
+        try:
+            d_pack = SupplierPriceExporter._to_decimal(pack)
+        except Exception:
+            d_pack = Decimal("0")
+
+        if d_pack == 0:
+            return qty if not qty_is_blank else None, volume if not volume_is_blank else None
+
+        if not qty_is_blank and volume_is_blank:
+            try:
+                d_qty = SupplierPriceExporter._to_decimal_excel_value(qty)
+                return d_qty, (d_qty * d_pack).quantize(Decimal("0.0001"))
+            except Exception:
+                return qty, None
+
+        if qty_is_blank and not volume_is_blank:
+            try:
+                d_volume = SupplierPriceExporter._to_decimal_excel_value(volume)
+                return (d_volume / d_pack).quantize(Decimal("0.0001")), d_volume
+            except Exception:
+                return None, volume
+
+        return qty, volume
+
+    def _read_qty_volume_from_source_excel(self, excel, source_file_path: str | Path | None) -> dict[int, dict]:
+        if not source_file_path:
+            return {}
+
+        source_path = Path(source_file_path)
+        if not source_path.exists():
+            return {}
+
+        wb_source = None
+        try:
+            wb_source = excel.Workbooks.Open(str(source_path.resolve()), ReadOnly=True)
+            ws_source = wb_source.Worksheets(1)
+            used_cols = int(ws_source.UsedRange.Columns.Count)
+            used_rows = int(ws_source.UsedRange.Rows.Count)
+
+            qty_col = None
+            volume_col = None
+
+            for col_index in range(1, used_cols + 1):
+                header_norm = self._normalize_header(ws_source.Cells(1, col_index).Value)
+                if header_norm in {"qtypcs", "qtypc", "qtypieces", "quantitypcs", "quantity"}:
+                    qty_col = col_index
+                elif header_norm in {"volumel", "volume", "volemul"}:
+                    volume_col = col_index
+
+            if qty_col is None and volume_col is None:
+                return {}
+
+            result: dict[int, dict] = {}
+            for excel_row in range(2, used_rows + 1):
+                import_row_no = excel_row - 1
+                result[import_row_no] = {
+                    "Qty, pcs": ws_source.Cells(excel_row, qty_col).Value if qty_col else None,
+                    "Volume, L": ws_source.Cells(excel_row, volume_col).Value if volume_col else None,
+                }
+
+            return result
+        except Exception:
+            return {}
+        finally:
+            try:
+                if wb_source is not None:
+                    wb_source.Close(SaveChanges=False)
+            except Exception:
+                pass
 
     @staticmethod
     def _excel_column_letter(col_num: int) -> str:
@@ -116,7 +213,7 @@ class SupplierPriceExport:
         if supplier is None:
             return None
 
-        from app.services.supplier import SupplierService
+        from app.services.supplier_service import SupplierService
 
         supplier_service = SupplierService(self.session)
         rate_to_rub = supplier_service.get_rate_to_rub(supplier.base_currency)
@@ -256,7 +353,7 @@ class SupplierPriceExport:
             try:
                 supplier = self.session.query(Supplier).filter(Supplier.id == supplier_id).first()
                 if supplier is not None:
-                    from app.services.supplier import SupplierService
+                    from app.services.supplier_service import SupplierService
 
                     supplier_service = SupplierService(self.session)
                     rate_to_rub = supplier_service.get_rate_to_rub(supplier.base_currency)
@@ -398,19 +495,19 @@ class SupplierPriceExport:
             ws = wb.Worksheets(1)
             ws.Name = "Sheet1"
 
-            headers = ["Material number", "Material", "Price, L", "Price, Pack"]
+            headers = ["Material number", "Material", "Price, L", "Price, Pack", "Qty, pcs", "Volume, L"]
             for col_index, header in enumerate(headers, start=1):
                 ws.Cells(1, col_index).Value = header
 
             self._apply_header_common(ws, len(headers))
-            ws.Range("A1:D1").Interior.Color = 0xCDCDCD
+            ws.Range("A1:F1").Interior.Color = 0xCDCDCD
 
             ws.Columns("A:A").ColumnWidth = 18
             ws.Columns("B:B").ColumnWidth = 31.14
-            ws.Columns("C:D").ColumnWidth = 12
+            ws.Columns("C:F").ColumnWidth = 12
 
             self._set_number_format_safe(ws.Columns("A:A"), "@", "@")
-            self._set_number_format_safe(ws.Columns("C:D"), "0.00", "0,00")
+            self._set_number_format_safe(ws.Columns("C:F"), "0.00", "0,00")
 
             wb.SaveAs(str(target_path))
             return target_path
@@ -434,6 +531,7 @@ class SupplierPriceExport:
         imported_by: str,
         supplier_id: int,
         output_path: str | Path | None = None,
+        source_file_path: str | Path | None = None,
     ) -> Path:
         supplier = self.session.query(Supplier).filter(Supplier.id == supplier_id).first()
         supplier_name = self._safe_filename(supplier.name if supplier else "Supplier")
@@ -454,6 +552,7 @@ class SupplierPriceExport:
         wb = None
         try:
             excel = self._create_excel_app()
+            qty_volume_by_row = self._read_qty_volume_from_source_excel(excel, source_file_path)
             wb = excel.Workbooks.Add()
             ws = wb.Worksheets(1)
             ws.Name = "Sheet1"
@@ -463,6 +562,8 @@ class SupplierPriceExport:
                 "Supplier Product Name",
                 "Our Product Name",
                 "Pack",
+                "Qty, pcs",
+                "Volume, L",
                 "Price, L",
                 "Price (Pack)",
                 "Currency",
@@ -496,6 +597,15 @@ class SupplierPriceExport:
 
             row_num = 2
             for row in rows:
+                qty_volume_source = qty_volume_by_row.get(row_num - 1, {})
+                qty_value, volume_value = self._calc_qty_volume_for_export(
+                    qty_volume_source.get("Qty, pcs"),
+                    qty_volume_source.get("Volume, L"),
+                    row.get("Pack"),
+                )
+                row["Qty, pcs"] = self._excel_value(qty_value)
+                row["Volume, L"] = self._excel_value(volume_value)
+
                 for col_index, header in enumerate(headers, start=1):
                     ws.Cells(row_num, col_index).Value = self._excel_value_or_blank(row.get(header))
                 row_num += 1
@@ -504,32 +614,32 @@ class SupplierPriceExport:
 
             # ===== Header colors: one-to-one with the Access export layout,
             # shifted for the inserted "(prev)" block =====
-            ws.Range("A1:I1").Interior.Color = self._rgb(205, 205, 205)
+            ws.Range("A1:K1").Interior.Color = self._rgb(205, 205, 205)
 
             # prev block
-            ws.Range("J1:M1").Interior.Color = self._rgb(166, 166, 166)
+            ws.Range("L1:O1").Interior.Color = self._rgb(166, 166, 166)
 
             # price / stock price block
-            ws.Range("N1:Q1").Interior.Color = self._rgb(192, 0, 0)
-            ws.Range("N1:Q1").Font.Color = self._rgb(255, 255, 255)
+            ws.Range("P1:S1").Interior.Color = self._rgb(192, 0, 0)
+            ws.Range("P1:S1").Font.Color = self._rgb(255, 255, 255)
 
             # best supplier 1
-            ws.Range("R1:T1").Interior.Color = self._rgb(0, 176, 240)
+            ws.Range("T1:V1").Interior.Color = self._rgb(0, 176, 240)
 
             # best supplier 2
-            ws.Range("U1:W1").Interior.Color = self._rgb(146, 208, 80)
+            ws.Range("W1:Y1").Interior.Color = self._rgb(146, 208, 80)
 
             # stock / transit / purchase order
-            ws.Range("X1:Z1").Interior.Color = self._rgb(33, 92, 152)
-            ws.Range("X1:Z1").Font.Color = self._rgb(255, 255, 255)
+            ws.Range("Z1:AB1").Interior.Color = self._rgb(33, 92, 152)
+            ws.Range("Z1:AB1").Font.Color = self._rgb(255, 255, 255)
 
             # order is / stock is
-            ws.Range("AA1:AB1").Interior.Color = self._rgb(192, 0, 0)
-            ws.Range("AA1:AB1").Font.Color = self._rgb(255, 255, 255)
+            ws.Range("AC1:AD1").Interior.Color = self._rgb(192, 0, 0)
+            ws.Range("AE1:AF1").Font.Color = self._rgb(255, 255, 255)
 
             # reserve / damaged
-            ws.Range("AC1:AD1").Interior.Color = self._rgb(33, 92, 152)
-            ws.Range("AC1:AD1").Font.Color = self._rgb(255, 255, 255)
+            ws.Range("AE1:AF1").Interior.Color = self._rgb(33, 92, 152)
+            ws.Range("AE1:AF1").Font.Color = self._rgb(255, 255, 255)
 
             # ===== Number/date formats: use local Excel formats directly =====
             last_row = max(2, row_num - 1)
@@ -537,42 +647,51 @@ class SupplierPriceExport:
             ws.Columns("A:A").NumberFormatLocal = "@"
             # ws.Columns("D:D").NumberFormat = "General"
 
-            ws.Columns("E:F").NumberFormatLocal = "# ##0,00_ ;[Red]-# ##0,00_ ;'-'"
+            ws.Columns("E:H").NumberFormatLocal = "# ##0,00_ ;[Red]-# ##0,00_ ;'-'"
 
-            ws.Columns("H:I").NumberFormatLocal = "# ##0 ₽"
-            ws.Columns("J:J").NumberFormatLocal = "ДД.ММ.ГГ;@"
-            ws.Columns("K:K").NumberFormatLocal = "# ##0,00_ ;[Red]-# ##0,00_ ;'-'"
-            ws.Columns("L:M").NumberFormatLocal = "# ##0 ₽"
+            ws.Columns("J:K").NumberFormatLocal = "# ##0 ₽"
+            ws.Columns("L:L").NumberFormatLocal = "ДД.ММ.ГГ;@"
+            ws.Columns("M:M").NumberFormatLocal = "# ##0,00_ ;[Red]-# ##0,00_ ;'-'"
+            ws.Columns("N:O").NumberFormatLocal = "# ##0 ₽"
 
-            ws.Columns("N:Q").NumberFormatLocal = "# ##0 ₽"
+            ws.Columns("P:S").NumberFormatLocal = "# ##0 ₽"
 
-            ws.Columns("S:S").NumberFormatLocal = "# ##0 ₽"
-            ws.Columns("T:T").NumberFormatLocal = "ДД.ММ.ГГ;@"
+            ws.Columns("U:U").NumberFormatLocal = "# ##0 ₽"
+            ws.Columns("V:V").NumberFormatLocal = "ДД.ММ.ГГ;@"
 
-            ws.Columns("V:V").NumberFormatLocal = "# ##0 ₽"
-            ws.Columns("W:W").NumberFormatLocal = "ДД.ММ.ГГ;@"
+            ws.Columns("X:X").NumberFormatLocal = "# ##0 ₽"
+            ws.Columns("Y:Y").NumberFormatLocal = "ДД.ММ.ГГ;@"
 
-            ws.Columns("X:AD").NumberFormatLocal = '# ##0;[Red]-# ##0;"-"'
+            ws.Columns("Z:AF").NumberFormatLocal = '# ##0;[Red]-# ##0;"-"'
 
             # ===== Column widths =====
             ws.Columns("B:C").ColumnWidth = 31.14
+            ws.Columns("E:F").ColumnWidth = 10.50
 
-            ws.Columns("R:R").ColumnWidth = 16.14
-            ws.Columns("U:U").ColumnWidth = 16.14
+            ws.Columns("T:T").ColumnWidth = 16.14
+            ws.Columns("W:W").ColumnWidth = 16.14
 
-            ws.Columns("J:J").ColumnWidth = 11.00
-            ws.Columns("T:T").ColumnWidth = 9.43
-            ws.Columns("W:W").ColumnWidth = 9.86
+            ws.Columns("L:L").ColumnWidth = 11.00
+            ws.Columns("V:V").ColumnWidth = 9.43
+            ws.Columns("Y:Y").ColumnWidth = 9.86
 
-            ws.Columns("X:AD").ColumnWidth = 8.14
+            ws.Columns("Z:AF").ColumnWidth = 8.14
 
-            ws.Range("A1:AD1").AutoFilter(1)
+            ws.Range("A1:AF1").AutoFilter(1)
 
             try:
-                excel.ActiveWindow.Zoom = 90
                 ws.Activate()
-                ws.Range("P2").Select()
-                excel.ActiveWindow.FreezePanes = True
+                window = excel.ActiveWindow
+                window.FreezePanes = False
+                window.SplitRow = 1
+                window.SplitColumn = 6  # freeze after column F, start visible moving part from G
+                window.ScrollRow = 1
+                window.ScrollColumn = 1
+                window.Zoom = 90
+                window.FreezePanes = True
+                ws.Range("A1").Select()
+                window.ScrollRow = 1
+                window.ScrollColumn = 1
             except Exception:
                 pass
 
@@ -597,3 +716,6 @@ class SupplierPriceExport:
 
 
 
+
+# Backward-compatible alias.
+SupplierPriceExport = SupplierPriceExporter

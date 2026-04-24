@@ -32,9 +32,9 @@ from app.db.models import (
     TempStockImport,
     TempSupplierOrdersImport,
 )
-from app.exports.product_stock_import_export import ProductStockImportExport
-from app.services.product_matching import ProductMatchingService
-from app.services.product_stock_run import ProductStockImportRun
+from app.exports.product_stock_exporter import ProductStockExporter
+from app.services.product_matching_service import ProductMatchingService
+from app.services.product_stock_service import ProductStockService
 from app.utils.batch import get_current_username
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
@@ -153,15 +153,15 @@ class ProductStockPage(QWidget):
         return super().eventFilter(watched, event)
 
     def setup_ui(self):
-        setup_data_table(self.table, sorting=False)
+        setup_data_table(self.table, sorting=True)
         self.table.horizontalHeader().setSectionsMovable(False)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
 
-        font = QFont("Tahoma", 10)
+        # font = QFont("Tahoma", 10)
         for widget in (self.ui.line_RowsLoaded, self.ui.line_TotalQty, self.ui.line_RowsError):
             widget.setReadOnly(True)
             widget.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            widget.setFont(font)
+            # widget.setFont(font)
 
         self.clear_table()
 
@@ -481,12 +481,14 @@ class ProductStockPage(QWidget):
                 combo.lineEdit().returnPressed.connect(
                     lambda r=row, rid=row_id, c=combo, key=col.key: self.finish_brand_edit(r, rid, c, key)
                 )
+                combo.lineEdit().editingFinished.connect(
+                    lambda r=row, rid=row_id, c=combo, key=col.key: self.finish_brand_edit(r, rid, c, key)
+                )
 
             self.table.setCellWidget(row, column, combo)
             combo.setFocus()
             if combo.lineEdit() is not None:
                 combo.lineEdit().selectAll()
-            QTimer.singleShot(0, combo.showPopup)
 
     def _build_display_item(self, row_id: int, field_name: str, value: str):
         item = QTableWidgetItem(value)
@@ -550,9 +552,12 @@ class ProductStockPage(QWidget):
     def finish_brand_edit(self, row: int, row_id: int, combo: QComboBox, field_name: str):
         if self._editing_table_cell:
             return
+
         self._editing_table_cell = True
         try:
-            text = clean_multi_spaces(combo.currentText()) or None
+            text = clean_multi_spaces(combo.currentText())
+            text = text.upper() if text else None
+
             current_col = self.table.currentColumn()
             current_row = self.table.currentRow()
 
@@ -572,7 +577,11 @@ class ProductStockPage(QWidget):
                 self._build_display_item(row_id, field_name, text or ""),
             )
             self._updating_table = False
-            self.table.setCurrentCell(current_row if current_row >= 0 else row, current_col if current_col >= 0 else self._column_index_by_key(field_name))
+
+            self.table.setCurrentCell(
+                current_row if current_row >= 0 else row,
+                current_col if current_col >= 0 else self._column_index_by_key(field_name),
+            )
         finally:
             self._editing_table_cell = False
 
@@ -582,6 +591,31 @@ class ProductStockPage(QWidget):
                 return index
         return -1
 
+    def _commit_open_editors(self):
+        for row in range(self.table.rowCount()):
+            for column in range(self.table.columnCount()):
+                widget = self.table.cellWidget(row, column)
+                if not isinstance(widget, QComboBox):
+                    continue
+
+                field_name = COLUMN_DEFS[self._mode][column].key
+
+                row_id = None
+                for check_col in range(self.table.columnCount()):
+                    item = self.table.item(row, check_col)
+                    if item is not None:
+                        row_id = item.data(Qt.UserRole)
+                        if row_id is not None:
+                            break
+
+                if row_id is None:
+                    continue
+
+                if field_name == "new_brand":
+                    self.finish_brand_edit(row, row_id, widget, field_name)
+                elif field_name == "selected_product_id":
+                    self.finish_product_edit(row, row_id, widget, field_name)
+                
     def _build_indicator(self, checked: bool):
         checkbox = QCheckBox()
         checkbox.setChecked(checked)
@@ -703,14 +737,21 @@ class ProductStockPage(QWidget):
         elif col.key in {"new_product_name", "new_brand", "new_pack", "new_is_excise"}:
             self.refresh_counters()
 
+    def _normalize_new_product_text(self, field_name: str, value: Any) -> Any:
+        if field_name not in {"new_product_name", "new_brand"}:
+            return value
+        if value is None:
+            return None
+        text = clean_multi_spaces(str(value))
+        return text.upper() if text else None
+
     def _get_row_by_id(self, session, row_id: int):
         return session.query(self._temp_model()).filter(self._temp_model().id == row_id).first()
 
     def update_temp_field(self, row_id: int, field_name: str, value: Any, reload: bool = False, clear_selected: bool = False):
         if self._updating_table:
             return
-        if field_name == "new_brand" and isinstance(value, str):
-            value = clean_multi_spaces(value) or None
+        value = self._normalize_new_product_text(field_name, value)
         try:
             with self.get_session() as session:
                 row = self._get_row_by_id(session, row_id)
@@ -719,6 +760,9 @@ class ProductStockPage(QWidget):
                 setattr(row, field_name, value)
                 if clear_selected and value not in (None, ""):
                     row.selected_product_id = None
+                if field_name in {"new_product_name", "new_brand", "new_pack"} and value not in (None, ""):
+                    if row.new_is_excise is None:
+                        row.new_is_excise = False
                 if field_name == "selected_product_id" and value is not None:
                     row.new_product_name = None
                     row.new_brand = None
@@ -796,7 +840,7 @@ class ProductStockPage(QWidget):
         try:
             self._current_file_path = file_path
             with self.get_session() as session:
-                runner = ProductStockImportRun(session)
+                runner = ProductStockService(session)
                 self.start_new_batch()
                 if self._mode == MODE_STOCK:
                     runner.import_stock(file_path=file_path, imported_by=self._imported_by, batch_id=self._batch_id)
@@ -941,6 +985,28 @@ class ProductStockPage(QWidget):
 
         wb.save(output_path)
 
+    def _open_issue_save_dialog(self, sheets: list[tuple[str, list[dict[str, Any]]]]):
+        dialog = QFileDialog(self, "Сохранить файл с ошибками", str(Path.home() / self._default_issue_filename()), "Excel files (*.xlsx)")
+        dialog.setAcceptMode(QFileDialog.AcceptSave)
+        dialog.setFileMode(QFileDialog.AnyFile)
+        dialog.setOption(QFileDialog.DontUseNativeDialog, False)
+
+        if dialog.exec() != QFileDialog.Accepted:
+            return
+
+        selected_files = dialog.selectedFiles()
+        if not selected_files:
+            return
+
+        output_path = selected_files[0]
+        if not output_path:
+            return
+
+        if not output_path.lower().endswith(".xlsx"):
+            output_path += ".xlsx"
+
+        self._save_issue_workbook(output_path, sheets)
+
     def offer_save_issue_file(self):
         sheets = self._collect_issue_sheets()
         if not sheets:
@@ -956,21 +1022,11 @@ class ProductStockPage(QWidget):
         if answer != QMessageBox.Yes:
             return
 
-        output_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Сохранить файл с ошибками",
-            str(Path.home() / self._default_issue_filename()),
-            "Excel files (*.xlsx)",
-        )
-        if not output_path:
-            return
-
-        if not output_path.lower().endswith(".xlsx"):
-            output_path += ".xlsx"
-
-        self._save_issue_workbook(output_path, sheets)
+        QTimer.singleShot(200, lambda s=sheets: self._open_issue_save_dialog(s))
 
     def save_all(self):
+        self._commit_open_editors()
+
         try:
             with self.get_session() as session:
                 rows = self._query_mode_rows(session)
@@ -982,7 +1038,7 @@ class ProductStockPage(QWidget):
                     self.show_error_message("В текущем импорте нет ни одной строки с SelectedProductID.")
                     return
 
-                runner = ProductStockImportRun(session)
+                runner = ProductStockService(session)
                 if self._mode == MODE_STOCK:
                     stats = runner.save_stock(self._batch_id, self._imported_by)
                     msg = "Данные по остаткам успешно сохранены."
@@ -1006,7 +1062,7 @@ class ProductStockPage(QWidget):
             return
         try:
             with self.get_session() as session:
-                service = ProductStockImportRun(session).service
+                service = ProductStockService(session)
                 if self._mode == MODE_STOCK:
                     service.delete_stock_rows(self._batch_id, self._imported_by)
                 elif self._mode == MODE_ORDERS:

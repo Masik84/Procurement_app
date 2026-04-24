@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QComboBox,
     QFileDialog,
+    QAbstractItemView,
 )
 from PySide6.QtCore import Qt, QFile
 from PySide6.QtUiTools import QUiLoader
@@ -22,8 +23,8 @@ from app.db.models import Product, Supplier, PriceHistory, CurrentSupplierPrice
 from app.db.db import SessionLocal
 from app.ui.table_style import *
 from app.imports.price_history_importer import PriceHistoryImporter
-from app.exports.price_history_excel_exporter import PriceHistoryExcelExporter
-from app.services.product_matching import ProductMatchingService
+from app.exports.price_history_exporter import PriceHistoryExporter
+from app.services.product_matching_service import ProductMatchingService
 from app.utils.text import clean_multi_spaces, normalize_product_name
 from app.utils.batch import get_current_username
 from app.db.models import CurrentSupplierPrice, PriceHistory, Product, Supplier
@@ -38,6 +39,19 @@ PRICE_HISTORY_UI = BASE_DIR / "app" / "ui" / "windows" / "price_history.ui"
 MODE_NONE = "-"
 MODE_CURRENT = "Последние цены"
 MODE_HISTORY = "История цен (вся)"
+
+
+class SortableTableWidgetItem(QTableWidgetItem):
+    def __lt__(self, other):
+        if isinstance(other, QTableWidgetItem):
+            left = self.data(Qt.UserRole + 1)
+            right = other.data(Qt.UserRole + 1)
+            if left is not None and right is not None:
+                try:
+                    return left < right
+                except Exception:
+                    pass
+        return super().__lt__(other)
 
 
 def load_ui(ui_path: Path):
@@ -86,6 +100,11 @@ class PriceHistoryPage(QWidget):
 
     def setup_ui(self):
         setup_data_table(self.table, sorting=True)
+        self._init_date_filters()
+
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.clear_message()
 
@@ -446,8 +465,40 @@ class PriceHistoryPage(QWidget):
         clipboard.setText(text.strip())
         self.show_message("Скопировано")
 
+    def _init_date_filters(self):
+        from PySide6.QtCore import QDate
+        today = QDate.currentDate()
+        self.ui.line_Start_date.setDate(today)
+        self.ui.line_End_date.setDate(today)
+
+    def _get_date_filters(self):
+        from PySide6.QtCore import QDate
+        start_qdate = self.ui.line_Start_date.date()
+        end_qdate = self.ui.line_End_date.date()
+        today = QDate.currentDate()
+
+        if start_qdate == today and end_qdate == today:
+            return None, None
+
+        start_date = datetime(
+            start_qdate.year(),
+            start_qdate.month(),
+            start_qdate.day(),
+            0, 0, 0, 0,
+        )
+
+        end_date = datetime(
+            end_qdate.year(),
+            end_qdate.month(),
+            end_qdate.day(),
+            23, 59, 59, 999999,
+        )
+
+        return start_date, end_date
+
     def get_rows_from_db(self):
         mode = self.get_mode()
+        start_date, end_date = self._get_date_filters()
 
         with self.get_session() as session:
             supplier_name = self.ui.line_SupplName.currentText()
@@ -479,18 +530,19 @@ class PriceHistoryPage(QWidget):
                 if product_name != "-":
                     query = query.filter(Product.name == product_name)
 
-                rows = (
-                    query.order_by(
-                        Product.name,
-                        Supplier.name,
-                        CurrentSupplierPrice.last_update.desc(),
-                    )
-                    .all()
-                )
+                if start_date:
+                    query = query.filter(CurrentSupplierPrice.last_update >= start_date)
+                if end_date:
+                    query = query.filter(CurrentSupplierPrice.last_update <= end_date)
 
-                data = []
-                for row in rows:
-                    data.append({
+                rows = query.order_by(
+                    Product.name,
+                    CurrentSupplierPrice.last_update.desc(),
+                    Supplier.name,
+                ).all()
+
+                return [
+                    {
                         "row_key": f"current::{row.product_id}::{row.supplier_id}",
                         "product_id": row.product_id,
                         "supplier_id": row.supplier_id,
@@ -500,9 +552,9 @@ class PriceHistoryPage(QWidget):
                         "price": row.price,
                         "currency": row.currency,
                         "is_new": False,
-                    })
-
-                return data
+                    }
+                    for row in rows
+                ]
 
             elif mode == MODE_HISTORY:
                 query = (
@@ -529,19 +581,20 @@ class PriceHistoryPage(QWidget):
                 if product_name != "-":
                     query = query.filter(Product.name == product_name)
 
-                rows = (
-                    query.order_by(
-                        Product.name,
-                        Supplier.name,
-                        PriceHistory.price_date.desc(),
-                        PriceHistory.id.desc(),
-                    )
-                    .all()
-                )
+                if start_date:
+                    query = query.filter(PriceHistory.price_date >= start_date)
+                if end_date:
+                    query = query.filter(PriceHistory.price_date <= end_date)
 
-                data = []
-                for row in rows:
-                    data.append({
+                rows = query.order_by(
+                    Product.name,
+                    PriceHistory.price_date.desc(),
+                    Supplier.name,
+                    PriceHistory.id.desc(),
+                ).all()
+
+                return [
+                    {
                         "row_key": f"history::{row.history_id}",
                         "product_id": row.product_id,
                         "supplier_id": row.supplier_id,
@@ -551,9 +604,9 @@ class PriceHistoryPage(QWidget):
                         "price": row.price,
                         "currency": row.currency,
                         "is_new": False,
-                    })
-
-                return data
+                    }
+                    for row in rows
+                ]
 
         return []
 
@@ -571,17 +624,24 @@ class PriceHistoryPage(QWidget):
 
         if not data:
             self.show_message("Нет данных по заданным фильтрам")
-
+        
     def _build_item(self, value, row_key, align_left=False):
         if isinstance(value, datetime):
             text = value.strftime("%d.%m.%Y")
+            sort_value = value
         elif isinstance(value, Decimal):
-            text = str(value).replace(".", ",")
+            text = f"{value:.2f}".replace(".", ",")
+            sort_value = value
+        elif isinstance(value, (int, float)):
+            text = f"{float(value):.2f}".replace(".", ",")
+            sort_value = float(value)
         else:
             text = "" if value is None else str(value)
+            sort_value = text.casefold() if isinstance(text, str) else text
 
-        item = QTableWidgetItem(text)
+        item = SortableTableWidgetItem(text)
         item.setData(Qt.UserRole, row_key)
+        item.setData(Qt.UserRole + 1, sort_value)
         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
         item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter if align_left else Qt.AlignCenter)
         return item
@@ -765,30 +825,40 @@ class PriceHistoryPage(QWidget):
         self.show_message("Добавлена новая строка")
 
     def delete_selected_row(self):
-        row = self.table.currentRow()
-        if row < 0:
-            self.show_error_message("Не выбрана строка для удаления")
+        selected_rows = sorted({index.row() for index in self.table.selectedIndexes()}, reverse=True)
+
+        if not selected_rows:
+            self.show_error_message("Не выбраны строки для удаления")
             return
 
-        row_key = None
-        date_item = self.table.item(row, 2)
-        if date_item:
-            row_key = date_item.data(Qt.UserRole)
+        deleted_count = 0
 
-        if not row_key:
-            self.show_error_message("Не удалось определить строку")
-            return
+        for row in selected_rows:
+            row_key = None
+            date_item = self.table.item(row, 2)
+            if date_item:
+                row_key = date_item.data(Qt.UserRole)
 
-        if row_key in self._new_rows:
-            self._new_rows.discard(row_key)
-            self._pending_changes.pop(row_key, None)
-            if self._import_preview_active:
-                self._import_preview_rows = [r for r in self._import_preview_rows if r["row_key"] != row_key]
+            if not row_key:
+                continue
+
+            if row_key in self._new_rows:
+                self._new_rows.discard(row_key)
+                self._pending_changes.pop(row_key, None)
+                if self._import_preview_active:
+                    self._import_preview_rows = [
+                        r for r in self._import_preview_rows if r["row_key"] != row_key
+                    ]
+            else:
+                self._pending_deletes.add(row_key)
+
+            self.table.removeRow(row)
+            deleted_count += 1
+
+        if deleted_count:
+            self.show_message(f"Строк помечено на удаление: {deleted_count}")
         else:
-            self._pending_deletes.add(row_key)
-
-        self.table.removeRow(row)
-        self.show_message("Строка помечена на удаление")
+            self.show_error_message("Не удалось определить строки для удаления")
 
     def revert_changes(self):
         try:
@@ -1047,7 +1117,7 @@ class PriceHistoryPage(QWidget):
             if not file_path.lower().endswith(".xlsx"):
                 file_path += ".xlsx"
 
-            exporter = PriceHistoryExcelExporter()
+            exporter = PriceHistoryExporter()
             exporter.export_template(file_path)
             self.show_message("Шаблон сохранен")
         except Exception as e:
@@ -1188,7 +1258,7 @@ class PriceHistoryPage(QWidget):
                 return
 
             data = self.get_rows_from_db()
-            exporter = PriceHistoryExcelExporter()
+            exporter = PriceHistoryExporter()
 
             report_type = "current" if mode == MODE_CURRENT else "history"
             exporter.export_rows(data, file_path, report_type=report_type)

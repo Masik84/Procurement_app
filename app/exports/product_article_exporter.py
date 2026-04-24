@@ -6,10 +6,11 @@ import pythoncom
 import win32com.client as win32
 
 
-class ProductSearchExcelExporter:
+class ProductArticleExporter:
     def __init__(self):
         self._xl_center = -4108
         self._xl_vcenter = -4160
+        self._xl_openxml_workbook = 51  # .xlsx
 
     def _excel_column_letter(self, col_num: int) -> str:
         result = ""
@@ -17,11 +18,6 @@ class ProductSearchExcelExporter:
             col_num, remainder = divmod(col_num - 1, 26)
             result = chr(65 + remainder) + result
         return result
-
-    def _safe_value(self, value):
-        if value is None:
-            return ""
-        return value
 
     def _create_excel_app(self):
         pythoncom.CoInitialize()
@@ -56,27 +52,39 @@ class ProductSearchExcelExporter:
             except Exception:
                 pass
 
+    def _normalize_save_path(self, file_path: str) -> str:
+        path = Path(file_path).expanduser()
+        if path.suffix.lower() != ".xlsx":
+            path = path.with_suffix(".xlsx")
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return str(path.resolve())
+
     def export_template(self, file_path: str):
         excel = None
         wb = None
 
         try:
+            save_path = self._normalize_save_path(file_path)
+
             excel = self._create_excel_app()
             wb = excel.Workbooks.Add()
             ws = wb.Worksheets(1)
             ws.Name = "Sheet1"
 
-            headers = ["Article", "Product name"]
-
+            headers = ["Product name", "Article", "Product name (variant)"]
             for col_index, header in enumerate(headers, start=1):
                 ws.Cells(1, col_index).Value = header
 
             self._apply_base_style(ws, len(headers), apply_filter=False)
 
-            ws.Columns("A:A").NumberFormat = "@"
-            ws.Columns("A:B").ColumnWidth = 28
+            ws.Columns("A:A").ColumnWidth = 34
+            ws.Columns("B:B").ColumnWidth = 22
+            ws.Columns("C:C").ColumnWidth = 34
 
-            wb.SaveAs(str(Path(file_path).resolve()))
+            ws.Columns("B:B").NumberFormat = "@"
+
+            wb.SaveAs(Filename=save_path, FileFormat=self._xl_openxml_workbook)
 
         except PermissionError:
             raise
@@ -95,65 +103,10 @@ class ProductSearchExcelExporter:
             except Exception:
                 pass
 
-            pythoncom.CoUninitialize()
-
-    def export_result(self, file_path: str, rows: list[dict]):
-        excel = None
-        wb = None
-
-        try:
-            excel = self._create_excel_app()
-            wb = excel.Workbooks.Add()
-            ws = wb.Worksheets(1)
-            ws.Name = "Sheet1"
-
-            headers = [
-                "Article",
-                "Supplier Product name",
-                "Product name",
-                "Brand",
-                "Pack",
-                "Excise duty",
-            ]
-
-            for col_index, header in enumerate(headers, start=1):
-                ws.Cells(1, col_index).Value = header
-
-            row_num = 2
-            for row in rows:
-                ws.Cells(row_num, 1).Value = self._safe_value(row.get("source_article"))
-                ws.Cells(row_num, 2).Value = self._safe_value(row.get("source_product_name"))
-                ws.Cells(row_num, 3).Value = self._safe_value(row.get("product_name"))
-                ws.Cells(row_num, 4).Value = self._safe_value(row.get("brand"))
-                ws.Cells(row_num, 5).Value = self._safe_value(row.get("pack"))
-                ws.Cells(row_num, 6).Value = self._safe_value(row.get("is_excise"))
-                row_num += 1
-
-            self._apply_base_style(ws, len(headers), apply_filter=True)
-
-            ws.Columns("A:A").NumberFormat = "@"
-            ws.Columns("A:A").ColumnWidth = 18
-            ws.Columns("B:D").ColumnWidth = 30
-            ws.Columns("E:E").ColumnWidth = 12
-            ws.Columns("F:F").ColumnWidth = 14
-
-            wb.SaveAs(str(Path(file_path).resolve()))
-
-        except PermissionError:
-            raise
-        except Exception as e:
-            raise Exception(f"Ошибка при создании итогового Excel: {e}")
-        finally:
             try:
-                if wb is not None:
-                    wb.Close(SaveChanges=False)
+                pythoncom.CoUninitialize()
             except Exception:
                 pass
 
-            try:
-                if excel is not None:
-                    excel.Quit()
-            except Exception:
-                pass
-
-            pythoncom.CoUninitialize()
+# Backward-compatible alias.
+ProductArticleExcelExporter = ProductArticleExporter

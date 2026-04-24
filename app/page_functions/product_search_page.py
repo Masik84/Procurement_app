@@ -25,7 +25,7 @@ from sqlalchemy.orm import joinedload
 
 from app.db.db import SessionLocal
 from app.db.models import Product, TempProductSearchImport
-from app.exports.product_search_excel_exporter import ProductSearchExcelExporter
+from app.exports.product_search_exporter import ProductSearchExporter
 from app.imports.product_search_importer import ProductSearchImporter
 from app.services.product_search_service import ProductSearchService
 from app.ui.table_style import *
@@ -184,7 +184,7 @@ class ProductSearchPage(QWidget):
             file_path += ".xlsx"
 
         try:
-            exporter = ProductSearchExcelExporter()
+            exporter = ProductSearchExporter()
             exporter.export_template(file_path)
             QDesktopServices.openUrl(Path(file_path).as_uri())
             self.show_message("Шаблон сохранен")
@@ -255,8 +255,6 @@ class ProductSearchPage(QWidget):
         self.table.setHorizontalHeaderLabels(self.headers)
 
         for row_index, row in enumerate(rows):
-            self._pending_changes.setdefault(row.id, {})
-
             product_name = row.selected_product.name if row.selected_product else ""
             brand_name = row.new_brand or ""
 
@@ -482,7 +480,7 @@ class ProductSearchPage(QWidget):
         if self.table.cellWidget(row, self.COL_BRAND) is not combo:
             return
 
-        brand_name = clean_multi_spaces(combo.currentText()) or None
+        brand_name = clean_multi_spaces(combo.currentText()).upper() or None
 
         self._pending_changes.setdefault(row_id, {})
         self._pending_changes[row_id]["new_brand"] = brand_name
@@ -539,7 +537,7 @@ class ProductSearchPage(QWidget):
         if not column_name or column_name in {"selected_product_id", "new_brand"}:
             return
 
-        value = clean_multi_spaces(item.text())
+        value = clean_multi_spaces(item.text()).upper()
         self._pending_changes.setdefault(row_id, {})
         self._pending_changes[row_id][column_name] = value or None
 
@@ -632,7 +630,24 @@ class ProductSearchPage(QWidget):
                 )
             return data
 
+
+    def _commit_open_editors(self):
+        for row in range(self.table.rowCount()):
+            for column in (self.COL_PRODUCT, self.COL_BRAND):
+                widget = self.table.cellWidget(row, column)
+                if not isinstance(widget, QComboBox):
+                    continue
+                if row < 0 or row >= len(self._table_row_ids):
+                    continue
+                row_id = self._table_row_ids[row]
+                if column == self.COL_PRODUCT:
+                    self.finish_product_edit(row, row_id, widget)
+                elif column == self.COL_BRAND:
+                    self.finish_brand_edit(row, row_id, widget)
+
     def apply_pending_changes(self, save_to_db_only: bool = False):
+        self._commit_open_editors()
+
         if not self._pending_changes and not self._pending_deletes and not save_to_db_only:
             self.show_message("Нет изменений")
             return
@@ -652,6 +667,22 @@ class ProductSearchPage(QWidget):
                             setattr(row, key, parsed if parsed is not None else None)
                         else:
                             setattr(row, key, value)
+
+                    has_new_product_data = any([
+                        bool(clean_multi_spaces(row.new_product_name)),
+                        bool(clean_multi_spaces(row.new_brand)),
+                        row.new_pack is not None,
+                    ])
+                    if row.selected_product_id is None and has_new_product_data and row.new_is_excise is None:
+                        row.new_is_excise = False
+
+                    if row.selected_product_id is not None:
+                        row.new_product_name = None
+                        row.new_brand = None
+                        row.new_pack = None
+                        row.new_is_excise = None
+
+                session.flush()
 
                 if self._pending_deletes:
                     session.query(TempProductSearchImport).filter(
@@ -679,7 +710,7 @@ class ProductSearchPage(QWidget):
                         save_path += ".xlsx"
 
                     try:
-                        exporter = ProductSearchExcelExporter()
+                        exporter = ProductSearchExporter()
                         exporter.export_result(save_path, self._build_export_rows())
                         self.show_message("Данные сохранены")
                     except PermissionError:

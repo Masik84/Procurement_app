@@ -7,7 +7,7 @@ import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.db.models import TempProductSearchImport
-from app.services.product_matching import ProductMatchingService
+from app.services.product_matching_service import ProductMatchingService
 from app.utils.batch import generate_import_batch_id
 
 

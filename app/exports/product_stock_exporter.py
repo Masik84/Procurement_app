@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.db.models import TempIsImport, TempStockImport, TempSupplierOrdersImport
 
 
-class ProductStockImportExport:
+class ProductStockExporter:
     def __init__(self, session: Session):
         self.session = session
 
@@ -109,3 +109,5 @@ class ProductStockImportExport:
         if not out:
             return None
         return self._write(out, output_path)
+# Backward-compatible alias.
+ProductStockImportExport = ProductStockExporter

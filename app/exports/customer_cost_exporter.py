@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.db.models import TempCustomerCostImport, TempCustomerCostOption
 
 
-class CustomerCostExport:
+class CustomerCostExporter:
     def __init__(self, session: Session):
         self.session = session
 
@@ -473,3 +473,5 @@ class CustomerCostExport:
             result.append(output_path)
 
         return result
+# Backward-compatible alias.
+CustomerCostExport = CustomerCostExporter

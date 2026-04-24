@@ -17,3 +17,5 @@ alembic/versions/__pycache__/
 
 app/ui/icon/
 app/ui/logo/
+
+templates/

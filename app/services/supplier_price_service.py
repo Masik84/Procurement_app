@@ -1,24 +1,50 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, date
+from pathlib import Path
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import SupplierPriceCalculation, TempPriceImport
-from app.services.cost_calculation import CostCalculationService
+from app.exports.supplier_price_exporter import SupplierPriceExporter
+from app.imports.supplier_price_importer import SupplierPriceImporter
+from app.services.supplier_service import SupplierService, SupplierUpsertData
+from app.services.cost_calculation_service import CostCalculationService
 from app.services.price_repository import PriceRepository
-from app.services.product_matching import ProductMatchingService
+from app.services.product_matching_service import ProductMatchingService
 from app.utils.batch import generate_import_batch_id
 
 
-class SupplierPriceImportService:
+@dataclass(slots=True)
+class SupplierPriceImportResult:
+    supplier_id: int
+    supplier_name: str
+    batch_id: str
+    imported_by: str
+    import_file: str
+    imported_count: int
+    matched_count: int
+    created_products_count: int
+    product_articles_count: int
+    filled_prices_count: int
+    saved_prices_count: int
+    saved_calculations_count: int
+
+
+class SupplierPriceService:
     def __init__(self, session: Session) -> None:
         self.session = session
         self.product_matching_service = ProductMatchingService(session)
         self.cost_calculation_service = CostCalculationService(session)
         self.price_repository = PriceRepository(session)
+        self.supplier_service = SupplierService(session)
+        self.importer = SupplierPriceImporter()
+        self.exporter = SupplierPriceExporter(session)
+        self.last_create_products_debug: list[dict] = []
+        self.last_validate_products_debug: list[dict] = []
 
     @staticmethod
     def _to_decimal(value: object) -> Decimal:
@@ -69,7 +95,6 @@ class SupplierPriceImportService:
         deleted_count = (
             self.session.query(TempPriceImport)
             .filter(
-                TempPriceImport.imported_by == imported_by,
                 TempPriceImport.import_date < datetime.combine(cutoff, datetime.min.time()),
             )
             .delete(synchronize_session=False)
@@ -163,7 +188,7 @@ class SupplierPriceImportService:
                 new_product_name=None,
                 new_brand=None,
                 new_pack=None,
-                new_is_excise=None,
+                new_is_excise=False,
             )
             created_rows.append(temp_row)
 
@@ -199,6 +224,14 @@ class SupplierPriceImportService:
         self.session.flush()
         return matched_count
 
+    @staticmethod
+    def _has_new_product_data(row: TempPriceImport) -> bool:
+        return any([
+            bool((row.new_product_name or "").strip()),
+            bool((row.new_brand or "").strip()),
+            row.new_pack is not None,
+        ])
+
     def validate_new_products_before_save(self, batch_id: str, imported_by: str) -> None:
         rows = (
             self.session.query(TempPriceImport)
@@ -206,21 +239,47 @@ class SupplierPriceImportService:
                 TempPriceImport.batch_id == batch_id,
                 TempPriceImport.imported_by == imported_by,
                 TempPriceImport.selected_product_id.is_(None),
-                TempPriceImport.new_product_name.isnot(None),
             )
+            .order_by(TempPriceImport.import_row_no.asc(), TempPriceImport.id.asc())
             .all()
         )
 
+        self.last_validate_products_debug = []
+
         for row in rows:
-            if row.new_product_name is None or not str(row.new_product_name).strip():
+            has_any_new_data = self._has_new_product_data(row)
+            if not has_any_new_data:
                 continue
 
-            self.product_matching_service.validate_new_product_fields(
-                product_name=row.new_product_name,
-                brand=row.new_brand,
-                pack=row.new_pack,
-                is_excise=row.new_is_excise,
-            )
+            dbg = {
+                "row_id": row.id,
+                "import_row_no": row.import_row_no,
+                "article": row.supplier_article,
+                "supplier_product_name": row.product_name,
+                "new_product_name": row.new_product_name,
+                "new_brand": row.new_brand,
+                "new_pack": row.new_pack,
+                "new_is_excise": row.new_is_excise,
+                "selected_product_id": row.selected_product_id,
+            }
+            self.last_validate_products_debug.append(dbg)
+
+            try:
+                self.product_matching_service.validate_new_product_fields(
+                    product_name=row.new_product_name,
+                    brand=row.new_brand,
+                    pack=row.new_pack,
+                    is_excise=row.new_is_excise,
+                )
+            except Exception as e:
+                raise ValueError(
+                    f"[DEBUG validate_new_products_before_save] "
+                    f"row_id={row.id}, import_row_no={row.import_row_no}, "
+                    f"article={row.supplier_article!r}, source_name={row.product_name!r}, "
+                    f"new_product_name={row.new_product_name!r}, new_brand={row.new_brand!r}, "
+                    f"new_pack={row.new_pack!r}, new_is_excise={row.new_is_excise!r}. "
+                    f"Ошибка: {e}"
+                ) from e
 
     def create_products_from_temp(self, batch_id: str, imported_by: str) -> int:
         rows = (
@@ -229,26 +288,73 @@ class SupplierPriceImportService:
                 TempPriceImport.batch_id == batch_id,
                 TempPriceImport.imported_by == imported_by,
                 TempPriceImport.selected_product_id.is_(None),
-                TempPriceImport.new_product_name.isnot(None),
-                TempPriceImport.new_brand.isnot(None),
-                TempPriceImport.new_pack.isnot(None),
-                TempPriceImport.new_is_excise.isnot(None),
             )
             .order_by(TempPriceImport.import_row_no.asc(), TempPriceImport.id.asc())
             .all()
         )
 
         created_count = 0
+        self.last_create_products_debug = []
 
         for row in rows:
-            product = self.product_matching_service.get_or_create_product(
-                name=row.new_product_name,
-                brand=row.new_brand,
-                pack=row.new_pack,
-                is_excise=bool(row.new_is_excise),
-            )
-            row.selected_product_id = product.id
-            created_count += 1
+            debug_row = {
+                "row_id": row.id,
+                "import_row_no": row.import_row_no,
+                "article": row.supplier_article,
+                "supplier_product_name": row.product_name,
+                "new_product_name": row.new_product_name,
+                "new_brand": row.new_brand,
+                "new_pack": row.new_pack,
+                "new_is_excise": row.new_is_excise,
+                "selected_product_id_before": row.selected_product_id,
+                "status": "",
+                "product_id_after": None,
+            }
+
+            has_any_new_data = self._has_new_product_data(row)
+            if not has_any_new_data:
+                debug_row["status"] = "skip:no_new_product_data"
+                self.last_create_products_debug.append(debug_row)
+                continue
+
+            if not (row.new_product_name or "").strip():
+                debug_row["status"] = "skip:empty_new_product_name"
+                self.last_create_products_debug.append(debug_row)
+                continue
+
+            if not (row.new_brand or "").strip():
+                debug_row["status"] = "skip:empty_new_brand"
+                self.last_create_products_debug.append(debug_row)
+                continue
+
+            if row.new_pack is None:
+                debug_row["status"] = "skip:empty_new_pack"
+                self.last_create_products_debug.append(debug_row)
+                continue
+
+            try:
+                product = self.product_matching_service.get_or_create_product(
+                    name=row.new_product_name,
+                    brand=row.new_brand,
+                    pack=row.new_pack,
+                    is_excise=bool(row.new_is_excise) if row.new_is_excise is not None else False,
+                )
+                row.selected_product_id = product.id
+                debug_row["status"] = "created_or_found"
+                debug_row["product_id_after"] = product.id
+                created_count += 1
+                self.last_create_products_debug.append(debug_row)
+            except Exception as e:
+                debug_row["status"] = f"error:{e}"
+                self.last_create_products_debug.append(debug_row)
+                raise ValueError(
+                    f"[DEBUG create_products_from_temp] "
+                    f"row_id={row.id}, import_row_no={row.import_row_no}, "
+                    f"article={row.supplier_article!r}, source_name={row.product_name!r}, "
+                    f"new_product_name={row.new_product_name!r}, new_brand={row.new_brand!r}, "
+                    f"new_pack={row.new_pack!r}, new_is_excise={row.new_is_excise!r}. "
+                    f"Ошибка: {e}"
+                ) from e
 
         self.session.flush()
         return created_count
@@ -307,6 +413,7 @@ class SupplierPriceImportService:
     def fill_price_from_price_pack(self, batch_id: str, imported_by: str) -> int:
         rows = (
             self.session.query(TempPriceImport)
+            .options(joinedload(TempPriceImport.selected_product))
             .filter(
                 TempPriceImport.batch_id == batch_id,
                 TempPriceImport.imported_by == imported_by,
@@ -496,3 +603,75 @@ class SupplierPriceImportService:
             "saved_prices_count": saved_prices_count,
             "saved_calculations_count": saved_calculations_count,
         }
+
+    def run_from_excel(
+        self,
+        *,
+        file_path: str | Path,
+        imported_by: str,
+        supplier_data: SupplierUpsertData,
+        supplier_id: int | None = None,
+        import_date: datetime | None = None,
+        save_exchange_rate: bool = False,
+        explicit_fx_rate: float | None = None,
+        rf_prices_include_vat: bool = False,
+    ) -> SupplierPriceImportResult:
+        supplier = self.supplier_service.ensure_supplier(
+            supplier_id=supplier_id,
+            data=supplier_data,
+        )
+        currency_code = supplier.base_currency
+        fx_rate: float | None = None
+
+        if explicit_fx_rate is not None:
+            fx_rate = float(explicit_fx_rate)
+            if save_exchange_rate:
+                self.supplier_service.save_exchange_rate(currency_code, fx_rate)
+        else:
+            fx_rate = self.supplier_service.get_rate_to_rub(currency_code)
+
+        if fx_rate is None or float(fx_rate) == 0:
+            raise ValueError(f"Для валюты '{currency_code}' не найден корректный курс rate_to_rub.")
+
+        rows = self.importer.read_excel(file_path)
+        batch_id = self.start_batch()
+
+        stats = self.run_full_import_pipeline(
+            supplier_id=supplier.id,
+            batch_id=batch_id,
+            imported_by=imported_by,
+            rows=rows,
+            currency_code=currency_code,
+            fx_rate=fx_rate,
+            import_date=import_date,
+            replace_existing_batch_rows=True,
+            rf_prices_include_vat=rf_prices_include_vat,
+        )
+
+        return SupplierPriceImportResult(
+            supplier_id=supplier.id,
+            supplier_name=supplier.name,
+            batch_id=batch_id,
+            imported_by=imported_by,
+            import_file=str(Path(file_path)),
+            imported_count=stats["imported_count"],
+            matched_count=stats["matched_count"],
+            created_products_count=stats["created_products_count"],
+            product_articles_count=stats["product_articles_count"],
+            filled_prices_count=stats["filled_prices_count"],
+            saved_prices_count=stats["saved_prices_count"],
+            saved_calculations_count=stats["saved_calculations_count"],
+        )
+
+    def export_calculated(self, batch_id: str, imported_by: str, supplier_id: int, output_path: str | Path | None = None) -> Path:
+        return self.exporter.export_calculated(
+            batch_id=batch_id,
+            imported_by=imported_by,
+            supplier_id=supplier_id,
+            output_path=output_path,
+        )
+
+
+# Backward-compatible aliases for old imports.
+SupplierPriceImportService = SupplierPriceService
+SupplierPriceImportRun = SupplierPriceService

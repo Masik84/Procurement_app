@@ -1,10 +1,14 @@
-from pathlib import Path
+from __future__ import annotations
 
+from pathlib import Path
+from decimal import Decimal, InvalidOperation
+
+import re
+import pythoncom
+import win32com.client as win32
 from sqlalchemy.exc import SQLAlchemyError
 from PySide6.QtWidgets import (
     QMessageBox,
-    QHeaderView,
-    QTableWidget,
     QMenu,
     QTableWidgetItem,
     QWidget,
@@ -13,16 +17,19 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
     QComboBox,
+    QFileDialog,
 )
 from PySide6.QtCore import Qt, QFile, QEvent
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtUiTools import QUiLoader
-
-from decimal import Decimal, InvalidOperation
 
 from app.db.models import Product
 from app.db.db import SessionLocal
-
+from app.imports.product_importer import ProductImporter
 from app.ui.table_style import *
+from app.utils.parsers import parse_loose_number
+from app.utils.text import clean_multi_spaces
+from app.exports.product_exporter import ProductExporter
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -55,10 +62,10 @@ class ProductsPage(QWidget):
         layout.addWidget(self.ui)
 
         self._updating_table = False
-        self._original_values = {}
-        self._pending_changes = {}
-        self._pending_deletes = set()
-        self._new_rows = set()
+        self._original_values: dict[int, dict] = {}
+        self._pending_changes: dict[int, dict] = {}
+        self._pending_deletes: set[int] = set()
+        self._new_rows: set[int] = set()
         self._temp_row_id = -1
 
         self.columns = ["id", "name", "brand", "pack", "is_excise", "family"]
@@ -85,6 +92,14 @@ class ProductsPage(QWidget):
         self.ui.btn_Search.clicked.connect(self.find_Product)
         self.ui.btn_AddLine.clicked.connect(self.add_line)
         self.ui.btn_Save.clicked.connect(self.apply_pending_changes)
+        self.ui.btn_SaveExcel.clicked.connect(self.save_to_excel)
+
+        if hasattr(self.ui, "btn_DownFile"):
+            self.ui.btn_DownFile.clicked.connect(self.download_template)
+        if hasattr(self.ui, "btn_Import"):
+            self.ui.btn_Import.clicked.connect(self.import_products)
+        if hasattr(self.ui, "btn_Reset"):
+            self.ui.btn_Reset.clicked.connect(self.reset_form)
 
     def get_session(self):
         return SessionLocal()
@@ -249,7 +264,7 @@ class ProductsPage(QWidget):
 
                 for row_id, changes in self._pending_changes.items():
                     if row_id in self._new_rows:
-                        self._insert_product(session, changes)
+                        self._insert_or_update_imported_product(session, row_id, changes)
                     else:
                         self._update_product(session, row_id, changes)
 
@@ -274,26 +289,77 @@ class ProductsPage(QWidget):
         except Exception as e:
             self.show_error_message(f"Ошибка применения изменений: {str(e)}")
 
-    def _insert_product(self, session, changes):
-        name = str(changes.get("name", "")).strip()
-        brand = str(changes.get("brand", "")).strip()
+    def _normalize_product_changes(self, changes: dict) -> dict:
+        name = clean_multi_spaces(changes.get("name", "")).upper()
+        brand = clean_multi_spaces(changes.get("brand", "")).upper()
+        family = clean_multi_spaces(changes.get("family", "")).upper()
         pack = self._to_decimal(changes.get("pack", ""), "Pack")
-        family = str(changes.get("family", "")).strip()
         is_excise = bool(changes.get("is_excise", False))
 
         if not name:
-            raise Exception("Для новой строки поле name обязательно")
+            raise Exception("Для продукта поле Product name обязательно")
+        if not brand:
+            raise Exception(f"Для '{name}' поле Brand обязательно")
+        if pack is None:
+            raise Exception(f"Для '{name}' поле Pack обязательно")
 
-        existing = session.query(Product).filter(Product.name == name).first()
+        family_calc = self._build_family_from_name(name, pack)
+        if family and family != family_calc:
+            raise Exception(
+                f"Для '{name}' неверно заполнено family. Ожидается '{family_calc}'."
+            )
+
+        return {
+            "name": name,
+            "brand": brand,
+            "pack": pack,
+            "is_excise": is_excise,
+            "family": family_calc,
+        }
+
+    def _find_existing_product_for_import(self, session, *, name: str, brand: str, pack: Decimal):
+        product = (
+            session.query(Product)
+            .filter(
+                Product.name == name,
+                Product.brand == brand,
+                Product.pack == pack,
+            )
+            .first()
+        )
+        if product is not None:
+            return product
+
+        return (
+            session.query(Product)
+            .filter(Product.name == name)
+            .order_by(Product.id.asc())
+            .first()
+        )
+
+    def _insert_or_update_imported_product(self, session, row_id, changes):
+        data = self._normalize_product_changes(changes)
+        existing = self._find_existing_product_for_import(
+            session,
+            name=data["name"],
+            brand=data["brand"],
+            pack=data["pack"],
+        )
+
         if existing:
-            raise Exception(f"Продукт с name '{name}' уже существует")
+            existing.name = data["name"]
+            existing.brand = data["brand"]
+            existing.pack = data["pack"]
+            existing.is_excise = data["is_excise"]
+            existing.family = data["family"]
+            return
 
         product = Product(
-            name=name,
-            brand=brand if brand else None,
-            pack=pack,
-            is_excise=is_excise,
-            family=family if family else None,
+            name=data["name"],
+            brand=data["brand"],
+            pack=data["pack"],
+            is_excise=data["is_excise"],
+            family=data["family"],
         )
         session.add(product)
 
@@ -302,34 +368,35 @@ class ProductsPage(QWidget):
         if not product:
             raise Exception(f"Не найден продукт id={row_id}")
 
-        if "name" in changes:
-            new_name = str(changes["name"]).strip()
-            if not new_name:
-                raise Exception("Поле name не может быть пустым")
+        merged_changes = {
+            "name": changes.get("name", product.name or ""),
+            "brand": changes.get("brand", product.brand or ""),
+            "pack": changes.get("pack", product.pack),
+            "is_excise": changes.get("is_excise", bool(product.is_excise)),
+            "family": changes.get("family", product.family or ""),
+        }
+        data = self._normalize_product_changes(merged_changes)
 
-            duplicate = (
-                session.query(Product)
-                .filter(Product.name == new_name, Product.id != row_id)
-                .first()
+        duplicate = (
+            session.query(Product)
+            .filter(
+                Product.id != row_id,
+                Product.name == data["name"],
+                Product.brand == data["brand"],
+                Product.pack == data["pack"],
             )
-            if duplicate:
-                raise Exception(f"Продукт с name '{new_name}' уже существует")
+            .first()
+        )
+        if duplicate:
+            raise Exception(
+                f"Продукт '{data['name']}' / '{data['brand']}' / '{self._format_decimal_display(data['pack'])}' уже существует"
+            )
 
-            product.name = new_name
-
-        if "brand" in changes:
-            value = str(changes["brand"]).strip()
-            product.brand = value if value else None
-
-        if "pack" in changes:
-            product.pack = self._to_decimal(changes["pack"], "Pack")
-
-        if "family" in changes:
-            value = str(changes["family"]).strip()
-            product.family = value if value else None
-
-        if "is_excise" in changes:
-            product.is_excise = bool(changes["is_excise"])
+        product.name = data["name"]
+        product.brand = data["brand"]
+        product.pack = data["pack"]
+        product.is_excise = data["is_excise"]
+        product.family = data["family"]
 
     def start_brand_edit(self, row: int):
         id_item = self.table.item(row, 0)
@@ -371,8 +438,7 @@ class ProductsPage(QWidget):
 
         combo.setFocus()
         combo.lineEdit().selectAll()
-        
-        
+
     def on_cell_double_clicked(self, row, column):
         if self._updating_table:
             return
@@ -393,7 +459,7 @@ class ProductsPage(QWidget):
             return
 
         brand_col = self.columns.index("brand")
-        text = self.clean_multi_spaces(combo.currentText())
+        text = clean_multi_spaces(combo.currentText()).upper()
 
         if row_id not in self._pending_changes:
             self._pending_changes[row_id] = {}
@@ -414,17 +480,9 @@ class ProductsPage(QWidget):
                 return False
 
         return super().eventFilter(obj, event)
-        
-    def eventFilter(self, obj, event):
-        if isinstance(obj, QComboBox) and obj.property("edit_row_id") is not None:
-            if event.type() == QEvent.FocusOut:
-                self.finish_brand_edit_from_combo(obj)
-                return False
-
-        return super().eventFilter(obj, event)
 
     def finish_brand_edit(self, row: int, row_id: int, combo: QComboBox):
-        text = self.clean_multi_spaces(combo.currentText())
+        text = clean_multi_spaces(combo.currentText()).upper()
 
         if row_id not in self._pending_changes:
             self._pending_changes[row_id] = {}
@@ -452,9 +510,6 @@ class ProductsPage(QWidget):
                 .all()
             )
         return [row[0] for row in rows if row[0]]
-
-    def clean_multi_spaces(self, text: str) -> str:
-        return " ".join((text or "").split())
 
     def refresh_all_comboboxes(self):
         self.fill_in_prod_brand_list()
@@ -562,19 +617,22 @@ class ProductsPage(QWidget):
 
         return data
 
-    def find_Product(self):
-        self.table.clearContents()
-        self.table.setRowCount(0)
+    def _get_find_product_text(self):
+        line_find = getattr(self.ui, "line_FindProduct", None)
+        if line_find is None:
+            return ""
+        return line_find.text().strip().upper()
 
+    def get_filtered_products(self):
         prod_data = self.get_Products_from_db()
 
         if not prod_data:
-            self.show_message("Нет данных для отображения")
-            return
+            return []
 
-        brand = self.ui.line_Brand.currentText()
-        family = self.ui.line_Prod_Fam.currentText()
-        product_name = self.ui.line_Prod_name.currentText()
+        brand = self.ui.line_Brand.currentText().strip()
+        family = self.ui.line_Prod_Fam.currentText().strip()
+        product_name = self.ui.line_Prod_name.currentText().strip()
+        find_product_text = self._get_find_product_text()
 
         if brand != "-":
             prod_data = [row for row in prod_data if (row["brand"] or "") == brand]
@@ -582,11 +640,269 @@ class ProductsPage(QWidget):
             prod_data = [row for row in prod_data if (row["family"] or "") == family]
         if product_name != "-":
             prod_data = [row for row in prod_data if (row["name"] or "") == product_name]
+        if find_product_text:
+            prod_data = [
+                row for row in prod_data
+                if find_product_text in (row["name"] or "").upper()
+            ]
+
+        return prod_data
+
+    def find_Product(self):
+        self.table.clearContents()
+        self.table.setRowCount(0)
+
+        prod_data = self.get_filtered_products()
+
+        if not prod_data:
+            self._display_data([])
+            self.show_message("Нет данных по заданным фильтрам")
+            return
 
         self._display_data(prod_data)
 
-        if not prod_data:
-            self.show_message("Нет данных по заданным фильтрам")
+    def download_template(self):
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить шаблон",
+            str(Path.home() / "ProductImportTemplate.xlsx"),
+            "Excel files (*.xlsx)",
+        )
+        if not file_path:
+            return
+
+        if not file_path.lower().endswith(".xlsx"):
+            file_path += ".xlsx"
+
+        try:
+            exporter = ProductExporter()
+            exporter.export_template(file_path)
+            QDesktopServices.openUrl(Path(file_path).as_uri())
+            self.show_message("Шаблон сохранен")
+        except PermissionError:
+            self.show_error_message(
+                "Не удалось сохранить файл Excel. Возможно, файл уже открыт."
+            )
+        except Exception as e:
+            self.show_error_message(f"Ошибка при создании шаблона: {str(e)}")
+
+    def import_products(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Выберите файл продуктов",
+            "",
+            "Excel files (*.xls *.xlsx)",
+        )
+        if not file_path:
+            return
+
+        try:
+            importer = ProductImporter()
+            rows = importer.read_excel(file_path)
+            self._load_imported_rows_to_table(rows)
+            self.show_message(f"Импортировано строк: {len(rows)}")
+        except Exception as e:
+            self.show_error_message(str(e))
+
+    def _load_imported_rows_to_table(self, rows: list[dict]):
+        self._updating_table = True
+        self.table.setSortingEnabled(False)
+
+        self._pending_changes.clear()
+        self._pending_deletes.clear()
+        self._new_rows.clear()
+        self._original_values.clear()
+        self.table.clear()
+        self.table.setColumnCount(len(self.headers))
+        self.table.setRowCount(len(rows))
+        self.table.setHorizontalHeaderLabels(self.headers)
+
+        with self.get_session() as session:
+            for row_index, imported in enumerate(rows):
+                existing = self._find_existing_product_for_import(
+                    session,
+                    name=imported["name"],
+                    brand=imported["brand"],
+                    pack=Decimal(str(imported["pack"])),
+                )
+
+                if existing is not None:
+                    row_id = int(existing.id)
+                    self._pending_changes[row_id] = {
+                        "name": imported["name"],
+                        "brand": imported["brand"],
+                        "pack": imported["pack"],
+                        "is_excise": imported["is_excise"],
+                        "family": imported["family"],
+                    }
+                else:
+                    row_id = self._temp_row_id
+                    self._temp_row_id -= 1
+                    self._new_rows.add(row_id)
+                    self._pending_changes[row_id] = {
+                        "name": imported["name"],
+                        "brand": imported["brand"],
+                        "pack": imported["pack"],
+                        "is_excise": imported["is_excise"],
+                        "family": imported["family"],
+                    }
+
+                row_data = {
+                    "id": row_id,
+                    "name": imported["name"],
+                    "brand": imported["brand"],
+                    "pack": imported["pack"],
+                    "is_excise": imported["is_excise"],
+                    "family": imported["family"],
+                }
+                self._original_values[row_id] = row_data.copy()
+
+                for col_index, col_name in enumerate(self.columns):
+                    if col_name == "is_excise":
+                        self.table.setCellWidget(
+                            row_index,
+                            col_index,
+                            self._build_checkbox_widget(row_id, bool(row_data[col_name]))
+                        )
+                        continue
+
+                    item = self._build_table_item(col_name, row_data[col_name])
+                    self.table.setItem(row_index, col_index, item)
+
+        self.table.resizeColumnsToContents()
+        for i in range(self.table.columnCount()):
+            if self.table.columnWidth(i) < 100:
+                self.table.setColumnWidth(i, 100)
+
+        self._updating_table = False
+
+    def save_to_excel(self):
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить Excel",
+            "Products.xlsx",
+            "Excel Files (*.xlsx)"
+        )
+
+        if not file_path:
+            return
+
+        if not file_path.lower().endswith(".xlsx"):
+            file_path += ".xlsx"
+
+        rows = self.get_filtered_products()
+        if not rows:
+            self.show_message("Нет данных для выгрузки")
+            return
+
+        try:
+            self._export_products_to_excel(file_path, rows)
+            self.show_message("Данные сохранены в Excel")
+        except PermissionError:
+            self.show_error_message(
+                "Не удалось сохранить файл Excel. Возможно, файл уже открыт."
+            )
+        except Exception as e:
+            self.show_error_message(f"Ошибка при сохранении Excel: {str(e)}")
+
+    def _export_products_to_excel(self, file_path: str, rows: list[dict]):
+        excel = None
+        wb = None
+
+        try:
+            pythoncom.CoInitialize()
+
+            excel = win32.DispatchEx("Excel.Application")
+            excel.Visible = False
+            excel.DisplayAlerts = False
+
+            wb = excel.Workbooks.Add()
+            ws = wb.Worksheets(1)
+            ws.Name = "Sheet1"
+
+            headers = [
+                "ID",
+                "Product name",
+                "Brand",
+                "Pack",
+                "Excise duty",
+                "Product Family",
+            ]
+
+            for col_index, header in enumerate(headers, start=1):
+                ws.Cells(1, col_index).Value = header
+
+            ws.Cells.Font.Name = "Aptos Narrow"
+            ws.Cells.Font.Size = 11
+
+            header_range = ws.Range("A1:F1")
+            header_range.Font.Name = "Aptos Narrow"
+            header_range.Font.Size = 11
+            header_range.Font.Bold = True
+            header_range.Interior.Color = 0xCDCDCD
+            header_range.WrapText = True
+            header_range.HorizontalAlignment = -4108
+            header_range.VerticalAlignment = -4160
+
+            ws.Rows(1).EntireRow.AutoFit()
+
+            try:
+                ws.Range("A1:F1").AutoFilter(1)
+            except Exception:
+                pass
+
+            ws.Columns("A:A").ColumnWidth = 10
+            ws.Columns("B:B").ColumnWidth = 30
+            ws.Columns("C:C").ColumnWidth = 24
+            ws.Columns("D:D").ColumnWidth = 12
+            ws.Columns("E:E").ColumnWidth = 14
+            ws.Columns("F:F").ColumnWidth = 24
+
+            row_num = 2
+            for row in rows:
+                ws.Cells(row_num, 1).Value = row.get("id")
+                ws.Cells(row_num, 2).Value = row.get("name", "") or ""
+                ws.Cells(row_num, 3).Value = row.get("brand", "") or ""
+
+                pack = row.get("pack")
+                if pack not in (None, ""):
+                    try:
+                        ws.Cells(row_num, 4).Value = float(pack)
+                    except Exception:
+                        ws.Cells(row_num, 4).Value = str(pack)
+                else:
+                    ws.Cells(row_num, 4).Value = ""
+
+                ws.Cells(row_num, 5).Value = "Да" if bool(row.get("is_excise")) else "Нет"
+                ws.Cells(row_num, 6).Value = row.get("family", "") or ""
+                row_num += 1
+
+            # if row_num > 2:
+            #     ws.Range(f"D2:D{row_num - 1}").NumberFormat = "General"
+
+            wb.SaveAs(str(Path(file_path).resolve()))
+
+        except PermissionError:
+            raise
+        except Exception as e:
+            raise Exception(f"Ошибка при сохранении Excel: {e}")
+        finally:
+            try:
+                if wb is not None:
+                    wb.Close(SaveChanges=False)
+            except Exception:
+                pass
+
+            try:
+                if excel is not None:
+                    excel.Quit()
+            except Exception:
+                pass
+
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
 
     def _display_data(self, data):
         self.table.clear()
@@ -656,7 +972,17 @@ class ProductsPage(QWidget):
         return container
 
     def _build_table_item(self, col_name, value):
-        item = QTableWidgetItem(format_table_value(value))
+        display_value = "" if value is None else str(value)
+
+        if col_name == "pack":
+            parsed = parse_loose_number(value)
+            if parsed is not None:
+                display_value = self._format_decimal_display(parsed)
+            item_text = format_table_value(display_value)
+        else:
+            item_text = display_value
+
+        item = QTableWidgetItem(item_text)
 
         if col_name == "id":
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
@@ -688,15 +1014,58 @@ class ProductsPage(QWidget):
             return Decimal(text)
         except (InvalidOperation, ValueError):
             raise Exception(f"Поле '{field_name}' должно быть числом")
-    
+
+    def _format_decimal_display(self, value) -> str:
+        number = parse_loose_number(value)
+        if number is None:
+            return ""
+        text = f"{float(number):.4f}".rstrip("0").rstrip(".")
+        return text.replace(".", ",")
+
+    def _build_family_from_name(self, name: str, pack: Decimal) -> str:
+        product_name = clean_multi_spaces(name).upper()
+        pack_value = parse_loose_number(pack)
+
+        if not product_name:
+            raise Exception("Не заполнено название продукта.")
+
+        if pack_value is None:
+            raise Exception("Поле 'Pack' должно быть числом.")
+
+        matches = list(
+            re.finditer(
+                r"(?<!\d)([0-9]+(?:[.,][0-9]+)?)\s*(L|KG)\b",
+                product_name,
+                flags=re.IGNORECASE,
+            )
+        )
+
+        for match in matches:
+            found_num = parse_loose_number(match.group(1))
+            if found_num is None:
+                continue
+
+            if float(found_num) == float(pack_value):
+                family = product_name[:match.start()].strip()
+                if not family:
+                    raise Exception(
+                        f"Для '{product_name}' не удалось определить family до упаковки."
+                    )
+                return family
+
+        pack_display = self._format_decimal_display(pack)
+        raise Exception(
+            f"Для '{product_name}' проверь упаковку в названии. "
+            f"Ожидается наличие '{pack_display}L' или '{pack_display}KG' внутри названия, "
+            f"например: '... {pack_display}L BIB'."
+        )
+
     def add_line(self):
         self.clear_message()
         self._updating_table = True
 
         self.table.setSortingEnabled(False)
 
-        # если таблица еще ни разу не была заполнена через поиск,
-        # то сначала создаем структуру колонок
         if self.table.columnCount() == 0:
             self.table.setColumnCount(len(self.headers))
             self.table.setHorizontalHeaderLabels(self.headers)
@@ -755,7 +1124,31 @@ class ProductsPage(QWidget):
             self.ui.line_Brand.currentText() != "-"
             or self.ui.line_Prod_Fam.currentText() != "-"
             or self.ui.line_Prod_name.currentText() != "-"
+            or bool(self._get_find_product_text())
         )
+
+    def reset_form(self):
+        try:
+            self._pending_changes.clear()
+            self._pending_deletes.clear()
+            self._new_rows.clear()
+            self._original_values.clear()
+            self._temp_row_id = -1
+
+            self.table.clearContents()
+            self.table.setRowCount(0)
+
+            self._fill_combobox(self.ui.line_Brand, [])
+            self._fill_combobox(self.ui.line_Prod_Fam, [])
+            self._fill_combobox(self.ui.line_Prod_name, [])
+            line_find = getattr(self.ui, "line_FindProduct", None)
+            if line_find is not None:
+                line_find.clear()
+
+            self.refresh_all_comboboxes()
+            self.show_message("Форма очищена")
+        except Exception as e:
+            self.show_error_message(f"Ошибка очистки формы: {str(e)}")
 
     def show_message(self, text):
         self.ui.label_msg.setText(text)

@@ -1,23 +1,29 @@
 from __future__ import annotations
 
 from datetime import datetime
+import uuid
+from pathlib import Path
 from decimal import Decimal
 from sqlalchemy.orm import Session
 
+from app.exports.customer_cost_exporter import CustomerCostExporter
+from app.imports.customer_cost_importer import CustomerCostImporter
 from app.db.models import CustomerPriceCalculation, TempCustomerCostImport, TempCustomerCostOption
-from app.services.cost_calculation import CostCalculationService
+from app.services.cost_calculation_service import CostCalculationService
 from app.services.price_repository import PriceRepository
-from app.services.product_matching import ProductMatchingService
-from app.services.supplier import SupplierService
+from app.services.product_matching_service import ProductMatchingService
+from app.services.supplier_service import SupplierService
 
 
-class CustomerCostImportService:
+class CustomerCostService:
     def __init__(self, session: Session):
         self.session = session
         self.product_matching = ProductMatchingService(session)
         self.price_repository = PriceRepository(session)
         self.cost_calculation = CostCalculationService(session)
         self.supplier_service = SupplierService(session)
+        self.importer = CustomerCostImporter()
+        self.exporter = CustomerCostExporter(session)
 
     @staticmethod
     def _to_decimal(value: object) -> Decimal:
@@ -386,3 +392,33 @@ class CustomerCostImportService:
             "product_articles_count": product_articles_count,
             "options_count": options_count,
         }
+
+    def import_from_excel(self, file_path: str | Path, imported_by: str) -> dict:
+        batch_id = str(uuid.uuid4())
+        rows = self.importer.read_excel(file_path)
+        imported_count = self.import_rows(rows=rows, batch_id=batch_id, imported_by=imported_by)
+        matched_count = self.automatch_temp_rows(batch_id=batch_id, imported_by=imported_by)
+        return {"batch_id": batch_id, "imported_count": imported_count, "matched_count": matched_count, "file": str(file_path)}
+
+    def calculate(self, batch_id: str, imported_by: str, output_file: str | Path | None = None) -> dict:
+        stats = self.run_calculation(batch_id=batch_id, imported_by=imported_by)
+        export_path = None
+        if output_file is not None:
+            export_path = self.exporter.export_calculated(batch_id=batch_id, imported_by=imported_by, file_path=output_file)
+        return {**stats, "export_file": str(export_path) if export_path else None}
+
+    def save(self, batch_id: str, imported_by: str, kam_folder: str | Path | None = None) -> dict:
+        saved_count = self.save_calculations(batch_id=batch_id, imported_by=imported_by)
+        kam_files = []
+        if kam_folder is not None:
+            kam_files = self.exporter.export_kam_files(batch_id=batch_id, imported_by=imported_by, folder_path=kam_folder)
+        return {
+            "batch_id": batch_id,
+            "saved_count": saved_count,
+            "kam_files": [str(path) for path in kam_files],
+        }
+
+
+# Backward-compatible aliases for old imports.
+CustomerCostImportService = CustomerCostService
+CustomerCostImportRun = CustomerCostService

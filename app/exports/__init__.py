@@ -1,5 +1,3 @@
-from app.exports.customer_cost_export import CustomerCostExport
-from app.exports.product_stock_import_export import ProductStockImportExport
-from app.exports.supplier_price_export import SupplierPriceExport
-
-__all__ = []
+# Package marker only.
+# Do not import exporter classes here: eager imports create circular imports
+# between app.exports and app.services during application startup.

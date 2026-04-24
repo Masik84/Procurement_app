@@ -1,51 +1,89 @@
-from pathlib import Path
+from __future__ import annotations
 
-import pandas as pd
+from pathlib import Path
+from typing import Any
+
+from openpyxl import load_workbook
 
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
 
 
 class SupplierPriceImporter:
+    """Reads supplier price Excel templates into rows for SupplierPriceService."""
+
+    HEADER_ALIASES = {
+        "material number": "supplier_article",
+        "article": "supplier_article",
+        "supplier article": "supplier_article",
+        "material": "product_name",
+        "supplier product name": "product_name",
+        "product name": "product_name",
+        "price, l": "price",
+        "price, lt": "price",
+        "price l": "price",
+        "price, pack": "price_pack",
+        "price (pack)": "price_pack",
+        "price pack": "price_pack",
+        "qty, pcs": "qty_pcs",
+        "qty pcs": "qty_pcs",
+        "volume, l": "volume_l",
+        "volume l": "volume_l",
+    }
+
+    @staticmethod
+    def _norm_header(value: Any) -> str:
+        return clean_multi_spaces(str(value or "")).strip().lower()
+
+    @staticmethod
+    def _clean_text(value: Any) -> str | None:
+        if value is None:
+            return None
+        text = clean_multi_spaces(str(value))
+        if not text or text.lower() == "nan":
+            return None
+        return text
+
+    @staticmethod
+    def _num(value: Any):
+        if value is None or value == "":
+            return None
+        return parse_loose_number(value)
+
     def read_excel(self, file_path: str | Path) -> list[dict]:
-        file_path = Path(file_path)
+        wb = load_workbook(file_path, data_only=True, read_only=True)
+        ws = wb.active
 
-        if not file_path.exists():
-            raise FileNotFoundError(f"Файл не найден: {file_path}")
+        header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
+        if not header_row:
+            return []
 
-        df = pd.read_excel(file_path, header=0)
+        columns: dict[int, str] = {}
+        for index, header in enumerate(header_row):
+            key = self.HEADER_ALIASES.get(self._norm_header(header))
+            if key:
+                columns[index] = key
 
-        if df.shape[1] < 4:
-            raise ValueError(
-                "Файл импорта прайса должен содержать минимум 4 колонки: "
-                "article, product_name, price, price_pack."
-            )
+        rows: list[dict] = []
+        for excel_row_no, values in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            row = {
+                "import_row_no": excel_row_no,
+                "supplier_article": None,
+                "product_name": None,
+                "price": None,
+                "price_pack": None,
+                "qty_pcs": None,
+                "volume_l": None,
+            }
+            for index, key in columns.items():
+                value = values[index] if index < len(values) else None
+                if key in {"supplier_article", "product_name"}:
+                    row[key] = self._clean_text(value)
+                else:
+                    row[key] = self._num(value)
 
-        # Берем первые 4 колонки шаблона:
-        # 1) supplier_article
-        # 2) product_name
-        # 3) price
-        # 4) price_pack
-        df = df.iloc[:, :4].copy()
-        df.columns = ["supplier_article", "product_name", "price", "price_pack"]
+            if any(row.get(k) not in (None, "") for k in ("supplier_article", "product_name", "price", "price_pack", "qty_pcs", "volume_l")):
+                rows.append(row)
 
-        # Сохраняем исходный номер строки Excel:
-        # header = строка 1, данные начинаются со строки 2
-        df["import_row_no"] = df.index + 2
-
-        df["supplier_article"] = df["supplier_article"].apply(clean_multi_spaces)
-        df["product_name"] = df["product_name"].apply(clean_multi_spaces)
-        df["price"] = df["price"].apply(parse_loose_number)
-        df["price_pack"] = df["price_pack"].apply(parse_loose_number)
-
-        # Удаляем только полностью пустые строки:
-        # если есть либо article, либо product_name — строку сохраняем
-        df = df[
-            (df["supplier_article"] != "") |
-            (df["product_name"] != "")
-        ].copy()
-
-        df = df.where(pd.notna(df), None)
-
-        rows = df.to_dict(orient="records")
+        wb.close()
         return rows

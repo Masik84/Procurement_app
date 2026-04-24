@@ -4,7 +4,7 @@ import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QSize
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QSize, QRect, QEvent
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QSizeGrip,
     QVBoxLayout,
     QWidget,
-    QComboBox, 
+    QComboBox,
     QListView,
     QStyledItemDelegate,
 )
@@ -60,12 +60,13 @@ class PlaceholderPage(QWidget):
         label.setAlignment(Qt.AlignCenter)
         layout.addWidget(label)
 
+
 class CompactComboDelegate(QStyledItemDelegate):
     def sizeHint(self, option, index):
         size = super().sizeHint(option, index)
         return QSize(size.width(), 18)
-    
-    
+
+
 class MyWindow(QMainWindow):
     def __init__(self):
         super(MyWindow, self).__init__()
@@ -82,8 +83,6 @@ class MyWindow(QMainWindow):
         self.shadow.setYOffset(0)
         self.shadow.setColor(QColor(0, 0, 0, 150))
         self.ui.centralwidget.setGraphicsEffect(self.shadow)
-        # self.ui.appMargins.setContentsMargins(4, 4, 4, 4)
-        # self.ui.appMargins.setStyleSheet("background: transparent; border: none;")
 
         self.ui.minimizeAppBtn.clicked.connect(lambda: self.showMinimized())
         self.ui.maximizeRestoreAppBtn.clicked.connect(lambda: self.maximize_restore())
@@ -91,6 +90,25 @@ class MyWindow(QMainWindow):
         self.ui.toggleButton.clicked.connect(lambda: self.toggleMenu())
 
         self.ui.search_widget.mouseMoveEvent = self.MoveWindow
+
+        self.resize_border = 8
+        self.resizing = False
+        self.resize_edge = None
+        self.drag_pos = None
+        self.start_geometry = None
+        self.oldPos = None
+
+        self.setMouseTracking(True)
+        self.ui.centralwidget.setMouseTracking(True)
+        self.ui.search_widget.setMouseTracking(True)
+        self.ui.menu_widget.setMouseTracking(True)
+        self.ui.tabWidget.setMouseTracking(True)
+
+        self.installEventFilter(self)
+        self.ui.centralwidget.installEventFilter(self)
+        self.ui.search_widget.installEventFilter(self)
+        self.ui.menu_widget.installEventFilter(self)
+        self.ui.tabWidget.installEventFilter(self)
 
         self.sizegrip = QSizeGrip(self.ui.frame_size_grip)
         self.sizegrip.setStyleSheet("width: 20px; height: 20px; margin: 0px; padding: 0px;")
@@ -215,14 +233,152 @@ class MyWindow(QMainWindow):
             self.ui.appMargins.setContentsMargins(4, 4, 4, 4)
             self.ui.maximizeRestoreAppBtn.setToolTip("Maximize")
 
+    def get_resize_edge(self, pos):
+        x = pos.x()
+        y = pos.y()
+        w = self.width()
+        h = self.height()
+        m = self.resize_border
+
+        left = x <= m
+        right = x >= w - m
+        top = y <= m
+        bottom = y >= h - m
+
+        if top and left:
+            return "top_left"
+        if top and right:
+            return "top_right"
+        if bottom and left:
+            return "bottom_left"
+        if bottom and right:
+            return "bottom_right"
+        if left:
+            return "left"
+        if right:
+            return "right"
+        if top:
+            return "top"
+        if bottom:
+            return "bottom"
+        return None
+
+    def update_cursor(self, edge):
+        if edge in ("left", "right"):
+            self.setCursor(Qt.SizeHorCursor)
+        elif edge in ("top", "bottom"):
+            self.setCursor(Qt.SizeVerCursor)
+        elif edge in ("top_left", "bottom_right"):
+            self.setCursor(Qt.SizeFDiagCursor)
+        elif edge in ("top_right", "bottom_left"):
+            self.setCursor(Qt.SizeBDiagCursor)
+        else:
+            self.setCursor(Qt.ArrowCursor)
+
+    def resize_window(self, global_pos):
+        if not self.resizing or not self.resize_edge or not self.start_geometry or not self.drag_pos:
+            return
+
+        dx = int(global_pos.x() - self.drag_pos.x())
+        dy = int(global_pos.y() - self.drag_pos.y())
+
+        geo = QRect(self.start_geometry)
+
+        min_w = max(self.minimumWidth(), 200)
+        min_h = max(self.minimumHeight(), 150)
+
+        if "left" in self.resize_edge:
+            new_left = geo.left() + dx
+            if geo.right() - new_left + 1 >= min_w:
+                geo.setLeft(new_left)
+
+        if "right" in self.resize_edge:
+            new_width = geo.width() + dx
+            if new_width >= min_w:
+                geo.setWidth(new_width)
+
+        if "top" in self.resize_edge:
+            new_top = geo.top() + dy
+            if geo.bottom() - new_top + 1 >= min_h:
+                geo.setTop(new_top)
+
+        if "bottom" in self.resize_edge:
+            new_height = geo.height() + dy
+            if new_height >= min_h:
+                geo.setHeight(new_height)
+
+        self.setGeometry(geo)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.MouseMove and not self.isMaximized():
+            try:
+                global_pos = event.globalPosition().toPoint()
+            except AttributeError:
+                return super().eventFilter(obj, event)
+
+            local_pos = self.mapFromGlobal(global_pos)
+
+            if self.resizing:
+                self.resize_window(global_pos)
+                return True
+
+            edge = self.get_resize_edge(local_pos)
+            self.update_cursor(edge)
+
+        elif event.type() == QEvent.Leave and not self.resizing:
+            self.setCursor(Qt.ArrowCursor)
+
+        return super().eventFilter(obj, event)
+
     def mousePressEvent(self, event):
-        self.oldPos = self.window().mapFromGlobal(event.globalPosition())
+        if event.button() == Qt.LeftButton and not self.isMaximized():
+            edge = self.get_resize_edge(event.position().toPoint())
+            if edge:
+                self.resizing = True
+                self.resize_edge = edge
+                self.drag_pos = event.globalPosition().toPoint()
+                self.start_geometry = self.geometry()
+                event.accept()
+                return
+
+        if event.button() == Qt.LeftButton:
+            self.oldPos = event.globalPosition().toPoint()
+
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.isMaximized():
+            self.setCursor(Qt.ArrowCursor)
+            super().mouseMoveEvent(event)
+            return
+
+        if self.resizing:
+            self.resize_window(event.globalPosition().toPoint())
+            event.accept()
+            return
+
+        edge = self.get_resize_edge(event.position().toPoint())
+        self.update_cursor(edge)
+
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self.resizing = False
+        self.resize_edge = None
+        self.drag_pos = None
+        self.start_geometry = None
+        self.setCursor(Qt.ArrowCursor)
+        super().mouseReleaseEvent(event)
 
     def MoveWindow(self, event):
-        if self.isMaximized() is False:
-            delta = self.window().mapFromGlobal(event.globalPosition()) - self.oldPos
-            self.move(self.x() + delta.x(), self.y() + delta.y())
-            self.oldPos = self.window().mapFromGlobal(event.globalPosition())
+        if self.isMaximized() or self.resizing:
+            return
+
+        if event.buttons() & Qt.LeftButton and self.oldPos is not None:
+            delta = event.globalPosition().toPoint() - self.oldPos
+            self.move(self.pos() + delta)
+            self.oldPos = event.globalPosition().toPoint()
+            event.accept()
 
     def toggleMenu(self):
         width = self.ui.menu_widget.width()
@@ -244,7 +400,7 @@ class MyWindow(QMainWindow):
             view.setSpacing(0)
             view.setItemDelegate(CompactComboDelegate(view))
             combo.setView(view)
-        
+
 
 if __name__ == "__main__":
     os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
@@ -258,7 +414,7 @@ if __name__ == "__main__":
 
     style_path = Path(__file__).resolve().parent / "app" / "ui" / "styles" / "app_styles.qss"
     PAGE_STYLESHEET = style_path.read_text(encoding="utf-8") if style_path.exists() else ""
-    
+
     if Base is not None and engine is not None:
         try:
             Base.metadata.create_all(bind=engine)

@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from app.db.models import CurrentSupplierPrice, PriceHistory, Supplier
 
@@ -138,7 +139,7 @@ class PriceRepository:
             self.session.query(
                 PriceHistory.supplier_id.label("supplier_id"),
                 PriceHistory.product_id.label("product_id"),
-                PriceHistory.price_date.label("max_price_date"),
+                func.max(PriceHistory.price_date).label("max_price_date"),
             )
             .filter(
                 PriceHistory.product_id == product_id,
@@ -147,7 +148,6 @@ class PriceRepository:
             .group_by(
                 PriceHistory.supplier_id,
                 PriceHistory.product_id,
-                PriceHistory.price_date,
             )
             .subquery()
         )

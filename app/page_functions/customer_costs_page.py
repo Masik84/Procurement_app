@@ -21,8 +21,8 @@ from PySide6.QtUiTools import QUiLoader
 
 from app.db.db import SessionLocal
 from app.db.models import Product, TempCustomerCostImport, TempCustomerCostOption
-from app.exports.customer_cost_export import CustomerCostExport
-from app.services.customer_cost_import import CustomerCostImportService
+from app.exports.customer_cost_exporter import CustomerCostExporter
+from app.services.customer_cost_service import CustomerCostService
 from app.utils.batch import get_current_username
 from app.imports.customer_cost_importer import CustomerCostImporter
 from app.utils.parsers import parse_loose_number
@@ -122,7 +122,7 @@ class CustomerCostsPage(QWidget):
         self.start_new_batch()
         self.refresh_filters()
         self.clear_message()
-
+        
     def setup_ui(self):
         self.table = self.ui.table
         setup_data_table(self.table, sorting=False)
@@ -275,7 +275,7 @@ class CustomerCostsPage(QWidget):
             self._current_file_path = file_path
 
             with self.get_session() as session:
-                service = CustomerCostImportService(session)
+                service = CustomerCostService(session)
                 self.start_new_batch()
                 service.import_rows(rows=rows, batch_id=self._batch_id, imported_by=self._imported_by)
                 service.automatch_temp_rows(batch_id=self._batch_id, imported_by=self._imported_by)
@@ -712,7 +712,27 @@ class CustomerCostsPage(QWidget):
                 row = session.query(TempCustomerCostImport).filter(TempCustomerCostImport.id == row_id).first()
                 if row is None:
                     return
+
                 setattr(row, field_name, value)
+
+                if field_name == "selected_product_id":
+                    if value is not None:
+                        row.new_product_name = None
+                        row.new_brand = None
+                        row.new_pack = None
+                        row.new_is_excise = None
+                    row.selected_option_id = None
+
+                elif field_name in {"new_product_name", "new_brand", "new_pack", "new_is_excise"}:
+                    if value not in (None, ""):
+                        row.selected_product_id = None
+                        if row.new_is_excise is None:
+                            row.new_is_excise = False
+                    row.selected_option_id = None
+
+                elif field_name in {"supplier_article", "product_name", "pack", "qty_pcs", "volume_l", "purchase_type", "payment_terms"}:
+                    row.selected_option_id = None
+
                 session.commit()
 
             if field_name == "selected_product_id":
@@ -731,10 +751,27 @@ class CustomerCostsPage(QWidget):
         if isinstance(combo, QComboBox):
             self.populate_product_combo(combo, keep_current=True)
 
+
+    def _commit_open_editors(self):
+        for row in range(self.table.rowCount()):
+            for column in (COL_SUPPLIER_OPTION, COL_PRODUCT, COL_BRAND):
+                widget = self.table.cellWidget(row, column)
+                if not isinstance(widget, QComboBox):
+                    continue
+                if row < 0 or row >= len(self._table_row_ids):
+                    continue
+                row_id = self._table_row_ids[row]
+                if column == COL_SUPPLIER_OPTION:
+                    self.finish_supplier_option_edit(row, row_id, widget)
+                elif column == COL_PRODUCT:
+                    self.finish_product_edit(row, row_id, widget)
+                elif column == COL_BRAND:
+                    self.finish_brand_edit(row, row_id, widget)
+
     def add_line(self):
         try:
             with self.get_session() as session:
-                service = CustomerCostImportService(session)
+                service = CustomerCostService(session)
                 next_row_no = 1
                 last_row = (
                     session.query(TempCustomerCostImport)
@@ -777,6 +814,8 @@ class CustomerCostsPage(QWidget):
             self.show_error_message(str(e))
 
     def calculate_costs(self):
+        self._commit_open_editors()
+
         try:
             default_name = f"CustCostCalc_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
             save_path, _ = QFileDialog.getSaveFileName(
@@ -789,8 +828,8 @@ class CustomerCostsPage(QWidget):
                 return
 
             with self.get_session() as session:
-                service = CustomerCostImportService(session)
-                exporter = CustomerCostExport(session)
+                service = CustomerCostService(session)
+                exporter = CustomerCostExporter(session)
                 service.run_calculation(self._batch_id, self._imported_by)
                 exporter.export_calculated(self._batch_id, self._imported_by, save_path)
                 session.commit()
@@ -801,14 +840,17 @@ class CustomerCostsPage(QWidget):
             self.show_error_message(str(e))
 
     def save_all(self):
+        self._commit_open_editors()
+
         try:
             folder = QFileDialog.getExistingDirectory(self, "Папка для файлов менеджеров")
             if not folder:
                 return
 
             with self.get_session() as session:
-                service = CustomerCostImportService(session)
-                exporter = CustomerCostExport(session)
+                service = CustomerCostService(session)
+                exporter = CustomerCostExporter(session)
+                service.run_calculation(self._batch_id, self._imported_by)
                 service.save_calculations(self._batch_id, self._imported_by)
                 exporter.export_kam_files(self._batch_id, self._imported_by, folder)
                 session.commit()
@@ -820,7 +862,7 @@ class CustomerCostsPage(QWidget):
     def reset_all(self):
         try:
             with self.get_session() as session:
-                service = CustomerCostImportService(session)
+                service = CustomerCostService(session)
                 service.delete_temp_rows(self._batch_id, self._imported_by)
                 session.commit()
 

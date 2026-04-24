@@ -30,9 +30,9 @@ from sqlalchemy.orm import joinedload
 from app.db.db import SessionLocal
 from app.db.models import ExchangeRate, Product, Supplier, TempPriceImport
 from app.imports.supplier_price_importer import SupplierPriceImporter
-from app.exports.supplier_price_export import SupplierPriceExport
-from app.services.supplier import SupplierService, SupplierUpsertData
-from app.services.supplier_price_import import SupplierPriceImportService
+from app.exports.supplier_price_exporter import SupplierPriceExporter
+from app.services.supplier_service import SupplierService, SupplierUpsertData
+from app.services.supplier_price_service import SupplierPriceService
 from app.utils.batch import get_current_username
 from app.utils.parsers import parse_flexible_date, parse_loose_number
 from app.utils.text import clean_multi_spaces
@@ -195,12 +195,12 @@ class SupplierPricesPage(QWidget):
 
     def start_new_batch(self):
         with self.get_session() as session:
-            service = SupplierPriceImportService(session)
+            service = SupplierPriceService(session)
             self.batch_id = service.start_batch()
 
     def cleanup_old_temp_rows(self):
         with self.get_session() as session:
-            service = SupplierPriceImportService(session)
+            service = SupplierPriceService(session)
             service.cleanup_old_temp_rows(imported_by=self.imported_by)
             session.commit()
 
@@ -279,12 +279,13 @@ class SupplierPricesPage(QWidget):
             file_path += '.xlsx'
 
         with self.get_session() as session:
-            exporter = SupplierPriceExport(session)
+            exporter = SupplierPriceExporter(session)
             output_path = exporter.export_calculated(
                 batch_id=self.batch_id,
                 imported_by=self.imported_by,
                 supplier_id=supplier_id,
                 output_path=file_path,
+                source_file_path=self.selected_file_path or None,
             )
 
         QDesktopServices.openUrl(Path(output_path).as_uri())
@@ -572,7 +573,7 @@ class SupplierPricesPage(QWidget):
 
         try:
             with self.get_session() as session:
-                exporter = SupplierPriceExport(session)
+                exporter = SupplierPriceExporter(session)
                 output_path = exporter.export_template(file_path)
             QDesktopServices.openUrl(Path(output_path).as_uri())
             self.show_message("Шаблон сформирован")
@@ -600,7 +601,7 @@ class SupplierPricesPage(QWidget):
             rows = importer.read_excel(file_path)
 
             with self.get_session() as session:
-                service = SupplierPriceImportService(session)
+                service = SupplierPriceService(session)
                 service.import_rows_to_temp(
                     supplier_id=supplier_id,
                     batch_id=self.batch_id,
@@ -767,6 +768,10 @@ class SupplierPricesPage(QWidget):
 
         self._pending_changes.setdefault(row_id, {})
         self._pending_changes[row_id]["selected_product_id"] = product_id
+        self._pending_changes[row_id]["new_product_name"] = None
+        self._pending_changes[row_id]["new_brand"] = None
+        self._pending_changes[row_id]["new_pack"] = None
+        self._pending_changes[row_id]["new_is_excise"] = False
 
         with self.get_session() as session:
             product = session.query(Product).filter(Product.id == product_id).first()
@@ -783,7 +788,7 @@ class SupplierPricesPage(QWidget):
         self.table.resizeColumnsToContents()
 
     def finish_brand_edit(self, row: int, row_id: int, combo: QComboBox):
-        text = clean_multi_spaces(combo.currentText()) or None
+        text = clean_multi_spaces(combo.currentText()).upper() or None
 
         self._pending_changes.setdefault(row_id, {})
         self._pending_changes[row_id]["new_brand"] = text
@@ -811,7 +816,10 @@ class SupplierPricesPage(QWidget):
         if number is None:
             return text
 
-        return str(number).replace(".", ",")
+        formatted = f"{float(number):.4f}".replace(".", ",")
+        formatted = formatted.rstrip("0").rstrip(",")
+
+        return formatted
 
     def build_table_item(self, column_name: str, value: str) -> QTableWidgetItem:
         item = QTableWidgetItem(value)
@@ -969,14 +977,16 @@ class SupplierPricesPage(QWidget):
         if column_name == "selected_product_id":
             return
 
-        value = clean_multi_spaces(item.text())
-        if column_name in self.numeric_columns:
-            self._pending_changes.setdefault(row_id, {})
-            self._pending_changes[row_id][column_name] = value or None
-            return
-
+        value = clean_multi_spaces(item.text()).upper()
         self._pending_changes.setdefault(row_id, {})
-        self._pending_changes[row_id][column_name] = value or None
+
+        if column_name in self.numeric_columns:
+            self._pending_changes[row_id][column_name] = value or None
+        else:
+            self._pending_changes[row_id][column_name] = value or None
+
+        if column_name in {"supplier_article", "product_name"}:
+            self._pending_changes[row_id]["selected_product_id"] = None
 
     def show_context_menu(self, position):
         item = self.table.itemAt(position)
@@ -1023,8 +1033,18 @@ class SupplierPricesPage(QWidget):
             return
 
         row_id = self._table_row_ids[row]
+
         self._pending_deletes.add(row_id)
-        self.apply_pending_changes()
+        self._pending_changes.pop(row_id, None)
+
+        self._updating_table = True
+        try:
+            self.table.removeRow(row)
+            del self._table_row_ids[row]
+        finally:
+            self._updating_table = False
+
+        self.show_message("Строка помечена на удаление. Нажми 'Сохранить' для применения.")
 
     def refresh_current_product_combo(self):
         row = self.table.currentRow()
@@ -1056,11 +1076,13 @@ class SupplierPricesPage(QWidget):
 
     def add_line(self):
         try:
+            self.save_pending_changes_to_temp()
+
             supplier_id = self.ensure_supplier()
             import_date = self.get_price_date()
 
             with self.get_session() as session:
-                service = SupplierPriceImportService(session)
+                service = SupplierPriceService(session)
                 service.create_empty_temp_row(
                     supplier_id=supplier_id,
                     batch_id=self.batch_id,
@@ -1076,8 +1098,95 @@ class SupplierPricesPage(QWidget):
         except Exception as e:
             self.show_error_message(str(e))
 
-    def apply_pending_changes(self):
+
+    def _commit_open_editors(self):
+        for row in range(self.table.rowCount()):
+            for column in (0, 6):
+                widget = self.table.cellWidget(row, column)
+                if not isinstance(widget, QComboBox):
+                    continue
+                if row < 0 or row >= len(self._table_row_ids):
+                    continue
+                row_id = self._table_row_ids[row]
+                if column == 0:
+                    self.finish_product_edit(row, row_id, widget)
+                elif column == 6:
+                    self.finish_brand_edit(row, row_id, widget)
+
+    def save_pending_changes_to_temp(self):
+        self._commit_open_editors()
+
         if not self._pending_changes and not self._pending_deletes:
+            return
+
+        supplier_id = self.ensure_supplier()
+        import_date = self.get_price_date()
+
+        with self.get_session() as session:
+            for row_id, changes in self._pending_changes.items():
+                row = session.query(TempPriceImport).filter(TempPriceImport.id == row_id).first()
+                if row is None:
+                    continue
+
+                row.supplier_id = supplier_id
+                row.import_date = import_date
+
+                for key, value in changes.items():
+                    if key == "selected_product_id":
+                        if value in (None, "", 0):
+                            row.selected_product_id = None
+                        else:
+                            try:
+                                row.selected_product_id = int(value)
+                            except (TypeError, ValueError):
+                                continue
+                    elif key in {"price", "price_pack", "new_pack"}:
+                        parsed = parse_loose_number(value)
+                        setattr(row, key, parsed if parsed is not None else None)
+                    else:
+                        setattr(row, key, value)
+
+                if row.selected_product_id is not None:
+                    row.new_product_name = None
+                    row.new_brand = None
+                    row.new_pack = None
+                    row.new_is_excise = False
+                else:
+                    has_new_product_data = any([
+                        bool(clean_multi_spaces(row.new_product_name)),
+                        bool(clean_multi_spaces(row.new_brand)),
+                        row.new_pack is not None,
+                    ])
+                    if has_new_product_data and row.new_is_excise is None:
+                        row.new_is_excise = False
+
+            if self._pending_deletes:
+                session.query(TempPriceImport).filter(
+                    TempPriceImport.id.in_(self._pending_deletes)
+                ).delete(synchronize_session=False)
+
+            session.commit()
+
+        self._pending_changes.clear()
+        self._pending_deletes.clear()
+
+    def _has_rows_in_current_batch(self) -> bool:
+        with self.get_session() as session:
+            exists_row = (
+                session.query(TempPriceImport.id)
+                .filter(
+                    TempPriceImport.batch_id == self.batch_id,
+                    TempPriceImport.imported_by == self.imported_by,
+                )
+                .first()
+            )
+        return exists_row is not None
+
+    def apply_pending_changes(self):
+        self._commit_open_editors()
+
+        has_batch_rows = self._has_rows_in_current_batch()
+        if not self._pending_changes and not self._pending_deletes and not has_batch_rows:
             self.show_message("Нет изменений")
             return
 
@@ -1088,7 +1197,7 @@ class SupplierPricesPage(QWidget):
                 raise ValueError("Выбери валюту")
 
             with self.get_session() as session:
-                service = SupplierPriceImportService(session)
+                service = SupplierPriceService(session)
 
                 for row_id, changes in self._pending_changes.items():
                     row = session.query(TempPriceImport).filter(TempPriceImport.id == row_id).first()
@@ -1112,6 +1221,20 @@ class SupplierPricesPage(QWidget):
                             setattr(row, key, parsed if parsed is not None else None)
                         else:
                             setattr(row, key, value)
+
+                    if row.selected_product_id is not None:
+                        row.new_product_name = None
+                        row.new_brand = None
+                        row.new_pack = None
+                        row.new_is_excise = False
+                    else:
+                        has_new_product_data = any([
+                            bool(clean_multi_spaces(row.new_product_name)),
+                            bool(clean_multi_spaces(row.new_brand)),
+                            row.new_pack is not None,
+                        ])
+                        if has_new_product_data and row.new_is_excise is None:
+                            row.new_is_excise = False
 
                 if self._pending_deletes:
                     session.query(TempPriceImport).filter(TempPriceImport.id.in_(self._pending_deletes)).delete(
@@ -1146,21 +1269,59 @@ class SupplierPricesPage(QWidget):
                 )
                 session.commit()
 
-            self._pending_changes.clear()
-            self._pending_deletes.clear()
+            export_error_text = None
+            if self.ask_export_calculated_excel():
+                try:
+                    self.export_calculated_excel(supplier_id)
+                except Exception as export_error:
+                    export_error_text = str(export_error)
+
+            self.cleanup_current_batch(start_new_batch_after=True)
             self.load_find_brands()
-            self.load_table_rows()
             self.show_message("Данные сохранены")
 
-            if self.ask_export_calculated_excel():
-                self.export_calculated_excel(supplier_id)
+            if export_error_text:
+                self.show_error_message(f"Данные сохранены, но Excel не удалось выгрузить:\n{export_error_text}")
         except Exception as e:
             self.show_error_message(str(e))
+
+
+    def cleanup_current_batch(self, start_new_batch_after: bool = False):
+        current_batch_id = self.batch_id
+        try:
+            if current_batch_id:
+                with self.get_session() as session:
+                    service = SupplierPriceService(session)
+                    service.reset_batch(current_batch_id, self.imported_by)
+                    session.commit()
+        except Exception:
+            pass
+
+        self._pending_changes.clear()
+        self._pending_deletes.clear()
+        self._new_rows.clear()
+        self._table_row_ids.clear()
+        self.selected_file_path = ""
+
+        if start_new_batch_after:
+            self.start_new_batch()
+            self.load_table_rows()
+        else:
+            self.batch_id = ""
+
+    def hideEvent(self, event):
+        # При простом переходе на другое окно страницу не сбрасываем.
+        # Иначе пользователь теряет данные, хотя окно фактически не закрывал.
+        super().hideEvent(event)
+
+    def closeEvent(self, event):
+        self.cleanup_current_batch(start_new_batch_after=False)
+        super().closeEvent(event)
 
     def reset_form(self):
         try:
             with self.get_session() as session:
-                service = SupplierPriceImportService(session)
+                service = SupplierPriceService(session)
                 service.reset_batch(self.batch_id, self.imported_by)
                 session.commit()
 

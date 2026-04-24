@@ -1,23 +1,27 @@
 from pathlib import Path
 
+import pythoncom
+import win32com.client as win32
 from sqlalchemy.exc import SQLAlchemyError
 from PySide6.QtWidgets import (
     QMessageBox,
-    QHeaderView,
-    QTableWidget,
     QMenu,
     QTableWidgetItem,
     QWidget,
     QApplication,
     QVBoxLayout,
     QComboBox,
+    QFileDialog,
 )
-from PySide6.QtCore import Qt, QFile
+from PySide6.QtCore import Qt, QFile, QTimer
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtUiTools import QUiLoader
 
 from app.db.models import Product, ProductArticle
 from app.db.db import SessionLocal
 from app.ui.table_style import *
+from app.imports.product_article_importer import ProductArticleImporter
+from app.exports.product_article_exporter import ProductArticleExporter
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -76,6 +80,15 @@ class ProductArticlesPage(QWidget):
         self.ui.btn_Search.clicked.connect(self.find_product_articles)
         self.ui.btn_AddLine.clicked.connect(self.add_line)
         self.ui.btn_Save.clicked.connect(self.apply_pending_changes)
+        if hasattr(self.ui, "btn_SaveExcel"):
+            self.ui.btn_SaveExcel.clicked.connect(self.save_to_excel)
+
+        if hasattr(self.ui, "btn_DownFile"):
+            self.ui.btn_DownFile.clicked.connect(self.download_template)
+        if hasattr(self.ui, "btn_Import"):
+            self.ui.btn_Import.clicked.connect(self.import_articles)
+        if hasattr(self.ui, "btn_Reset"):
+            self.ui.btn_Reset.clicked.connect(self.reset_form)
 
     def get_session(self):
         return SessionLocal()
@@ -151,17 +164,19 @@ class ProductArticlesPage(QWidget):
             return
 
         row_id = int(row_id_text)
-        product_col = 1  # колонка Product name
+        product_col = 1
 
         current_item = self.table.item(row, product_col)
         current_value = current_item.text().strip() if current_item else ""
 
-        combo = QComboBox(self.table)
-        combo.setEditable(True)
+        combo = QComboBox()
+        combo.setEditable(False)
         combo.setInsertPolicy(QComboBox.NoInsert)
         combo.setFrame(False)
 
         product_names = self._get_product_name_values()
+
+        combo.addItem("")
         combo.addItems(product_names)
 
         if current_value and combo.findText(current_value) < 0:
@@ -173,14 +188,13 @@ class ProductArticlesPage(QWidget):
         combo.setProperty("edit_row_id", row_id)
 
         combo.activated.connect(lambda *_, c=combo: self.finish_product_edit_from_combo(c))
-        combo.lineEdit().returnPressed.connect(lambda c=combo: self.finish_product_edit_from_combo(c))
 
         self._updating_table = True
         self.table.setCellWidget(row, product_col, combo)
         self._updating_table = False
 
         combo.setFocus()
-        combo.lineEdit().selectAll()
+        QTimer.singleShot(0, combo.showPopup)
 
     def finish_product_edit_from_combo(self, combo: QComboBox):
         row = combo.property("edit_row")
@@ -295,6 +309,9 @@ class ProductArticlesPage(QWidget):
         except Exception as e:
             self.show_error_message(f"Ошибка отката: {str(e)}")
 
+    def _normalize_text(self, value) -> str:
+        return self.clean_multi_spaces(value)
+
     def apply_pending_changes(self):
         if not self._pending_changes and not self._pending_deletes:
             self.show_message("Нет изменений для применения")
@@ -302,15 +319,49 @@ class ProductArticlesPage(QWidget):
 
         try:
             with self.get_session() as session:
+                skipped_duplicates = []
+
                 if self._pending_deletes:
                     session.query(ProductArticle).filter(
                         ProductArticle.id.in_(self._pending_deletes)
                     ).delete(synchronize_session=False)
 
                 for row_id, changes in self._pending_changes.items():
-                    product_name = str(changes.get("Product name", "")).strip()
-                    article = str(changes.get("Article", "")).strip()
-                    variant_name = str(changes.get("Product name (variant)", "")).strip()
+                    product_article = None
+                    current_product_id = None
+                    current_article_value = None
+                    current_variant_value = None
+
+                    if row_id not in self._new_rows:
+                        product_article = (
+                            session.query(ProductArticle)
+                            .filter(ProductArticle.id == row_id)
+                            .first()
+                        )
+                        if not product_article:
+                            raise Exception(f"Не найден ProductArticle id={row_id}")
+
+                        current_product_id = product_article.product_id
+                        current_article_value = product_article.article
+                        current_variant_value = product_article.name
+
+                    raw_product_name = changes.get("Product name")
+                    raw_article = changes.get("Article")
+                    raw_variant_name = changes.get("Product name (variant)")
+
+                    product_name = self._normalize_text(
+                        raw_product_name if raw_product_name is not None else ""
+                    )
+                    article = self._normalize_text(
+                        raw_article if raw_article is not None else (
+                            current_article_value if current_article_value is not None else ""
+                        )
+                    )
+                    variant_name = self._normalize_text(
+                        raw_variant_name if raw_variant_name is not None else (
+                            current_variant_value if current_variant_value is not None else ""
+                        )
+                    )
 
                     article_value = article if article else None
                     variant_value = variant_name if variant_name else None
@@ -323,6 +374,21 @@ class ProductArticlesPage(QWidget):
                         if not product:
                             raise Exception(f"Продукт с name '{product_name}' не найден")
 
+                        existing_duplicate = (
+                            session.query(ProductArticle)
+                            .filter(
+                                ProductArticle.product_id == product.id,
+                                ProductArticle.article == article_value,
+                                ProductArticle.name == variant_value,
+                            )
+                            .first()
+                        )
+                        if existing_duplicate:
+                            skipped_duplicates.append(
+                                f"{product_name} | {article_value or ''} | {variant_value or ''}"
+                            )
+                            continue
+
                         product_article = ProductArticle(
                             product_id=product.id,
                             article=article_value,
@@ -331,14 +397,7 @@ class ProductArticlesPage(QWidget):
                         session.add(product_article)
 
                     else:
-                        product_article = (
-                            session.query(ProductArticle)
-                            .filter(ProductArticle.id == row_id)
-                            .first()
-                        )
-                        if not product_article:
-                            raise Exception(f"Не найден ProductArticle id={row_id}")
-
+                        final_product_id = current_product_id
                         if "Product name" in changes:
                             if not product_name:
                                 raise Exception("Поле Product name не может быть пустым")
@@ -347,7 +406,29 @@ class ProductArticlesPage(QWidget):
                             if not product:
                                 raise Exception(f"Продукт с name '{product_name}' не найден")
 
-                            product_article.product_id = product.id
+                            final_product_id = product.id
+                        else:
+                            product = session.query(Product).filter(Product.id == current_product_id).first()
+                            product_name = product.name if product else ""
+
+                        existing_duplicate = (
+                            session.query(ProductArticle)
+                            .filter(
+                                ProductArticle.product_id == final_product_id,
+                                ProductArticle.article == article_value,
+                                ProductArticle.name == variant_value,
+                                ProductArticle.id != row_id,
+                            )
+                            .first()
+                        )
+                        if existing_duplicate:
+                            skipped_duplicates.append(
+                                f"{product_name} | {article_value or ''} | {variant_value or ''}"
+                            )
+                            continue
+
+                        if "Product name" in changes:
+                            product_article.product_id = final_product_id
 
                         if "Article" in changes:
                             product_article.article = article_value
@@ -369,7 +450,12 @@ class ProductArticlesPage(QWidget):
                 self.table.clearContents()
                 self.table.setRowCount(0)
 
-            self.show_message("Данные успешно сохранены")
+            if skipped_duplicates:
+                self.show_message(
+                    f"Данные сохранены. Пропущено дублей: {len(skipped_duplicates)}"
+                )
+            else:
+                self.show_message("Данные успешно сохранены")
 
         except SQLAlchemyError as e:
             self.show_error_message(f"Ошибка сохранения в базу данных: {str(e)}")
@@ -522,6 +608,291 @@ class ProductArticlesPage(QWidget):
         else:
             self.show_message("Нет данных для отображения")
 
+    def get_filtered_product_articles(self):
+        article_data = self.get_product_articles_from_db()
+
+        if not article_data:
+            return []
+
+        brand = self.ui.line_Brand.currentText()
+        family = self.ui.line_Prod_Fam.currentText()
+        product_name = self.ui.line_Prod_name.currentText()
+
+        if brand != "-":
+            article_data = [row for row in article_data if (row["brand"] or "") == brand]
+        if family != "-":
+            article_data = [row for row in article_data if (row["family"] or "") == family]
+        if product_name != "-":
+            article_data = [row for row in article_data if (row["product_name"] or "") == product_name]
+
+        return article_data
+
+    def save_to_excel(self):
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить Excel",
+            "product_articles.xlsx",
+            "Excel Files (*.xlsx)"
+        )
+
+        if not file_path:
+            return
+
+        if not file_path.lower().endswith(".xlsx"):
+            file_path += ".xlsx"
+
+        rows = self.get_filtered_product_articles()
+        if not rows:
+            self.show_message("Нет данных для выгрузки")
+            return
+
+        try:
+            self._export_product_articles_to_excel(file_path, rows)
+            self.show_message("Данные сохранены в Excel")
+        except PermissionError:
+            self.show_error_message(
+                "Не удалось сохранить файл Excel. Возможно, файл уже открыт."
+            )
+        except Exception as e:
+            self.show_error_message(f"Ошибка при сохранении Excel: {str(e)}")
+
+    def _export_product_articles_to_excel(self, file_path: str, rows: list[dict]):
+        excel = None
+        wb = None
+
+        try:
+            pythoncom.CoInitialize()
+
+            excel = win32.DispatchEx("Excel.Application")
+            excel.Visible = False
+            excel.DisplayAlerts = False
+
+            wb = excel.Workbooks.Add()
+            ws = wb.Worksheets(1)
+            ws.Name = "Sheet1"
+
+            headers = [
+                "ID",
+                "Product name",
+                "Article",
+                "Product name (variant)",
+            ]
+
+            for col_index, header in enumerate(headers, start=1):
+                ws.Cells(1, col_index).Value = header
+
+            ws.Cells.Font.Name = "Aptos Narrow"
+            ws.Cells.Font.Size = 11
+
+            header_range = ws.Range("A1:D1")
+            header_range.Font.Name = "Aptos Narrow"
+            header_range.Font.Size = 11
+            header_range.Font.Bold = True
+            header_range.Interior.Color = 0xCDCDCD
+            header_range.WrapText = True
+            header_range.HorizontalAlignment = -4108
+            header_range.VerticalAlignment = -4160
+
+            ws.Rows(1).EntireRow.AutoFit()
+
+            try:
+                ws.Range("A1:D1").AutoFilter(1)
+            except Exception:
+                pass
+
+            ws.Columns("A:A").ColumnWidth = 10
+            ws.Columns("B:B").ColumnWidth = 34
+            ws.Columns("C:C").ColumnWidth = 22
+            ws.Columns("D:D").ColumnWidth = 34
+
+            ws.Columns("C:C").NumberFormat = "@"
+
+            row_num = 2
+            for row in rows:
+                ws.Cells(row_num, 1).Value = row.get("id")
+                ws.Cells(row_num, 2).Value = row.get("product_name", "") or ""
+
+                article_value = row.get("article", "")
+                if article_value is None:
+                    article_value = ""
+                ws.Cells(row_num, 3).Value = str(article_value)
+
+                ws.Cells(row_num, 4).Value = row.get("variant_name", "") or ""
+                row_num += 1
+
+            wb.SaveAs(str(Path(file_path).resolve()))
+
+        except PermissionError:
+            raise
+        except Exception as e:
+            raise Exception(f"Ошибка при сохранении Excel: {e}")
+        finally:
+            try:
+                if wb is not None:
+                    wb.Close(SaveChanges=False)
+            except Exception:
+                pass
+
+            try:
+                if excel is not None:
+                    excel.Quit()
+            except Exception:
+                pass
+
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
+
+    def download_template(self):
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить шаблон",
+            str(Path.home() / "ProductArticleTemplate.xlsx"),
+            "Excel files (*.xlsx)",
+        )
+        if not file_path:
+            return
+
+        if not file_path.lower().endswith(".xlsx"):
+            file_path += ".xlsx"
+
+        try:
+            exporter = ProductArticleExporter()
+            exporter.export_template(file_path)
+            QDesktopServices.openUrl(Path(file_path).as_uri())
+            self.show_message("Шаблон сохранен")
+        except PermissionError:
+            self.show_error_message(
+                "Не удалось сохранить файл Excel. Возможно, файл уже открыт."
+            )
+        except Exception as e:
+            self.show_error_message(f"Ошибка при создании шаблона: {str(e)}")
+
+    def import_articles(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Выберите файл",
+            "",
+            "Excel files (*.xlsx *.xls)",
+        )
+        if not file_path:
+            return
+
+        try:
+            importer = ProductArticleImporter()
+            rows = importer.read_excel(file_path)
+            imported_count, skipped_names = self._load_imported_articles(rows)
+
+            if skipped_names:
+                names_text = "\n".join(skipped_names)
+                self.show_error_message(
+                    "В БД не найдены продукты. Эти строки пропущены:\n\n" + names_text
+                )
+
+            self.show_message(f"Импортировано строк: {imported_count}")
+        except Exception as e:
+            self.show_error_message(str(e))
+
+    def _load_imported_articles(self, rows):
+        self._updating_table = True
+        self.table.setSortingEnabled(False)
+
+        self._pending_changes.clear()
+        self._pending_deletes.clear()
+        self._new_rows.clear()
+        self._original_values.clear()
+        self.table.clear()
+
+        columns = ["id", "product_name", "article", "variant_name"]
+        headers = ["id", "Product name", "Article", "Product name (variant)"]
+
+        valid_rows = []
+        skipped_names = []
+
+        with self.get_session() as session:
+            existing_products = {
+                (product.name or "").strip().upper(): product
+                for product in session.query(Product).filter(Product.name.isnot(None), Product.name != "").all()
+            }
+
+            seen_skipped = set()
+            for imported in rows:
+                product_name = self.clean_multi_spaces(imported.get("product_name", "")).upper()
+                if not product_name:
+                    continue
+
+                if product_name not in existing_products:
+                    if product_name not in seen_skipped:
+                        skipped_names.append(product_name)
+                        seen_skipped.add(product_name)
+                    continue
+
+                valid_rows.append(
+                    {
+                        "product_name": product_name,
+                        "article": self.clean_multi_spaces(imported.get("article", "")),
+                        "variant_name": self.clean_multi_spaces(imported.get("variant_name", "")).upper(),
+                    }
+                )
+
+        unique_valid_rows = []
+        seen_keys = set()
+
+        for row in valid_rows:
+            key = (
+                row["product_name"],
+                row["article"] or "",
+                row["variant_name"] or "",
+            )
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            unique_valid_rows.append(row)
+
+        valid_rows = unique_valid_rows
+
+        self.table.setColumnCount(len(headers))
+        self.table.setRowCount(len(valid_rows))
+        self.table.setHorizontalHeaderLabels(headers)
+
+        for i, row in enumerate(valid_rows):
+            row_id = self._temp_row_id
+            self._temp_row_id -= 1
+            self._new_rows.add(row_id)
+
+            self._pending_changes[row_id] = {
+                "Product name": row["product_name"],
+                "Article": row["article"],
+                "Product name (variant)": row["variant_name"],
+            }
+
+            values = {
+                "id": str(row_id),
+                "product_name": row["product_name"],
+                "article": row["article"],
+                "variant_name": row["variant_name"],
+            }
+            self._original_values[row_id] = values.copy()
+
+            for j, col in enumerate(columns):
+                item = QTableWidgetItem(values[col])
+                if col == "id":
+                    item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                    item.setTextAlignment(Qt.AlignCenter)
+                else:
+                    item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
+                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                self.table.setItem(i, j, item)
+
+        self.table.resizeColumnsToContents()
+        for i in range(self.table.columnCount()):
+            if self.table.columnWidth(i) < 120:
+                self.table.setColumnWidth(i, 120)
+
+        self._updating_table = False
+        return len(valid_rows), skipped_names
+
     def _display_data(self, data):
         self.table.clear()
         self.table.setColumnCount(0)
@@ -629,6 +1000,20 @@ class ProductArticlesPage(QWidget):
             or self.ui.line_Prod_Fam.currentText() != "-"
             or self.ui.line_Prod_name.currentText() != "-"
         )
+
+    def reset_form(self):
+        try:
+            self._pending_changes.clear()
+            self._pending_deletes.clear()
+            self._new_rows.clear()
+            self._original_values.clear()
+            self._temp_row_id = -1
+
+            self.table.clearContents()
+            self.table.setRowCount(0)
+            self.show_message("Форма очищена")
+        except Exception as e:
+            self.show_error_message(f"Ошибка очистки формы: {str(e)}")
 
     def show_message(self, text):
         self.ui.label_msg.setText(text)
