@@ -437,6 +437,8 @@ class SupplierPriceExporter:
                     "Supplier Product Name": temp_row.product_name or "",
                     "Our Product Name": product.name if product else "",
                     "Pack": self._excel_value(pack_value),
+                    "Qty, pcs": self._excel_value(temp_row.qty_pcs),
+                    "Volume, L": self._excel_value(temp_row.volume_l),
                     "Price, L": self._excel_value(price_per_l),
                     "Price (Pack)": self._excel_value(price_pack_export),
                     "Currency": calc_row.currency_code if calc_row else (supplier.base_currency if supplier else ""),
@@ -552,7 +554,6 @@ class SupplierPriceExporter:
         wb = None
         try:
             excel = self._create_excel_app()
-            qty_volume_by_row = self._read_qty_volume_from_source_excel(excel, source_file_path)
             wb = excel.Workbooks.Add()
             ws = wb.Worksheets(1)
             ws.Name = "Sheet1"
@@ -597,10 +598,9 @@ class SupplierPriceExporter:
 
             row_num = 2
             for row in rows:
-                qty_volume_source = qty_volume_by_row.get(row_num - 1, {})
                 qty_value, volume_value = self._calc_qty_volume_for_export(
-                    qty_volume_source.get("Qty, pcs"),
-                    qty_volume_source.get("Volume, L"),
+                    row.get("Qty, pcs"),
+                    row.get("Volume, L"),
                     row.get("Pack"),
                 )
                 row["Qty, pcs"] = self._excel_value(qty_value)

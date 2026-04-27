@@ -308,6 +308,8 @@ class TempPriceImport(Base):
 
     price = Column(Numeric, nullable=True)
     price_pack = Column(Numeric, nullable=True)
+    qty_pcs = Column(Numeric, nullable=True)
+    volume_l = Column(Numeric, nullable=True)
 
     supplier_id = Column(
         Integer,

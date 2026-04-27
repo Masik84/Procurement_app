@@ -22,21 +22,26 @@ from PySide6.QtWidgets import (
 from app.ui import resource_rc  # noqa: F401
 from app.ui.main_window_ui import Ui_MainWindow
 
-# ВАЖНО: страницы не импортируем при старте программы.
-# Импорт тяжелых страниц (pandas/openpyxl/win32com и т.д.) делаем только при первом открытии раздела.
-import importlib
+from app.page_functions.customer_costs_page import CustomerCostsPage
+from app.page_functions.exchange_rates_page import ExchangeRatesPage
+from app.page_functions.fixed_costs_page import FixedCostsPage
+from app.page_functions.marking_rates_page import MarkingRatesPage
+from app.page_functions.pack_types_page import PackTypesPage
+from app.page_functions.price_history_page import PriceHistoryPage
+from app.page_functions.price_reports_page import PriceReportsPage
+from app.page_functions.product_articles_page import ProductArticlesPage
+from app.page_functions.product_search_page import ProductSearchPage
+from app.page_functions.product_stock_page import ProductStockPage
+from app.page_functions.products_page import ProductsPage
+from app.page_functions.quick_cost_calc_page import QuickCostCalcPage
+from app.page_functions.supplier_prices_page import SupplierPricesPage
+from app.page_functions.suppliers_page import SuppliersPage
 
-
-PAGE_STYLESHEET = ""
-
-
-def lazy_page(module_name: str, class_name: str):
-    def factory():
-        module = importlib.import_module(module_name)
-        page_class = getattr(module, class_name)
-        return page_class()
-
-    return factory
+try:
+    from app.db.db import Base, engine
+except Exception:
+    Base = None
+    engine = None
 
 
 # alembic revision --autogenerate -m "changed SupplierPriceCalculation"
@@ -127,20 +132,20 @@ class MyWindow(QMainWindow):
 
         self.menu_btns_list = {
             self.home_btn: lambda: PlaceholderPage("Главная"),
-            self.btn_product: lazy_page("app.page_functions.products_page", "ProductsPage"),
-            self.btn_articles: lazy_page("app.page_functions.product_articles_page", "ProductArticlesPage"),
-            self.btn_supplier: lazy_page("app.page_functions.suppliers_page", "SuppliersPage"),
-            self.btn_exchange_rates: lazy_page("app.page_functions.exchange_rates_page", "ExchangeRatesPage"),
-            self.btn_fixed_costs: lazy_page("app.page_functions.fixed_costs_page", "FixedCostsPage"),
-            self.btn_marking_rates: lazy_page("app.page_functions.marking_rates_page", "MarkingRatesPage"),
-            self.btn_pack_types: lazy_page("app.page_functions.pack_types_page", "PackTypesPage"),
-            self.btn_price_history: lazy_page("app.page_functions.price_history_page", "PriceHistoryPage"),
-            self.btn_product_search: lazy_page("app.page_functions.product_search_page", "ProductSearchPage"),
-            self.btn_supplier_price: lazy_page("app.page_functions.supplier_prices_page", "SupplierPricesPage"),
-            self.btn_customer_cost: lazy_page("app.page_functions.customer_costs_page", "CustomerCostsPage"),
-            self.btn_product_stock: lazy_page("app.page_functions.product_stock_page", "ProductStockPage"),
-            self.btn_quick_cost_calc: lazy_page("app.page_functions.quick_cost_calc_page", "QuickCostCalcPage"),
-            self.btn_price_reports: lazy_page("app.page_functions.price_reports_page", "PriceReportsPage"),
+            self.btn_product: ProductsPage,
+            self.btn_articles: ProductArticlesPage,
+            self.btn_supplier: SuppliersPage,
+            self.btn_exchange_rates: ExchangeRatesPage,
+            self.btn_fixed_costs: FixedCostsPage,
+            self.btn_marking_rates: MarkingRatesPage,
+            self.btn_pack_types: PackTypesPage,
+            self.btn_price_history: PriceHistoryPage,
+            self.btn_product_search: ProductSearchPage,
+            self.btn_supplier_price: SupplierPricesPage,
+            self.btn_customer_cost: CustomerCostsPage,
+            self.btn_product_stock: ProductStockPage,
+            self.btn_quick_cost_calc: QuickCostCalcPage,
+            self.btn_price_reports: PriceReportsPage,
         }
 
         self.show_home_window()
@@ -410,9 +415,11 @@ if __name__ == "__main__":
     style_path = Path(__file__).resolve().parent / "app" / "ui" / "styles" / "app_styles.qss"
     PAGE_STYLESHEET = style_path.read_text(encoding="utf-8") if style_path.exists() else ""
 
-    # Не вызываем Base.metadata.create_all() при каждом запуске.
-    # Схему БД обновляй миграциями Alembic отдельно, иначе старт блокируется
-    # запросами к БД и особенно заметно тормозит на удаленном сервере.
+    if Base is not None and engine is not None:
+        try:
+            Base.metadata.create_all(bind=engine)
+        except Exception:
+            pass
 
     window = MyWindow()
     window.show()

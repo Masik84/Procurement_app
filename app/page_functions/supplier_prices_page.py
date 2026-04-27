@@ -85,6 +85,8 @@ class SupplierPricesPage(QWidget):
             "product_name",
             "price",
             "price_pack",
+            "qty_pcs",
+            "volume_l",
             "new_product_name",
             "new_brand",
             "new_pack",
@@ -96,12 +98,14 @@ class SupplierPricesPage(QWidget):
             "Supplier Product name",
             "Price, Lt",
             "Price, pack",
+            "Qty, pcs",
+            "Volume, L",
             "Product name (for new)",
             "Brand (for new)",
             "Pack (for new)",
             "Excise duty (for new)",
         ]
-        self.numeric_columns = {"price", "price_pack", "new_pack"}
+        self.numeric_columns = {"price", "price_pack", "qty_pcs", "volume_l", "new_pack"}
 
         self.setup_ui()
         self.setup_connections()
@@ -409,7 +413,6 @@ class SupplierPricesPage(QWidget):
         self.set_combo_text(self.ui.cbo_Customs, "да" if supplier_data.has_import_duty else "нет")
         self.set_combo_text(self.ui.cbo_Marking, "Поставщик" if supplier_data.marks_for_us else "Феникс")
         self.set_combo_text(self.ui.cbo_Rating, "да" if supplier_data.rating_calc else "нет")
-        self.show_message("Поставщик загружен")
 
     def on_currency_changed(self):
         currency_code = clean_multi_spaces(self.ui.cbo_Currency.currentText()).upper()
@@ -661,15 +664,17 @@ class SupplierPricesPage(QWidget):
             self.table.setItem(row_index, 2, self.build_table_item("product_name", supplier_product_name_text))
             self.table.setItem(row_index, 3, self.build_table_item("price", self.value_to_text(row.price)))
             self.table.setItem(row_index, 4, self.build_table_item("price_pack", self.value_to_text(row.price_pack)))
-            self.table.setItem(row_index, 5, self.build_table_item("new_product_name", new_product_name_text))
+            self.table.setItem(row_index, 5, self.build_table_item("qty_pcs", self.value_to_text(row.qty_pcs)))
+            self.table.setItem(row_index, 6, self.build_table_item("volume_l", self.value_to_text(row.volume_l)))
+            self.table.setItem(row_index, 7, self.build_table_item("new_product_name", new_product_name_text))
 
             brand_item = self.build_display_item(row.id, "new_brand", brand_text)
-            self.table.setItem(row_index, 6, brand_item)
+            self.table.setItem(row_index, 8, brand_item)
 
-            self.table.setItem(row_index, 7, self.build_table_item("new_pack", self.value_to_text(row.new_pack)))
+            self.table.setItem(row_index, 9, self.build_table_item("new_pack", self.value_to_text(row.new_pack)))
             self.table.setCellWidget(
                 row_index,
-                8,
+                10,
                 self.build_checkbox_widget(row.id, bool(row.new_is_excise)),
             )
 
@@ -680,7 +685,7 @@ class SupplierPricesPage(QWidget):
         if self._updating_table:
             return
 
-        if column not in (0, 6):
+        if column not in (0, 8):
             return
 
         if row < 0 or row >= len(self._table_row_ids):
@@ -698,7 +703,7 @@ class SupplierPricesPage(QWidget):
             combo.setFocus()
             QTimer.singleShot(0, combo.showPopup)
 
-        elif column == 6:
+        elif column == 8:
             current_brand = self._get_row_brand(row_id)
             combo = self.build_brand_combo(row_id, current_brand)
             combo.activated.connect(
@@ -794,10 +799,10 @@ class SupplierPricesPage(QWidget):
         self._pending_changes[row_id]["new_brand"] = text
 
         self._updating_table = True
-        self.table.removeCellWidget(row, 6)
+        self.table.removeCellWidget(row, 8)
         self.table.setItem(
             row,
-            6,
+            8,
             self.build_display_item(row_id, "new_brand", text or ""),
         )
         self._updating_table = False
@@ -1101,7 +1106,7 @@ class SupplierPricesPage(QWidget):
 
     def _commit_open_editors(self):
         for row in range(self.table.rowCount()):
-            for column in (0, 6):
+            for column in (0, 8):
                 widget = self.table.cellWidget(row, column)
                 if not isinstance(widget, QComboBox):
                     continue
@@ -1110,7 +1115,7 @@ class SupplierPricesPage(QWidget):
                 row_id = self._table_row_ids[row]
                 if column == 0:
                     self.finish_product_edit(row, row_id, widget)
-                elif column == 6:
+                elif column == 8:
                     self.finish_brand_edit(row, row_id, widget)
 
     def save_pending_changes_to_temp(self):
@@ -1140,7 +1145,7 @@ class SupplierPricesPage(QWidget):
                                 row.selected_product_id = int(value)
                             except (TypeError, ValueError):
                                 continue
-                    elif key in {"price", "price_pack", "new_pack"}:
+                    elif key in {"price", "price_pack", "qty_pcs", "volume_l", "new_pack"}:
                         parsed = parse_loose_number(value)
                         setattr(row, key, parsed if parsed is not None else None)
                     else:
@@ -1216,7 +1221,7 @@ class SupplierPricesPage(QWidget):
                                 setattr(row, key, int(value))
                             except (TypeError, ValueError):
                                 continue
-                        elif key in {"price", "price_pack", "new_pack"}:
+                        elif key in {"price", "price_pack", "qty_pcs", "volume_l", "new_pack"}:
                             parsed = parse_loose_number(value)
                             setattr(row, key, parsed if parsed is not None else None)
                         else:

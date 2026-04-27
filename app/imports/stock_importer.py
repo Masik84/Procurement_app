@@ -92,38 +92,36 @@ class StockImporter:
             "СТОК",
             "НОВОРОССИЙСК",
         )
-        col_stock_end = _find_header_index(
-            headers,
-            "Заказы Клиентов Оплачено/Частично оплачено",
-            "ЗАКАЗЫ",
-            "КЛИЕНТОВ",
-            "ОПЛАЧЕНО",
-        )
-
         required = [
             col_brand, col_prod, col_article, col_sku, col_origin,
             col_lpc, col_landed, col_distr, col_promo,
-            col_brand_group, col_transit, col_stock_start, col_stock_end,
+            col_brand_group, col_transit, col_stock_start,
         ]
         if any(x < 0 for x in required):
             raise ValueError("Не найдены обязательные колонки в листе Stock&Price.")
-        if col_stock_end <= col_stock_start:
-            raise ValueError("Некорректный диапазон колонок остатков.")
+        if col_transit <= col_stock_start:
+            raise ValueError("Некорректный диапазон колонок остатков: 'Общий Транзит, л' должен быть правее 'Свободный сток (Новороссийск)'.")
 
-        stock_headers = headers[col_stock_start:col_stock_end]
-        stock_columns = headers[col_stock_start:col_stock_end]
+        # Остатки ищем по названиям колонок, но только в безопасном диапазоне:
+        # от "Свободный сток (Новороссийск)" до колонки "Общий Транзит, л".
+        # Так колонки могут сдвигаться, но мы не захватываем заказы клиентов и другие блоки справа.
+        # Важно: работаем с индексами колонок, а не с data.loc[:, names], потому что в Excel
+        # бывают повторяющиеся/пустые заголовки, и pandas тогда может подтянуть лишние колонки.
+        stock_col_indexes = list(range(col_stock_start, col_transit))
 
-        markdown_cols: list[str] = []
-        reserve_cols: list[str] = []
-        plain_stock_cols: list[str] = []
-        for h in stock_headers:
-            h_norm = _norm_header(h)
+        markdown_indexes: list[int] = []
+        reserve_indexes: list[int] = []
+        plain_stock_indexes: list[int] = []
+        for i in stock_col_indexes:
+            h_norm = _norm_header(headers[i])
+            if not h_norm:
+                continue
             if _header_contains(h_norm, "УЦЕНКА") or _header_contains(h_norm, "БРАК"):
-                markdown_cols.append(h)
+                markdown_indexes.append(i)
             elif _header_contains(h_norm, "РЕЗЕРВ"):
-                reserve_cols.append(h)
+                reserve_indexes.append(i)
             else:
-                plain_stock_cols.append(h)
+                plain_stock_indexes.append(i)
 
         compact = pd.DataFrame({
             "source_brand": data.iloc[:, col_brand].map(_norm),
@@ -139,14 +137,14 @@ class StockImporter:
             "transit_qty": self._series_to_number(data.iloc[:, col_transit]),
         })
 
-        if stock_columns:
-            stock_matrix = data.loc[:, stock_columns].apply(pd.to_numeric, errors="coerce").fillna(0.0)
-        else:
-            stock_matrix = pd.DataFrame(index=data.index)
+        def sum_columns_by_index(indexes: list[int]) -> pd.Series:
+            if not indexes:
+                return pd.Series(0.0, index=data.index)
+            return data.iloc[:, indexes].apply(pd.to_numeric, errors="coerce").fillna(0.0).sum(axis=1)
 
-        compact["stock_qty"] = stock_matrix[plain_stock_cols].sum(axis=1) if plain_stock_cols else 0.0
-        compact["markdown_qty"] = stock_matrix[markdown_cols].sum(axis=1) if markdown_cols else 0.0
-        compact["reserve_qty"] = stock_matrix[reserve_cols].sum(axis=1) if reserve_cols else 0.0
+        compact["stock_qty"] = sum_columns_by_index(plain_stock_indexes)
+        compact["markdown_qty"] = sum_columns_by_index(markdown_indexes)
+        compact["reserve_qty"] = sum_columns_by_index(reserve_indexes)
 
         compact["total_qty"] = (
             compact["stock_qty"] + compact["markdown_qty"] + compact["reserve_qty"] + compact["transit_qty"]

@@ -12,28 +12,35 @@ from app.utils.text import clean_multi_spaces
 class SupplierPriceImporter:
     """Reads supplier price Excel templates into rows for SupplierPriceService."""
 
+    # ВАЖНО: ключи здесь нормализованы через _norm_header():
+    # убираем пробелы, запятые, точки, скобки и прочие символы.
+    # Так заголовки "Qty, pcs", "Qty pcs", "Qty. pcs", "Volume,L"
+    # будут распознаны одинаково.
     HEADER_ALIASES = {
-        "material number": "supplier_article",
+        "materialnumber": "supplier_article",
         "article": "supplier_article",
-        "supplier article": "supplier_article",
+        "supplierarticle": "supplier_article",
         "material": "product_name",
-        "supplier product name": "product_name",
-        "product name": "product_name",
-        "price, l": "price",
-        "price, lt": "price",
-        "price l": "price",
-        "price, pack": "price_pack",
-        "price (pack)": "price_pack",
-        "price pack": "price_pack",
-        "qty, pcs": "qty_pcs",
-        "qty pcs": "qty_pcs",
-        "volume, l": "volume_l",
-        "volume l": "volume_l",
+        "supplierproductname": "product_name",
+        "productname": "product_name",
+        "pricel": "price",
+        "pricelt": "price",
+        "pricepack": "price_pack",
+        "qtypcs": "qty_pcs",
+        "qtypc": "qty_pcs",
+        "qtypieces": "qty_pcs",
+        "quantitypcs": "qty_pcs",
+        "quantity": "qty_pcs",
+        "volumel": "volume_l",
+        "volumelt": "volume_l",
+        "volume": "volume_l",
+        "volemul": "volume_l",
     }
 
     @staticmethod
     def _norm_header(value: Any) -> str:
-        return clean_multi_spaces(str(value or "")).strip().lower()
+        text = clean_multi_spaces(str(value or "")).strip().lower()
+        return "".join(ch for ch in text if ch.isalnum())
 
     @staticmethod
     def _clean_text(value: Any) -> str | None:
