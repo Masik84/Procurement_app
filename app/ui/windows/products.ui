@@ -426,7 +426,7 @@ QScrollBar::handle:vertical {
             <item>
              <widget class="QLabel" name="label">
               <property name="text">
-               <string>Поиск по имени</string>
+               <string>Поиск по названию</string>
               </property>
              </widget>
             </item>
@@ -565,7 +565,7 @@ QScrollBar::handle:vertical {
                 <height>16777215</height>
                </size>
               </property>
-              <layout class="QVBoxLayout" name="verticalLayout_4" stretch="">
+              <layout class="QVBoxLayout" name="verticalLayout_4">
                <property name="spacing">
                 <number>0</number>
                </property>

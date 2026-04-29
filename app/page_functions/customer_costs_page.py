@@ -873,11 +873,12 @@ class CustomerCostsPage(QWidget):
             self.show_error_message(str(e))
 
     def download_template(self):
-        if not TEMPLATE_PATH.exists():
-            self.show_error_message("Шаблон не найден")
-            return
-
-        save_path, _ = QFileDialog.getSaveFileName(self, "Сохранить шаблон", TEMPLATE_PATH.name, "Excel files (*.xlsx)")
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить шаблон",
+            "Price request_template.xlsx",
+            "Excel files (*.xlsx)",
+        )
         if not save_path:
             return
 
@@ -885,9 +886,15 @@ class CustomerCostsPage(QWidget):
         if target.suffix.lower() != ".xlsx":
             target = target.with_suffix(".xlsx")
 
-        target.write_bytes(TEMPLATE_PATH.read_bytes())
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
-        self.show_message("Шаблон сохранен")
+        try:
+            with self.get_session() as session:
+                exporter = CustomerCostExporter(session)
+                output_path = exporter.export_template(target)
+
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_path)))
+            self.show_message("Шаблон сформирован")
+        except Exception as e:
+            self.show_error_message(str(e))
 
     def show_context_menu(self, position):
         menu = QMenu()

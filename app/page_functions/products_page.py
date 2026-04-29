@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QComboBox,
     QFileDialog,
+    QAbstractItemView,
 )
 from PySide6.QtCore import Qt, QFile, QEvent
 from PySide6.QtGui import QDesktopServices
@@ -66,6 +67,7 @@ class ProductsPage(QWidget):
         self._pending_changes: dict[int, dict] = {}
         self._pending_deletes: set[int] = set()
         self._new_rows: set[int] = set()
+        self._import_update_rows: set[int] = set()
         self._temp_row_id = -1
 
         self.columns = ["id", "name", "brand", "pack", "is_excise", "family"]
@@ -80,13 +82,15 @@ class ProductsPage(QWidget):
     def setup_ui(self):
         self.table = self.ui.table
         setup_data_table(self.table, sorting=True)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
         self.table.cellDoubleClicked.connect(self.on_cell_double_clicked)
 
     def setup_connections(self):
         self.table.itemChanged.connect(self.on_item_changed)
-        self.ui.line_Brand.currentTextChanged.connect(self.fill_in_prod_fam_list)
+        self.ui.line_Brand.currentTextChanged.connect(self.on_brand_filter_changed)
         self.ui.line_Prod_Fam.currentTextChanged.connect(self.fill_in_prod_name_list)
 
         self.ui.btn_Search.clicked.connect(self.find_Product)
@@ -100,6 +104,10 @@ class ProductsPage(QWidget):
             self.ui.btn_Import.clicked.connect(self.import_products)
         if hasattr(self.ui, "btn_Reset"):
             self.ui.btn_Reset.clicked.connect(self.reset_form)
+
+    def on_brand_filter_changed(self):
+        self.fill_in_prod_fam_list()
+        self.fill_in_prod_name_list()
 
     def get_session(self):
         return SessionLocal()
@@ -207,37 +215,56 @@ class ProductsPage(QWidget):
         return checkbox
 
     def delete_selected_row(self):
-        row = self.table.currentRow()
-        if row < 0:
-            self.show_error_message("Не выбрана строка для удаления")
+        selected_rows = sorted({index.row() for index in self.table.selectedIndexes()}, reverse=True)
+
+        if not selected_rows:
+            current_row = self.table.currentRow()
+            if current_row >= 0:
+                selected_rows = [current_row]
+
+        if not selected_rows:
+            self.show_error_message("Не выбраны строки для удаления")
             return
 
-        id_item = self.table.item(row, 0)
-        if not id_item:
-            self.show_error_message("Не удалось определить ID строки")
-            return
+        deleted_count = 0
 
-        row_id_text = id_item.text().strip()
-        if not row_id_text:
-            self.show_error_message("Не удалось определить ID строки")
-            return
+        for row in selected_rows:
+            id_item = self.table.item(row, 0)
+            if not id_item:
+                continue
 
-        row_id = int(row_id_text)
+            row_id_text = id_item.text().strip()
+            if not row_id_text:
+                continue
 
-        if row_id in self._new_rows:
-            self._new_rows.discard(row_id)
-            self._pending_changes.pop(row_id, None)
+            try:
+                row_id = int(row_id_text)
+            except ValueError:
+                continue
+
+            if row_id in self._new_rows:
+                self._new_rows.discard(row_id)
+                self._pending_changes.pop(row_id, None)
+                self._import_update_rows.discard(row_id)
+            else:
+                self._pending_deletes.add(row_id)
+                self._pending_changes.pop(row_id, None)
+                self._import_update_rows.discard(row_id)
+
+            self.table.removeRow(row)
+            deleted_count += 1
+
+        if deleted_count:
+            self.show_message(f"Строк помечено на удаление: {deleted_count}")
         else:
-            self._pending_deletes.add(row_id)
-
-        self.table.removeRow(row)
-        self.show_message("Строка помечена на удаление")
+            self.show_error_message("Не удалось определить строки для удаления")
 
     def revert_changes(self):
         try:
             self._pending_changes.clear()
             self._pending_deletes.clear()
             self._new_rows.clear()
+            self._import_update_rows.clear()
 
             if self.has_active_filters():
                 self.find_Product()
@@ -261,6 +288,13 @@ class ProductsPage(QWidget):
                     session.query(Product).filter(Product.id.in_(self._pending_deletes)).delete(
                         synchronize_session=False
                     )
+                    session.flush()
+
+                # Когда импорт пришел из Excel с заполненными ID, обновляем именно эти ID.
+                # Если несколько продуктов меняют названия одновременно, PostgreSQL может увидеть
+                # старое имя другого продукта как дубль. Поэтому сначала временно освобождаем
+                # старые имена импортируемых строк, а потом ставим финальные значения.
+                self._temporarily_free_import_update_names(session)
 
                 for row_id, changes in self._pending_changes.items():
                     if row_id in self._new_rows:
@@ -273,14 +307,13 @@ class ProductsPage(QWidget):
             self._pending_changes.clear()
             self._pending_deletes.clear()
             self._new_rows.clear()
+            self._import_update_rows.clear()
 
             self.refresh_all_comboboxes()
+            self._reset_filter_controls_after_save()
 
-            if self.has_active_filters():
-                self.find_Product()
-            else:
-                self.table.clearContents()
-                self.table.setRowCount(0)
+            self.table.clearContents()
+            self.table.setRowCount(0)
 
             self.show_message("Данные успешно сохранены")
 
@@ -288,6 +321,89 @@ class ProductsPage(QWidget):
             self.show_error_message(f"Ошибка сохранения в базу данных: {str(e)}")
         except Exception as e:
             self.show_error_message(f"Ошибка применения изменений: {str(e)}")
+
+    def _temporarily_free_import_update_names(self, session):
+        """
+        Excel-импорт с заполненными ID должен обновлять именно эти ID.
+
+        В products.name есть уникальный индекс, поэтому при массовом переименовании
+        возможны два конфликта:
+        1) два импортируемых продукта меняются названиями местами;
+        2) нужное новое название уже занято старым дублем, которого нет в Excel.
+
+        Поэтому перед финальным UPDATE временно освобождаем:
+        - старые названия всех строк, которые обновляются по ID из Excel;
+        - названия сторонних дублей, если они совпадают с финальными именами импорта.
+        """
+        final_names_by_row_id: dict[int, str] = {}
+        duplicate_names: dict[str, list[int]] = {}
+
+        for row_id in list(self._import_update_rows):
+            if row_id in self._pending_deletes or row_id in self._new_rows:
+                continue
+
+            changes = self._pending_changes.get(row_id)
+            if not changes:
+                continue
+
+            new_name = clean_multi_spaces(changes.get("name", "")).upper()
+            if not new_name:
+                continue
+
+            final_names_by_row_id[row_id] = new_name
+            duplicate_names.setdefault(new_name, []).append(row_id)
+
+        conflicts_inside_import = [
+            f"{name}: {ids}"
+            for name, ids in duplicate_names.items()
+            if len(ids) > 1
+        ]
+        if conflicts_inside_import:
+            raise Exception(
+                "В Excel одно и то же Product name указано для нескольких разных ID:\n"
+                + "\n".join(conflicts_inside_import)
+            )
+
+        if not final_names_by_row_id:
+            return
+
+        changed = False
+
+        # 1. Освобождаем старые имена строк, которые точно обновляем по ID.
+        for row_id, new_name in final_names_by_row_id.items():
+            product = session.query(Product).filter(Product.id == row_id).first()
+            if product is None:
+                continue
+
+            old_name = clean_multi_spaces(product.name or "").upper()
+            if old_name and old_name != new_name:
+                product.name = f"__TMP_IMPORT_RENAME_{row_id}__"
+                changed = True
+
+        if changed:
+            session.flush()
+
+        # 2. Если финальное имя занято другим продуктом не из импортируемых ID,
+        # временно переименовываем этот старый дубль, чтобы обновление по ID прошло.
+        target_ids = set(final_names_by_row_id.keys())
+        for target_id, final_name in final_names_by_row_id.items():
+            duplicate = (
+                session.query(Product)
+                .filter(Product.id != target_id, Product.name == final_name)
+                .first()
+            )
+            if duplicate is None:
+                continue
+
+            if int(duplicate.id) in target_ids:
+                # Этот продукт тоже будет обновлен из Excel, его имя уже освобождено выше.
+                continue
+
+            duplicate.name = f"__OLD_DUPLICATE_PRODUCT_{int(duplicate.id)}__"
+            changed = True
+
+        if changed:
+            session.flush()
 
     def _normalize_product_changes(self, changes: dict) -> dict:
         name = clean_multi_spaces(changes.get("name", "")).upper()
@@ -382,14 +498,13 @@ class ProductsPage(QWidget):
             .filter(
                 Product.id != row_id,
                 Product.name == data["name"],
-                Product.brand == data["brand"],
-                Product.pack == data["pack"],
             )
             .first()
         )
         if duplicate:
             raise Exception(
-                f"Продукт '{data['name']}' / '{data['brand']}' / '{self._format_decimal_display(data['pack'])}' уже существует"
+                f"Нельзя сохранить продукт id={row_id} с названием '{data['name']}', "
+                f"потому что такое название уже есть у продукта id={duplicate.id}."
             )
 
         product.name = data["name"]
@@ -711,6 +826,7 @@ class ProductsPage(QWidget):
         self._pending_changes.clear()
         self._pending_deletes.clear()
         self._new_rows.clear()
+        self._import_update_rows.clear()
         self._original_values.clear()
         self.table.clear()
         self.table.setColumnCount(len(self.headers))
@@ -719,33 +835,46 @@ class ProductsPage(QWidget):
 
         with self.get_session() as session:
             for row_index, imported in enumerate(rows):
-                existing = self._find_existing_product_for_import(
-                    session,
-                    name=imported["name"],
-                    brand=imported["brand"],
-                    pack=Decimal(str(imported["pack"])),
-                )
+                imported_id = imported.get("id")
+                existing = None
+
+                # Если в Excel есть ID, обновляем именно этот продукт,
+                # даже если в Excel изменили Product name / Brand / Pack.
+                if imported_id is not None:
+                    existing = (
+                        session.query(Product)
+                        .filter(Product.id == int(imported_id))
+                        .first()
+                    )
+
+                # Если ID пустой или такого ID в БД нет, ищем как раньше:
+                # сначала по name + brand + pack, потом по name.
+                if existing is None:
+                    existing = self._find_existing_product_for_import(
+                        session,
+                        name=imported["name"],
+                        brand=imported["brand"],
+                        pack=Decimal(str(imported["pack"])),
+                    )
+
+                imported_changes = {
+                    "name": imported["name"],
+                    "brand": imported["brand"],
+                    "pack": imported["pack"],
+                    "is_excise": imported["is_excise"],
+                    "family": imported["family"],
+                }
 
                 if existing is not None:
                     row_id = int(existing.id)
-                    self._pending_changes[row_id] = {
-                        "name": imported["name"],
-                        "brand": imported["brand"],
-                        "pack": imported["pack"],
-                        "is_excise": imported["is_excise"],
-                        "family": imported["family"],
-                    }
+                    self._pending_changes[row_id] = imported_changes
+                    if imported_id is not None and int(imported_id) == row_id:
+                        self._import_update_rows.add(row_id)
                 else:
                     row_id = self._temp_row_id
                     self._temp_row_id -= 1
                     self._new_rows.add(row_id)
-                    self._pending_changes[row_id] = {
-                        "name": imported["name"],
-                        "brand": imported["brand"],
-                        "pack": imported["pack"],
-                        "is_excise": imported["is_excise"],
-                        "family": imported["family"],
-                    }
+                    self._pending_changes[row_id] = imported_changes
 
                 row_data = {
                     "id": row_id,
@@ -775,6 +904,7 @@ class ProductsPage(QWidget):
                 self.table.setColumnWidth(i, 100)
 
         self._updating_table = False
+        self.table.setSortingEnabled(True)
 
     def save_to_excel(self):
         file_path, _ = QFileDialog.getSaveFileName(
@@ -905,11 +1035,13 @@ class ProductsPage(QWidget):
                 pass
 
     def _display_data(self, data):
+        self.table.setSortingEnabled(False)
         self.table.clear()
         self.table.setColumnCount(0)
         self.table.setRowCount(0)
 
         if not data:
+            self.table.setSortingEnabled(True)
             self.show_message("Нет данных для отображения")
             return
 
@@ -947,6 +1079,7 @@ class ProductsPage(QWidget):
                 self.table.setColumnWidth(i, 100)
 
         self._updating_table = False
+        self.table.setSortingEnabled(True)
 
     def _build_checkbox_widget(self, row_id, checked):
         checkbox = QCheckBox()
@@ -1116,8 +1249,29 @@ class ProductsPage(QWidget):
                 self.table.setColumnWidth(i, 100)
 
         self._updating_table = False
+        self.table.setSortingEnabled(True)
         self.table.setCurrentCell(0, 1)
         self.show_message("Добавлена новая строка")
+
+    def _reset_filter_controls_after_save(self):
+        for combo_name in ("line_Brand", "line_Prod_Fam", "line_Prod_name"):
+            combo = getattr(self.ui, combo_name, None)
+            if combo is None:
+                continue
+
+            combo.blockSignals(True)
+            try:
+                index = combo.findText("-")
+                if index >= 0:
+                    combo.setCurrentIndex(index)
+                else:
+                    combo.setCurrentText("-")
+            finally:
+                combo.blockSignals(False)
+
+        line_find = getattr(self.ui, "line_FindProduct", None)
+        if line_find is not None:
+            line_find.clear()
 
     def has_active_filters(self):
         return (
@@ -1132,6 +1286,7 @@ class ProductsPage(QWidget):
             self._pending_changes.clear()
             self._pending_deletes.clear()
             self._new_rows.clear()
+            self._import_update_rows.clear()
             self._original_values.clear()
             self._temp_row_id = -1
 

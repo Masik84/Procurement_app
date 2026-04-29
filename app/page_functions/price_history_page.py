@@ -120,6 +120,8 @@ class PriceHistoryPage(QWidget):
         self.ui.btn_DownFile.clicked.connect(self.download_template)
         self.ui.btn_Import.clicked.connect(self.import_excel)
 
+        self.ui.line_TableName.currentTextChanged.connect(self.on_table_changed)
+
         self.ui.line_SupplName.currentTextChanged.connect(self.fill_in_prod_brand_list)
         self.ui.line_SupplName.currentTextChanged.connect(self.fill_in_prod_fam_list)
         self.ui.line_SupplName.currentTextChanged.connect(self.fill_in_prod_name_list)
@@ -183,6 +185,51 @@ class PriceHistoryPage(QWidget):
         self.fill_in_prod_brand_list()
         self.fill_in_prod_fam_list()
         self.fill_in_prod_name_list()
+
+    def on_table_changed(self):
+        """Сбрасывает все фильтры и временное состояние при выборе другой таблицы."""
+        try:
+            self._pending_changes.clear()
+            self._pending_deletes.clear()
+            self._new_rows.clear()
+            self._temp_row_id = -1
+            self._import_preview_active = False
+            self._import_preview_rows = []
+
+            self.table.clearContents()
+            self.table.setRowCount(0)
+
+            self._init_date_filters()
+
+            self.ui.line_SupplName.blockSignals(True)
+            self.ui.line_Brand.blockSignals(True)
+            self.ui.line_Prod_Fam.blockSignals(True)
+            self.ui.line_Prod_name.blockSignals(True)
+            if hasattr(self.ui, "line_NameSearch"):
+                self.ui.line_NameSearch.blockSignals(True)
+
+            self.ui.line_SupplName.setCurrentText("-")
+            self.ui.line_Brand.setCurrentText("-")
+            self.ui.line_Prod_Fam.setCurrentText("-")
+            self.ui.line_Prod_name.setCurrentText("-")
+            if hasattr(self.ui, "line_NameSearch"):
+                self.ui.line_NameSearch.clear()
+
+            self.ui.line_SupplName.blockSignals(False)
+            self.ui.line_Brand.blockSignals(False)
+            self.ui.line_Prod_Fam.blockSignals(False)
+            self.ui.line_Prod_name.blockSignals(False)
+            if hasattr(self.ui, "line_NameSearch"):
+                self.ui.line_NameSearch.blockSignals(False)
+
+            self.fill_in_supplier_list()
+            self.fill_in_prod_brand_list()
+            self.fill_in_prod_fam_list()
+            self.fill_in_prod_name_list()
+
+            self.clear_message()
+        except Exception as e:
+            self.show_error_message(f"Ошибка сброса фильтров: {str(e)}")
 
     def _get_products_for_filters_query(self, session):
         supplier_name = self.ui.line_SupplName.currentText()
@@ -505,6 +552,7 @@ class PriceHistoryPage(QWidget):
             brand = self.ui.line_Brand.currentText()
             family = self.ui.line_Prod_Fam.currentText()
             product_name = self.ui.line_Prod_name.currentText()
+            name_search = clean_multi_spaces(self.ui.line_NameSearch.text()) if hasattr(self.ui, "line_NameSearch") else ""
 
             if mode == MODE_CURRENT:
                 query = (
@@ -529,6 +577,8 @@ class PriceHistoryPage(QWidget):
                     query = query.filter(Product.family == family)
                 if product_name != "-":
                     query = query.filter(Product.name == product_name)
+                if name_search:
+                    query = query.filter(Product.name.ilike(f"%{name_search}%"))
 
                 if start_date:
                     query = query.filter(CurrentSupplierPrice.last_update >= start_date)
@@ -580,6 +630,8 @@ class PriceHistoryPage(QWidget):
                     query = query.filter(Product.family == family)
                 if product_name != "-":
                     query = query.filter(Product.name == product_name)
+                if name_search:
+                    query = query.filter(Product.name.ilike(f"%{name_search}%"))
 
                 if start_date:
                     query = query.filter(PriceHistory.price_date >= start_date)
@@ -754,6 +806,26 @@ class PriceHistoryPage(QWidget):
 
         self._pending_changes[row_key][field_name] = value
 
+    def _resolve_product_id_by_name(self, product_name: str):
+        product_name = clean_multi_spaces(product_name)
+        if not product_name:
+            return None
+        with self.get_session() as session:
+            product = session.query(Product).filter(Product.name == product_name).first()
+            if product:
+                return product.id
+        raise Exception(f"Продукт с name '{product_name}' не найден")
+
+    def _resolve_supplier_id_by_name(self, supplier_name: str):
+        supplier_name = clean_multi_spaces(supplier_name)
+        if not supplier_name:
+            return None
+        with self.get_session() as session:
+            supplier = session.query(Supplier).filter(Supplier.name == supplier_name).first()
+            if supplier:
+                return supplier.id
+        raise Exception(f"Поставщик с name '{supplier_name}' не найден")
+
     def on_item_changed(self, item):
         if self._updating_table:
             return
@@ -769,7 +841,11 @@ class PriceHistoryPage(QWidget):
 
         value = item.text().strip()
 
-        if field_name == "price":
+        if field_name == "product_id":
+            value = self._resolve_product_id_by_name(value)
+        elif field_name == "supplier_id":
+            value = self._resolve_supplier_id_by_name(value)
+        elif field_name == "price":
             value = self._to_decimal(value, "Price")
         elif field_name == "price_date":
             value = self._to_datetime(value, "Price date")
@@ -885,12 +961,19 @@ class PriceHistoryPage(QWidget):
         result.update(changes)
         return result
 
-    def _save_price_to_history_and_current(self, session, values):
+    def _save_price_to_history(self, session, values):
+        """Добавляет строку именно в историю цен.
+
+        Важно: таблица PriceHistory может хранить несколько строк для одной пары
+        поставщик+продукт с разными датами. Таблицу CurrentSupplierPrice здесь
+        не трогаем, чтобы при импорте нескольких исторических строк одной пары
+        не получить дубль по PK current_supplier_prices.
+        """
         currency = str(values["currency"]).strip().upper()
         price_date = values["price_date"]
         price_value = values["price"]
-        product_id = values["product_id"]
-        supplier_id = values["supplier_id"]
+        product_id = int(values["product_id"])
+        supplier_id = int(values["supplier_id"])
 
         row = PriceHistory(
             product_id=product_id,
@@ -900,26 +983,44 @@ class PriceHistoryPage(QWidget):
             currency=currency,
         )
         session.add(row)
+        return supplier_id, product_id
 
-        current_row = session.query(CurrentSupplierPrice).filter(
-            CurrentSupplierPrice.product_id == product_id,
-            CurrentSupplierPrice.supplier_id == supplier_id,
-        ).first()
+    def _sync_current_price_for_pair(self, session, supplier_id: int, product_id: int):
+        """Обновляет таблицу последних цен по самой свежей строке истории."""
+        latest_history = (
+            session.query(PriceHistory)
+            .filter(
+                PriceHistory.supplier_id == int(supplier_id),
+                PriceHistory.product_id == int(product_id),
+            )
+            .order_by(PriceHistory.price_date.desc(), PriceHistory.id.desc())
+            .first()
+        )
+
+        current_row = (
+            session.query(CurrentSupplierPrice)
+            .filter(
+                CurrentSupplierPrice.supplier_id == int(supplier_id),
+                CurrentSupplierPrice.product_id == int(product_id),
+            )
+            .first()
+        )
+
+        if latest_history is None:
+            if current_row is not None:
+                session.delete(current_row)
+            return
 
         if current_row is None:
             current_row = CurrentSupplierPrice(
-                product_id=product_id,
-                supplier_id=supplier_id,
-                last_update=price_date,
-                price=price_value,
-                currency=currency,
+                supplier_id=int(supplier_id),
+                product_id=int(product_id),
             )
             session.add(current_row)
-        else:
-            if current_row.last_update is None or current_row.last_update <= price_date:
-                current_row.last_update = price_date
-                current_row.price = price_value
-                current_row.currency = currency
+
+        current_row.last_update = latest_history.price_date
+        current_row.price = latest_history.price
+        current_row.currency = str(latest_history.currency or "").strip().upper()
 
     def apply_pending_changes(self):
         mode = self.get_mode()
@@ -933,6 +1034,8 @@ class PriceHistoryPage(QWidget):
 
         try:
             with self.get_session() as session:
+                affected_current_pairs = set()
+
                 for row_key, changes in self._pending_changes.items():
                     if row_key.startswith("new::"):
                         values = self._merge_row_values(row_key, {
@@ -975,7 +1078,7 @@ class PriceHistoryPage(QWidget):
                             )
                             session.add(row)
                         else:
-                            self._save_price_to_history_and_current(session, values)
+                            affected_current_pairs.add(self._save_price_to_history(session, values))
 
                     else:
                         if mode == MODE_CURRENT:
@@ -1041,29 +1144,17 @@ class PriceHistoryPage(QWidget):
                             if not str(values["currency"]).strip():
                                 raise Exception("Поле 'Currency' обязательно")
 
-                            row.product_id = values["product_id"]
-                            row.supplier_id = values["supplier_id"]
+                            old_supplier_id = row.supplier_id
+                            old_product_id = row.product_id
+
+                            row.product_id = int(values["product_id"])
+                            row.supplier_id = int(values["supplier_id"])
                             row.price_date = values["price_date"]
                             row.price = values["price"]
                             row.currency = str(values["currency"]).strip().upper()
 
-                            current_row = session.query(CurrentSupplierPrice).filter(
-                                CurrentSupplierPrice.product_id == values["product_id"],
-                                CurrentSupplierPrice.supplier_id == values["supplier_id"],
-                            ).first()
-                            if current_row is None:
-                                current_row = CurrentSupplierPrice(
-                                    product_id=values["product_id"],
-                                    supplier_id=values["supplier_id"],
-                                    last_update=values["price_date"],
-                                    price=values["price"],
-                                    currency=str(values["currency"]).strip().upper(),
-                                )
-                                session.add(current_row)
-                            elif current_row.last_update is None or current_row.last_update <= values["price_date"]:
-                                current_row.last_update = values["price_date"]
-                                current_row.price = values["price"]
-                                current_row.currency = str(values["currency"]).strip().upper()
+                            affected_current_pairs.add((int(old_supplier_id), int(old_product_id)))
+                            affected_current_pairs.add((int(row.supplier_id), int(row.product_id)))
 
                 for row_key in self._pending_deletes:
                     if row_key.startswith("current::"):
@@ -1075,9 +1166,15 @@ class PriceHistoryPage(QWidget):
 
                     elif row_key.startswith("history::"):
                         _, history_id = row_key.split("::")
-                        session.query(PriceHistory).filter(
-                            PriceHistory.id == int(history_id)
-                        ).delete(synchronize_session=False)
+                        history_row = session.query(PriceHistory).filter(PriceHistory.id == int(history_id)).first()
+                        if history_row is not None:
+                            affected_current_pairs.add((int(history_row.supplier_id), int(history_row.product_id)))
+                            session.delete(history_row)
+
+                if mode == MODE_HISTORY and affected_current_pairs:
+                    session.flush()
+                    for supplier_id, product_id in affected_current_pairs:
+                        self._sync_current_price_for_pair(session, supplier_id, product_id)
 
                 session.commit()
 

@@ -209,13 +209,21 @@ class SupplierPricesPage(QWidget):
             session.commit()
 
     def apply_default_values(self):
+        self.ui.cbo_SupplName.blockSignals(True)
         self.set_combo_text(self.ui.cbo_SupplName, "-")
+        self.ui.cbo_SupplName.blockSignals(False)
+
+        self.ui.cbx_NewSupplier.blockSignals(True)
         self.ui.cbx_NewSupplier.setChecked(False)
+        self.ui.cbx_NewSupplier.blockSignals(False)
+
         self.ui.line_NewSupplier.clear()
         self.set_combo_text(self.ui.cbo_SupplierRF, "нет")
         self.set_combo_text(self.ui.cbo_Currency, "-")
         self.ui.line_ExchangeRate.clear()
         self.ui.line_Transport.clear()
+        if hasattr(self.ui, "line_AgentFee"):
+            self.ui.line_AgentFee.clear()
         self.set_combo_text(self.ui.cbo_viaNovo, "через Ново")
         self.ui.line_Reexport.setText("0,0%")
         self.ui.line_FXMarkup.setText("0,0%")
@@ -224,10 +232,20 @@ class SupplierPricesPage(QWidget):
         self.set_combo_text(self.ui.cbo_History, "да")
         self.ui.date_Price.setDate(QDate.currentDate())
         self.set_combo_text(self.ui.cbo_Rating, "да")
+
         self.ui.line_FindProduct.clear()
         self.set_combo_text(self.ui.cbo_FindBrand, "-")
+
         self.selected_file_path = ""
+        self.rf_prices_include_vat = False
         self.toggle_new_supplier_field(False)
+
+    def reset_form_fields_after_successful_save(self):
+        # After save, reset the whole form and all product search filters.
+        self.load_suppliers()
+        self.load_currencies()
+        self.load_find_brands()
+        self.apply_default_values()
 
     def set_combo_text(self, combo: QComboBox, value: str):
         index = combo.findText(value)
@@ -1282,7 +1300,7 @@ class SupplierPricesPage(QWidget):
                     export_error_text = str(export_error)
 
             self.cleanup_current_batch(start_new_batch_after=True)
-            self.load_find_brands()
+            self.reset_form_fields_after_successful_save()
             self.show_message("Данные сохранены")
 
             if export_error_text:

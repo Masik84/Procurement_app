@@ -635,7 +635,7 @@ class SupplierPriceExporter:
 
             # order is / stock is
             ws.Range("AC1:AD1").Interior.Color = self._rgb(192, 0, 0)
-            ws.Range("AE1:AF1").Font.Color = self._rgb(255, 255, 255)
+            ws.Range("AC1:AD1").Font.Color = self._rgb(255, 255, 255)
 
             # reserve / damaged
             ws.Range("AE1:AF1").Interior.Color = self._rgb(33, 92, 152)

@@ -4,7 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from PySide6.QtCore import QFile, QEvent, QPoint, Qt
-from PySide6.QtWidgets import QMessageBox, QToolTip, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QMessageBox, QToolTip, QVBoxLayout, QWidget
 from PySide6.QtUiTools import QUiLoader
 
 from app.db.db import SessionLocal
@@ -421,3 +421,42 @@ class QuickCostCalcPage(QWidget):
     def reset_form(self):
         self.apply_default_values()
         self.show_message("Форма очищена")
+
+    def show_message(self, text: str):
+        label = getattr(self.ui, "label_msg", None)
+        if label is not None:
+            label.setText(text)
+            label.setProperty("active", True)
+            label.style().unpolish(label)
+            label.style().polish(label)
+            label.setVisible(True)
+            return
+
+        anchor = getattr(self.ui, "btn_Calc", self)
+        QToolTip.showText(
+            anchor.mapToGlobal(QPoint(0, anchor.height())),
+            text,
+            anchor,
+        )
+
+    def show_error_message(self, text: str):
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Ошибка")
+        msg.setIcon(QMessageBox.Critical)
+        msg.setMinimumSize(700, 400)
+
+        if len(text) > 500:
+            msg.setText("Произошла ошибка. Подробности ниже (используйте кнопку 'Show Details')")
+            msg.setDetailedText(text)
+        else:
+            msg.setText(text)
+
+        copy_button = msg.addButton("Copy", QMessageBox.ActionRole)
+        msg.addButton(QMessageBox.Ok)
+
+        def copy_text():
+            QApplication.clipboard().setText(text)
+
+        copy_button.clicked.connect(copy_text)
+        msg.exec()
+

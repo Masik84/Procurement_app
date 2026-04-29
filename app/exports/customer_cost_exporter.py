@@ -81,6 +81,116 @@ class CustomerCostExporter:
         header_range.VerticalAlignment = self._xl_vcenter
         ws.Rows(1).EntireRow.AutoFit()
 
+    def _set_number_format_safe(self, target, format_code: str):
+        try:
+            target.NumberFormat = format_code
+        except Exception:
+            try:
+                target.NumberFormatLocal = format_code
+            except Exception:
+                pass
+
+    def export_template(self, file_path: str | Path) -> Path:
+        file_path = Path(file_path)
+        if file_path.suffix.lower() != ".xlsx":
+            file_path = file_path.with_suffix(".xlsx")
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        headers = [
+            "Дата",
+            "Менеджер",
+            "Клиент",
+            "Код продукта",
+            "Название продукта",
+            "Фасовка",
+            "Количество",
+            "Объем л",
+            "Вид закупки",
+            "Условия оплаты",
+            "Комментарии",
+            "Кост руб л с НДС",
+            "Поставщик",
+            "Валюта",
+            "Курс",
+        ]
+
+        excel = None
+        wb = None
+        try:
+            target_path = file_path.resolve()
+            if target_path.exists():
+                try:
+                    target_path.unlink()
+                except PermissionError:
+                    raise PermissionError(
+                        f"Не удается перезаписать файл:\n{target_path}\n\n"
+                        f"Скорее всего, он открыт в Excel. Закрой файл и попробуй снова."
+                    )
+
+            excel = self._create_excel_app()
+            wb = excel.Workbooks.Add()
+            ws = wb.Worksheets(1)
+            ws.Name = "KAM"
+
+            for col_index, header in enumerate(headers, start=1):
+                ws.Cells(1, col_index).Value = header
+
+            self._apply_header_common(ws, len(headers))
+            self._apply_kam_layout(ws)
+
+            try:
+                excel.ActiveWindow.Zoom = 90
+                ws.Activate()
+                ws.Range("L2").Select()
+                excel.ActiveWindow.FreezePanes = True
+            except Exception:
+                pass
+
+            wb.SaveAs(str(target_path))
+            return target_path
+        finally:
+            try:
+                if wb is not None:
+                    wb.Close(SaveChanges=False)
+            except Exception:
+                pass
+            try:
+                if excel is not None:
+                    excel.Quit()
+            except Exception:
+                pass
+            pythoncom.CoUninitialize()
+
+    def _apply_kam_layout(self, ws):
+        ws.Range("A1:K1").Interior.Color = self._rgb(205, 205, 205)
+        ws.Range("L1:L1").Interior.Color = self._rgb(0, 176, 240)
+        ws.Range("M1:O1").Interior.Color = self._rgb(146, 208, 80)
+
+        self._set_number_format_safe(ws.Columns("A:A"), "ДД.ММ.ГГ;@")
+        self._set_number_format_safe(ws.Columns("B:C"), "@")
+        self._set_number_format_safe(ws.Columns("D:D"), "@")
+        self._set_number_format_safe(ws.Columns("F:F"), "General")
+        self._set_number_format_safe(ws.Columns("G:H"), '#,##0;[Red]-#,##0;"-"')
+        self._set_number_format_safe(ws.Columns("L:L"), '#,##0 "₽"')
+
+        ws.Columns("A:A").ColumnWidth = 9.14
+        ws.Columns("B:B").ColumnWidth = 13.00
+        ws.Columns("C:C").ColumnWidth = 19.43
+        ws.Columns("D:D").ColumnWidth = 12.57
+        ws.Columns("E:E").ColumnWidth = 35.00
+        ws.Columns("F:F").ColumnWidth = 9.14
+        ws.Columns("G:G").ColumnWidth = 9.14
+        ws.Columns("H:H").ColumnWidth = 13.00
+        ws.Columns("I:I").ColumnWidth = 9.14
+        ws.Columns("J:J").ColumnWidth = 13.00
+        ws.Columns("K:K").ColumnWidth = 13.00
+        ws.Columns("L:L").ColumnWidth = 10.86
+        ws.Columns("M:M").ColumnWidth = 16.71
+        ws.Columns("N:N").ColumnWidth = 7.86
+        ws.Columns("O:O").ColumnWidth = 8.71
+
+        ws.Range("A1:O1").AutoFilter(1)
+
     def _collect_export_rows(self, batch_id: str, imported_by: str) -> tuple[list[dict], int]:
         rows = self.session.query(TempCustomerCostImport).filter(
             TempCustomerCostImport.batch_id == batch_id,
@@ -219,9 +329,9 @@ class CustomerCostExporter:
 
                 start_col += 5
 
-            ws.Columns("A:A").NumberFormatLocal = "ДД.ММ.ГГ;@"
-            ws.Columns("B:C").NumberFormatLocal = "@"
-            ws.Columns("D:D").NumberFormatLocal = "@"
+            self._set_number_format_safe(ws.Columns("A:A"), "dd/mm/yy;@")
+            self._set_number_format_safe(ws.Columns("B:C"), "@")
+            self._set_number_format_safe(ws.Columns("D:D"), "@")
 
             start_col = len(base_headers) + 1
             for _ in range(1, max_opt + 1):
@@ -231,9 +341,9 @@ class CustomerCostExporter:
                 c4 = self._excel_column_letter(start_col + 3)
                 c5 = self._excel_column_letter(start_col + 4)
 
-                ws.Columns(f"{c1}:{c2}").NumberFormatLocal = '# ##0 ₽'
-                ws.Columns(f"{c3}:{c3}").NumberFormatLocal = "@"
-                ws.Columns(f"{c4}:{c4}").NumberFormatLocal = "ДД.ММ.ГГ;@"
+                self._set_number_format_safe(ws.Columns(f"{c1}:{c2}"), '#,##0 "₽"')
+                self._set_number_format_safe(ws.Columns(f"{c3}:{c3}"), "@")
+                self._set_number_format_safe(ws.Columns(f"{c4}:{c4}"), "ДД.ММ.ГГ;@")
 
                 start_col += 5
 
@@ -390,40 +500,7 @@ class CustomerCostExporter:
 
             self._apply_header_common(ws, len(headers))
 
-            # A:K серый
-            ws.Range("A1:K1").Interior.Color = self._rgb(205, 205, 205)
-
-            # L голубой
-            ws.Range("L1:L1").Interior.Color = self._rgb(0, 176, 240)
-
-            # M:O зеленый
-            ws.Range("M1:O1").Interior.Color = self._rgb(146, 208, 80)
-
-            # Форматы
-            ws.Columns("A:A").NumberFormatLocal = "ДД.ММ.ГГ;@"
-            ws.Columns("B:C").NumberFormatLocal = "@"
-            ws.Columns("F:F").NumberFormatLocal = "General"
-            ws.Columns("G:H").NumberFormatLocal = '# ##0;[Red]-# ##0;"-"'
-            ws.Columns("L:L").NumberFormatLocal = '# ##0 ₽'
-
-            # Ширины по образцу
-            ws.Columns("A:A").ColumnWidth = 9.14
-            ws.Columns("B:B").ColumnWidth = 13.00
-            ws.Columns("C:C").ColumnWidth = 19.43
-            ws.Columns("D:D").ColumnWidth = 12.57
-            ws.Columns("E:E").ColumnWidth = 35.00
-            ws.Columns("F:F").ColumnWidth = 9.14
-            ws.Columns("G:G").ColumnWidth = 9.14
-            ws.Columns("H:H").ColumnWidth = 13.00
-            ws.Columns("I:I").ColumnWidth = 9.14
-            ws.Columns("J:J").ColumnWidth = 13.00
-            ws.Columns("K:K").ColumnWidth = 13.00
-            ws.Columns("L:L").ColumnWidth = 10.86
-            ws.Columns("M:M").ColumnWidth = 16.71
-            ws.Columns("N:N").ColumnWidth = 7.86
-            ws.Columns("O:O").ColumnWidth = 8.71
-
-            ws.Range("A1:O1").AutoFilter(1)
+            self._apply_kam_layout(ws)
 
             try:
                 excel.ActiveWindow.Zoom = 90

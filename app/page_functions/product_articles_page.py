@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QComboBox,
     QFileDialog,
+    QLineEdit,
 )
 from PySide6.QtCore import Qt, QFile, QTimer
 from PySide6.QtGui import QDesktopServices
@@ -583,6 +584,103 @@ class ProductArticlesPage(QWidget):
 
         return data
 
+
+    def _standalone_search_line_edits(self) -> list[QLineEdit]:
+        line_edits = []
+        for widget in self.ui.findChildren(QLineEdit):
+            if isinstance(widget.parent(), QComboBox):
+                continue
+            line_edits.append(widget)
+
+        line_edits.sort(
+            key=lambda w: (
+                w.mapTo(self.ui, w.rect().topLeft()).y(),
+                w.mapTo(self.ui, w.rect().topLeft()).x(),
+                w.objectName(),
+            )
+        )
+        return line_edits
+
+    def _get_search_line_edit(self, role: str):
+        if role == "name":
+            possible_names = [
+                "line_FindProduct",
+                "line_FindName",
+                "line_SearchName",
+                "line_SearchProduct",
+                "line_SearchProductName",
+                "line_ProductNameSearch",
+                "line_ProdNameSearch",
+                "line_FindProductName",
+            ]
+            keywords = ("name", "product", "prod")
+        else:
+            possible_names = [
+                "line_FindArticle",
+                "line_SearchArticle",
+                "line_ArticleSearch",
+                "line_FindArt",
+                "line_SearchArt",
+            ]
+            keywords = ("article", "art")
+
+        for name in possible_names:
+            widget = getattr(self.ui, name, None)
+            if isinstance(widget, QLineEdit):
+                return widget
+
+        for widget in self._standalone_search_line_edits():
+            object_name = (widget.objectName() or "").lower()
+            if any(keyword in object_name for keyword in keywords):
+                return widget
+
+        line_edits = self._standalone_search_line_edits()
+        if role == "name" and len(line_edits) >= 1:
+            return line_edits[0]
+        if role == "article" and len(line_edits) >= 2:
+            return line_edits[1]
+        return None
+
+    def _get_name_search_text(self) -> str:
+        widget = self._get_search_line_edit("name")
+        return self.clean_multi_spaces(widget.text()) if widget is not None else ""
+
+    def _get_article_search_text(self) -> str:
+        widget = self._get_search_line_edit("article")
+        return self.clean_multi_spaces(widget.text()) if widget is not None else ""
+
+    def _clear_search_fields(self):
+        for widget in (self._get_search_line_edit("name"), self._get_search_line_edit("article")):
+            if widget is not None:
+                widget.clear()
+
+    def _apply_current_filters(self, article_data):
+        brand = self.ui.line_Brand.currentText()
+        family = self.ui.line_Prod_Fam.currentText()
+        product_name = self.ui.line_Prod_name.currentText()
+        name_search = self._get_name_search_text().lower()
+        article_search = self._get_article_search_text().lower()
+
+        if brand != "-":
+            article_data = [row for row in article_data if (row["brand"] or "") == brand]
+        if family != "-":
+            article_data = [row for row in article_data if (row["family"] or "") == family]
+        if product_name != "-":
+            article_data = [row for row in article_data if (row["product_name"] or "") == product_name]
+        if name_search:
+            article_data = [
+                row for row in article_data
+                if name_search in (row["product_name"] or "").lower()
+                or name_search in (row["variant_name"] or "").lower()
+            ]
+        if article_search:
+            article_data = [
+                row for row in article_data
+                if article_search in str(row["article"] or "").lower()
+            ]
+
+        return article_data
+
     def find_product_articles(self):
         self.table.clearContents()
         self.table.setRowCount(0)
@@ -590,17 +688,7 @@ class ProductArticlesPage(QWidget):
         article_data = self.get_product_articles_from_db()
 
         if article_data:
-            brand = self.ui.line_Brand.currentText()
-            family = self.ui.line_Prod_Fam.currentText()
-            product_name = self.ui.line_Prod_name.currentText()
-
-            if brand != "-":
-                article_data = [row for row in article_data if (row["brand"] or "") == brand]
-            if family != "-":
-                article_data = [row for row in article_data if (row["family"] or "") == family]
-            if product_name != "-":
-                article_data = [row for row in article_data if (row["product_name"] or "") == product_name]
-
+            article_data = self._apply_current_filters(article_data)
             self._display_data(article_data)
 
             if not article_data:
@@ -614,18 +702,7 @@ class ProductArticlesPage(QWidget):
         if not article_data:
             return []
 
-        brand = self.ui.line_Brand.currentText()
-        family = self.ui.line_Prod_Fam.currentText()
-        product_name = self.ui.line_Prod_name.currentText()
-
-        if brand != "-":
-            article_data = [row for row in article_data if (row["brand"] or "") == brand]
-        if family != "-":
-            article_data = [row for row in article_data if (row["family"] or "") == family]
-        if product_name != "-":
-            article_data = [row for row in article_data if (row["product_name"] or "") == product_name]
-
-        return article_data
+        return self._apply_current_filters(article_data)
 
     def save_to_excel(self):
         file_path, _ = QFileDialog.getSaveFileName(
@@ -999,6 +1076,8 @@ class ProductArticlesPage(QWidget):
             self.ui.line_Brand.currentText() != "-"
             or self.ui.line_Prod_Fam.currentText() != "-"
             or self.ui.line_Prod_name.currentText() != "-"
+            or bool(self._get_name_search_text())
+            or bool(self._get_article_search_text())
         )
 
     def reset_form(self):
@@ -1009,6 +1088,8 @@ class ProductArticlesPage(QWidget):
             self._original_values.clear()
             self._temp_row_id = -1
 
+            self._clear_search_fields()
+            self.refresh_all_comboboxes()
             self.table.clearContents()
             self.table.setRowCount(0)
             self.show_message("Форма очищена")

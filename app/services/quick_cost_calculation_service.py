@@ -92,6 +92,7 @@ class QuickCostCalculationService:
         supplier_is_rf: bool,
         marks_for_us: bool,
         is_excise: bool,
+        agent_fee: Decimal | None = None,
     ) -> QuickCostCalculationResult:
         if self._to_decimal(supplier_price) == Decimal("0"):
             raise ValueError("Поле 'Цена поставщика' не может быть равно 0.")
@@ -115,7 +116,9 @@ class QuickCostCalculationService:
         d_vat = self._to_decimal(fixed.vat)
         d_customs_fee = self._to_decimal(fixed.customs_fee)
         d_bank_fee = self._to_decimal(fixed.bank_fee)
-        d_agent_fee = self._to_decimal(getattr(supplier, "agent_fee", None))
+        d_agent_fee = self._to_decimal(
+            agent_fee if agent_fee is not None else getattr(supplier, "agent_fee", None)
+        )
         d_money = self._to_decimal(fixed.money)
         d_storage = self._to_decimal(fixed.storage)
         d_move_novo = self._to_decimal(fixed.move_novo_tamozh)
