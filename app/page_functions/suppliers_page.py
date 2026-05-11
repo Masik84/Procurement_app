@@ -332,11 +332,11 @@ class SuppliersPage(QWidget):
                 changes.get("transport_cost_per_l", 0),
                 "Transport cost per L",
             ),
-            reexport_percent=self._to_decimal(
+            reexport_percent=self._to_percent_decimal(
                 changes.get("reexport_percent", 0),
                 "Reexport percent",
             ),
-            fx_rate_markup=self._to_decimal(
+            fx_rate_markup=self._to_percent_decimal(
                 changes.get("fx_rate_markup", 0),
                 "FX rate markup",
             ),
@@ -386,13 +386,13 @@ class SuppliersPage(QWidget):
             )
 
         if "reexport_percent" in changes:
-            supplier.reexport_percent = self._to_decimal(
+            supplier.reexport_percent = self._to_percent_decimal(
                 changes["reexport_percent"],
                 "Reexport percent",
             )
 
         if "fx_rate_markup" in changes:
-            supplier.fx_rate_markup = self._to_decimal(
+            supplier.fx_rate_markup = self._to_percent_decimal(
                 changes["fx_rate_markup"],
                 "FX rate markup",
             )
@@ -439,6 +439,26 @@ class SuppliersPage(QWidget):
             return Decimal(text)
         except (InvalidOperation, ValueError):
             raise Exception(f"Поле '{field_name}' должно быть числом")
+
+    def _to_percent_decimal(self, value, field_name):
+        if isinstance(value, Decimal):
+            decimal_value = value
+            has_percent_sign = False
+        else:
+            text = str(value).strip()
+            has_percent_sign = "%" in text
+            text = text.replace("%", "").strip().replace(",", ".")
+            try:
+                decimal_value = Decimal(text)
+            except (InvalidOperation, ValueError):
+                raise Exception(f"Поле '{field_name}' должно быть числом")
+
+        # В БД проценты хранятся долей: 1% = 0.01, 100% = 1.
+        # Поэтому ввод в процентных колонках трактуем именно как проценты.
+        # 1 / 1% -> 0.01; 100 / 100% -> 1; 0,01 остается 0,01.
+        if has_percent_sign or abs(decimal_value) >= Decimal("1"):
+            decimal_value = decimal_value / Decimal("100")
+        return decimal_value
 
     def refresh_all_comboboxes(self):
         self.fill_in_supplier_list()

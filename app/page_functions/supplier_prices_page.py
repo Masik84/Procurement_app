@@ -506,13 +506,18 @@ class SupplierPricesPage(QWidget):
         if not text:
             return Decimal("0")
 
+        has_percent_sign = "%" in text
         cleaned = text.replace("%", "")
         value = parse_loose_number(cleaned)
         if value is None:
             raise ValueError(f"Некорректное поле: {field_name}")
 
         decimal_value = Decimal(str(value))
-        if abs(decimal_value) > Decimal("1"):
+
+        # В БД проценты хранятся долей: 1% = 0.01, 100% = 1.
+        # Старое условие делило только значения > 1, поэтому ровно "1%"
+        # сохранялся как 1 и потом отображался как 100%.
+        if has_percent_sign or abs(decimal_value) >= Decimal("1"):
             decimal_value = decimal_value / Decimal("100")
         return decimal_value
 
@@ -559,13 +564,18 @@ class SupplierPricesPage(QWidget):
         if not text:
             widget.setText("0,0%")
             return
+        has_percent_sign = "%" in text
         cleaned = text.replace("%", "")
         value = parse_loose_number(cleaned)
         if value is None:
             self.show_error_message("Проверь процент")
             return
         decimal_value = Decimal(str(value))
-        if abs(decimal_value) > Decimal("1"):
+
+        # Ввод пользователя считаем процентами, а не готовой долей:
+        # 1 или 1% -> 1,0%; 100 или 100% -> 100,0%.
+        # При этом старые доли вроде 0,01 тоже продолжают работать как 1,0%.
+        if has_percent_sign or abs(decimal_value) >= Decimal("1"):
             decimal_value = decimal_value / Decimal("100")
         widget.setText(self.format_percent(decimal_value))
 

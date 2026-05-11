@@ -171,7 +171,7 @@ class CustomerCostExporter:
         self._set_number_format_safe(ws.Columns("D:D"), "@")
         self._set_number_format_safe(ws.Columns("F:F"), "General")
         self._set_number_format_safe(ws.Columns("G:H"), '#,##0;[Red]-#,##0;"-"')
-        self._set_number_format_safe(ws.Columns("L:L"), '#,##0 "₽"')
+        self._set_number_format_safe(ws.Columns("L:L"), '# ##0 ₽')
 
         ws.Columns("A:A").ColumnWidth = 9.14
         ws.Columns("B:B").ColumnWidth = 13.00
@@ -329,7 +329,7 @@ class CustomerCostExporter:
 
                 start_col += 5
 
-            self._set_number_format_safe(ws.Columns("A:A"), "dd/mm/yy;@")
+            self._set_number_format_safe(ws.Columns("A:A"), "ДД.ММ.ГГ;@")
             self._set_number_format_safe(ws.Columns("B:C"), "@")
             self._set_number_format_safe(ws.Columns("D:D"), "@")
 
@@ -341,7 +341,7 @@ class CustomerCostExporter:
                 c4 = self._excel_column_letter(start_col + 3)
                 c5 = self._excel_column_letter(start_col + 4)
 
-                self._set_number_format_safe(ws.Columns(f"{c1}:{c2}"), '#,##0 "₽"')
+                self._set_number_format_safe(ws.Columns(f"{c1}:{c2}"), '# ##0 ₽')
                 self._set_number_format_safe(ws.Columns(f"{c3}:{c3}"), "@")
                 self._set_number_format_safe(ws.Columns(f"{c4}:{c4}"), "ДД.ММ.ГГ;@")
 
