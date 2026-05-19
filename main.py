@@ -124,6 +124,7 @@ class MyWindow(QMainWindow):
         self.btn_product_stock = self.ui.btn_Stock
         self.btn_quick_cost_calc = self.ui.btn_QuickCostCalc
         self.btn_price_reports = self.ui.btn_PriceReports
+        self.btn_order_planning = self.ui.btn_OrderPlanning
 
         self.menu_btns_list = {
             self.home_btn: lambda: PlaceholderPage("Главная"),
@@ -141,6 +142,7 @@ class MyWindow(QMainWindow):
             self.btn_product_stock: lazy_page("app.page_functions.product_stock_page", "ProductStockPage"),
             self.btn_quick_cost_calc: lazy_page("app.page_functions.quick_cost_calc_page", "QuickCostCalcPage"),
             self.btn_price_reports: lazy_page("app.page_functions.price_reports_page", "PriceReportsPage"),
+            self.btn_order_planning: lazy_page("app.page_functions.order_planning_page", "OrderPlanningPage"),
         }
 
         self.show_home_window()

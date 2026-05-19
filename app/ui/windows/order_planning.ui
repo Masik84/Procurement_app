@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>1467</width>
-    <height>1031</height>
+    <height>1016</height>
    </rect>
   </property>
   <property name="minimumSize">
@@ -82,10 +82,7 @@ QLabel#label_msg {
     border: none;
 }</string>
   </property>
-  <layout class="QHBoxLayout" name="horizontalLayout">
-   <property name="spacing">
-    <number>0</number>
-   </property>
+  <layout class="QGridLayout" name="gridLayout_2">
    <property name="leftMargin">
     <number>0</number>
    </property>
@@ -98,7 +95,7 @@ QLabel#label_msg {
    <property name="bottomMargin">
     <number>0</number>
    </property>
-   <item>
+   <item row="0" column="0">
     <widget class="QWidget" name="widget" native="true">
      <layout class="QVBoxLayout" name="verticalLayout">
       <property name="spacing">
@@ -319,6 +316,12 @@ QLabel#label_msg {
                 <height>65</height>
                </size>
               </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>65</height>
+               </size>
+              </property>
               <property name="frameShape">
                <enum>QFrame::Shape::StyledPanel</enum>
               </property>
@@ -326,6 +329,12 @@ QLabel#label_msg {
                <enum>QFrame::Shadow::Raised</enum>
               </property>
               <layout class="QFormLayout" name="formLayout">
+               <property name="horizontalSpacing">
+                <number>0</number>
+               </property>
+               <property name="verticalSpacing">
+                <number>9</number>
+               </property>
                <property name="leftMargin">
                 <number>0</number>
                </property>
@@ -340,6 +349,12 @@ QLabel#label_msg {
                </property>
                <item row="0" column="0">
                 <widget class="QLabel" name="label">
+                 <property name="minimumSize">
+                  <size>
+                   <width>110</width>
+                   <height>0</height>
+                  </size>
+                 </property>
                  <property name="text">
                   <string>Продажи с</string>
                  </property>
@@ -349,13 +364,13 @@ QLabel#label_msg {
                 <widget class="QDateEdit" name="date_SalesFrom">
                  <property name="minimumSize">
                   <size>
-                   <width>130</width>
+                   <width>0</width>
                    <height>25</height>
                   </size>
                  </property>
                  <property name="maximumSize">
                   <size>
-                   <width>16777215</width>
+                   <width>130</width>
                    <height>25</height>
                   </size>
                  </property>
@@ -372,13 +387,13 @@ QLabel#label_msg {
                 <widget class="QDateEdit" name="date_SalesTo">
                  <property name="minimumSize">
                   <size>
-                   <width>130</width>
+                   <width>0</width>
                    <height>25</height>
                   </size>
                  </property>
                  <property name="maximumSize">
                   <size>
-                   <width>16777215</width>
+                   <width>130</width>
                    <height>0</height>
                   </size>
                  </property>
@@ -407,10 +422,7 @@ QLabel#label_msg {
               <property name="frameShadow">
                <enum>QFrame::Shadow::Raised</enum>
               </property>
-              <layout class="QFormLayout" name="formLayout_2">
-               <property name="horizontalSpacing">
-                <number>0</number>
-               </property>
+              <layout class="QGridLayout" name="gridLayout">
                <property name="leftMargin">
                 <number>0</number>
                </property>
@@ -421,6 +433,9 @@ QLabel#label_msg {
                 <number>0</number>
                </property>
                <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <property name="horizontalSpacing">
                 <number>0</number>
                </property>
                <item row="0" column="0">
@@ -435,12 +450,12 @@ QLabel#label_msg {
                  <property name="minimumSize">
                   <size>
                    <width>0</width>
-                   <height>25</height>
+                   <height>20</height>
                   </size>
                  </property>
                  <property name="maximumSize">
                   <size>
-                   <width>16777215</width>
+                   <width>90</width>
                    <height>25</height>
                   </size>
                  </property>
@@ -457,13 +472,13 @@ QLabel#label_msg {
                 <widget class="QSpinBox" name="spin_SafeStock">
                  <property name="minimumSize">
                   <size>
-                   <width>0</width>
+                   <width>90</width>
                    <height>25</height>
                   </size>
                  </property>
                  <property name="maximumSize">
                   <size>
-                   <width>16777215</width>
+                   <width>90</width>
                    <height>25</height>
                   </size>
                  </property>

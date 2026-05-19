@@ -2,6 +2,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Date,
     Numeric,
     ForeignKey,
     Integer,
@@ -42,6 +43,8 @@ class Product(Base):
     temp_supplier_orders_rows = relationship("TempSupplierOrdersImport", back_populates="selected_product", passive_deletes=True)
     temp_is_rows = relationship("TempIsImport", back_populates="selected_product", passive_deletes=True)
     temp_product_search_rows = relationship("TempProductSearchImport", back_populates="selected_product", passive_deletes=True)
+    sales_links = relationship("SalesProductLink", back_populates="product", passive_deletes=True)
+    order_planning_calculations = relationship("OrderPlanningCalculation", back_populates="product", passive_deletes=True)
 
     customer_price_calculations = relationship(
         "CustomerPriceCalculation",
@@ -278,6 +281,7 @@ class ProductStock(Base):
     stock_qty = Column(Numeric, nullable=False, default=0)
     markdown_qty = Column(Numeric, nullable=False, default=0)
     reserve_qty = Column(Numeric, nullable=False, default=0)
+    reserve_ecomm_qty = Column(Numeric, nullable=False, default=0)
 
     lpc = Column(Numeric, nullable=False, default=0)
     landed_cost = Column(Numeric, nullable=False, default=0)
@@ -494,6 +498,7 @@ class TempStockImport(Base):
     transit_qty = Column(Numeric, nullable=False, default=0)
     markdown_qty = Column(Numeric, nullable=False, default=0)
     reserve_qty = Column(Numeric, nullable=False, default=0)
+    reserve_ecomm_qty = Column(Numeric, nullable=False, default=0)
     
     selected_product_id = Column(
         Integer,
@@ -683,3 +688,67 @@ class CustomerPriceCalculation(Base):
     __table_args__ = (
         Index("ix_customer_price_calc_batch_user", "batch_id", "imported_by"),
     )
+
+# ============================================================
+# ORDER PLANNING
+# ============================================================
+
+class SalesProductLink(Base):
+    __tablename__ = "sales_product_links"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Код продукта из БД продаж. В БД продаж это одновременно id и уникальный код продукта.
+    sales_code = Column(String(255), nullable=False, unique=True, index=True)
+
+    product_id = Column(
+        Integer,
+        ForeignKey("products.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    sales_article = Column(String(255), nullable=True)
+    sales_product_name = Column(String(500), nullable=True)
+    sales_pack = Column(Numeric, nullable=True)
+    sales_brand = Column(String(255), nullable=True)
+    sales_is_excise = Column(Boolean, nullable=True)
+
+    updated_at = Column(DateTime, nullable=False)
+
+    product = relationship("Product", back_populates="sales_links")
+
+    __table_args__ = (
+        Index("ix_sales_product_links_product_id", "product_id"),
+    )
+
+
+class OrderPlanningCalculation(Base):
+    __tablename__ = "order_planning_calculations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    product_id = Column(
+        Integer,
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    period_from = Column(Date, nullable=False, index=True)
+    period_to = Column(Date, nullable=False, index=True)
+
+    avg_sales_month = Column(Numeric, nullable=False, default=0)
+
+    product = relationship("Product", back_populates="order_planning_calculations")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "product_id",
+            "period_from",
+            "period_to",
+            name="uq_order_planning_calc_product_period",
+        ),
+        Index("ix_order_planning_calc_period", "period_from", "period_to"),
+    )
+

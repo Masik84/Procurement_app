@@ -135,31 +135,29 @@ class PriceReportExporter:
         last_col = self._excel_column_letter(headers_count)
         data_range = ws.Range(f"A2:{last_col}{rows_count + 1}")
         data_range.VerticalAlignment = self._xl_vcenter
-        # Главное: НЕ центрируем все ячейки. Текст слева, числовые форматы Excel сам показывает читаемо.
-        data_range.HorizontalAlignment = self._xl_left
 
     def _apply_supplier_price_like_widths_until_damaged(self, ws, header_map: dict[str, int]) -> None:
         # Ширины взяты из SupplierPriceExporter.export_calculated для блока до Damaged.
         for header in ("Supplier Product Name", "Our Product Name", "Product Name"):
             self._set_width_by_header(ws, header_map, header, 31.14)
-        self._set_width_by_header(ws, header_map, "Qty, pcs", 10.50)
-        self._set_width_by_header(ws, header_map, "Volume, L", 10.50)
+        self._set_width_by_header(ws, header_map, "Qty, pcs", 10.00)
+        self._set_width_by_header(ws, header_map, "Volume, L", 10.00)
         self._set_width_by_header(ws, header_map, "Best Suppl", 16.14)
         self._set_width_by_header(ws, header_map, "Best Suppl 2", 16.14)
         self._set_width_by_header(ws, header_map, "last update", 11.00)
         self._set_width_by_header(ws, header_map, "last update (prev)", 11.00)
         self._set_width_by_header(ws, header_map, "last update Best1", 9.43)
-        self._set_width_by_header(ws, header_map, "last update Best2", 9.86)
-        for header in ("Stock", "Transit", "Purchase Order", "Order IS", "Stock IS", "Reserve cust", "Damaged"):
+        self._set_width_by_header(ws, header_map, "last update Best2", 9.43)
+        for header in ("Stock", "Transit", "Purchase Order", "Order IS", "Stock IS", "Reserve cust", "Reserve E-Comm", "Damaged", "Ср.Продажи мес", f"к Быстрому заказу, л ({quick_order_months} м)" if quick_order_months is not None else "к Быстрому заказу, л", "к Заказу, л"):
             self._set_width_by_header(ws, header_map, header, 8.14)
 
     def _apply_repeating_supplier_widths(self, ws, header_map: dict[str, int], start_idx: int) -> None:
         idx = start_idx
         while f"Cost Novo with VAT_{idx}" in header_map:
-            self._set_width_by_header(ws, header_map, f"Cost Novo with VAT_{idx}", 13.00)
-            self._set_width_by_header(ws, header_map, f"Full Cost Msk_{idx}", 13.00)
+            self._set_width_by_header(ws, header_map, f"Cost Novo with VAT_{idx}", 9.00)
+            self._set_width_by_header(ws, header_map, f"Full Cost Msk_{idx}", 9.00)
             self._set_width_by_header(ws, header_map, f"Supplier_{idx}", 16.14)
-            self._set_width_by_header(ws, header_map, f"last update_{idx}", 9.86)
+            self._set_width_by_header(ws, header_map, f"last update_{idx}", 9.43)
             self._set_width_by_header(ws, header_map, f"Currency_{idx}", 8.14)
             idx += 1
 
@@ -172,10 +170,11 @@ class PriceReportExporter:
         self._color_header_range(ws, header_map, "Stock", "Purchase Order", self._rgb(33, 92, 152), self._rgb(255, 255, 255))
         self._color_header_range(ws, header_map, "Order IS", "Stock IS", self._rgb(192, 0, 0), self._rgb(255, 255, 255))
         self._color_header_range(ws, header_map, "Reserve cust", "Damaged", self._rgb(33, 92, 152), self._rgb(255, 255, 255))
+        self._color_header_range(ws, header_map, "Ср.Продажи мес", f"к Заказу, л ({safe_stock_months} м)" if safe_stock_months is not None else "к Заказу, л", self._rgb(160, 43, 147), self._rgb(255, 255, 255))
 
-        self._format_columns_by_headers(ws, header_map, ["Дистр цена", "Промо цена"], "# ##0,00_ ;[Red]-# ##0,00_ ;'-'")
-        self._format_columns_by_headers(ws, header_map, ["curr LPC", "curr Landed cost"], "# ##0 ₽")
-        self._format_columns_by_headers(ws, header_map, ["Stock", "Transit", "Purchase Order", "Order IS", "Stock IS", "Reserve cust", "Damaged"], '# ##0;[Red]-# ##0;"-"')
+        # self._format_columns_by_headers(ws, header_map, [], "# ##0,00_ ;[Red]-# ##0,00_ ;'-'")
+        self._format_columns_by_headers(ws, header_map, ["Дистр цена", "Промо цена", "curr LPC", "curr Landed cost"], "# ##0 ₽")
+        self._format_columns_by_headers(ws, header_map, ["Stock", "Transit", "Purchase Order", "Order IS", "Stock IS", "Reserve cust", "Reserve E-Comm", "Damaged", "Ср.Продажи мес", f"к Быстрому заказу, л ({quick_order_months} м)" if quick_order_months is not None else "к Быстрому заказу, л", "к Заказу, л"], '# ##0;[Red]-# ##0;"-"')
 
         idx = 1
         while f"Cost Novo with VAT_{idx}" in header_map:
@@ -185,11 +184,11 @@ class PriceReportExporter:
 
         self._set_width_by_header(ws, header_map, "Brand", 13.00)
         self._set_width_by_header(ws, header_map, "Product Name", 31.14)
-        self._set_width_by_header(ws, header_map, "Pack", 8.71)
-        self._set_width_by_header(ws, header_map, "Дистр цена", 11.00)
-        self._set_width_by_header(ws, header_map, "Промо цена", 11.00)
-        self._set_width_by_header(ws, header_map, "curr LPC", 13.00)
-        self._set_width_by_header(ws, header_map, "curr Landed cost", 16.00)
+        self._set_width_by_header(ws, header_map, "Pack", 8.43)
+        self._set_width_by_header(ws, header_map, "Дистр цена", 8.43)
+        self._set_width_by_header(ws, header_map, "Промо цена", 8.43)
+        self._set_width_by_header(ws, header_map, "curr LPC", 8.43)
+        self._set_width_by_header(ws, header_map, "curr Landed cost", 8.43)
         self._apply_supplier_price_like_widths_until_damaged(ws, header_map)
         self._apply_repeating_supplier_widths(ws, header_map, 1)
 
@@ -208,11 +207,14 @@ class PriceReportExporter:
         self._color_header_range(ws, header_map, "Stock", "Purchase Order", self._rgb(33, 92, 152), self._rgb(255, 255, 255))
         self._color_header_range(ws, header_map, "Order IS", "Stock IS", self._rgb(192, 0, 0), self._rgb(255, 255, 255))
         self._color_header_range(ws, header_map, "Reserve cust", "Damaged", self._rgb(33, 92, 152), self._rgb(255, 255, 255))
+        self._color_header_range(ws, header_map, "Ср.Продажи мес", f"к Заказу, л ({safe_stock_months} м)" if safe_stock_months is not None else "к Заказу, л", self._rgb(160, 43, 147), self._rgb(255, 255, 255))
 
         self._format_columns_by_headers(ws, header_map, ["last update", "last update Best1", "last update Best2"], "ДД.ММ.ГГ;@")
-        self._format_columns_by_headers(ws, header_map, ["Price, L", "Price (Pack)", "Price, L (prev)", "Дистр цена", "Промо цена"], "# ##0,00_ ;[Red]-# ##0,00_ ;'-'")
-        self._format_columns_by_headers(ws, header_map, ["Cost Novo with VAT", "Full Cost Msk", "Cost Novo with VAT (prev)", "Full Cost Msk (prev)", "curr LPC", "curr Landed cost", "Best full Price, L", "Best full Price, L 2"], "# ##0 ₽")
-        self._format_columns_by_headers(ws, header_map, ["Stock", "Transit", "Purchase Order", "Order IS", "Stock IS", "Reserve cust", "Damaged"], '# ##0;[Red]-# ##0;"-"')
+        self._format_columns_by_headers(ws, header_map, ["Price, L", "Price (Pack)", "Price, L (prev)"], "# ##0,00_ ;[Red]-# ##0,00_ ;'-'")
+        self._format_columns_by_headers(ws, header_map, ["Дистр цена", "Промо цена", "Cost Novo with VAT", "Full Cost Msk", 
+                                                                                            "Cost Novo with VAT (prev)", "Full Cost Msk (prev)", "curr LPC", 
+                                                                                            "curr Landed cost", "Best full Price, L", "Best full Price, L 2"], "# ##0 ₽")
+        self._format_columns_by_headers(ws, header_map, ["Stock", "Transit", "Purchase Order", "Order IS", "Stock IS", "Reserve cust", "Reserve E-Comm", "Damaged", "Ср.Продажи мес", f"к Быстрому заказу, л ({quick_order_months} м)" if quick_order_months is not None else "к Быстрому заказу, л", "к Заказу, л"], '# ##0;[Red]-# ##0;"-"')
 
         idx = 3
         while f"Cost Novo with VAT_{idx}" in header_map:
@@ -221,17 +223,17 @@ class PriceReportExporter:
             idx += 1
 
         self._set_width_by_header(ws, header_map, "Our Product Name", 31.14)
-        self._set_width_by_header(ws, header_map, "Pack", 9.14)
+        self._set_width_by_header(ws, header_map, "Pack", 8.43)
         for header in ("Price, L", "Price (Pack)"):
             self._set_width_by_header(ws, header_map, header, 9.14 if header == "Price, L" else 13.00)
         for header in ("Currency", "Cost Novo with VAT", "Full Cost Msk", "Price, L (prev)", "Cost Novo with VAT (prev)", "Full Cost Msk (prev)"):
-            self._set_width_by_header(ws, header_map, header, 13.00)
-        self._set_width_by_header(ws, header_map, "Дистр цена", 11.00)
-        self._set_width_by_header(ws, header_map, "Промо цена", 11.00)
-        self._set_width_by_header(ws, header_map, "curr LPC", 13.00)
-        self._set_width_by_header(ws, header_map, "curr Landed cost", 16.86)
-        self._set_width_by_header(ws, header_map, "Best full Price, L", 16.86)
-        self._set_width_by_header(ws, header_map, "Best full Price, L 2", 16.86)
+            self._set_width_by_header(ws, header_map, header, 8.71)
+        self._set_width_by_header(ws, header_map, "Дистр цена", 8.43)
+        self._set_width_by_header(ws, header_map, "Промо цена", 8.43)
+        self._set_width_by_header(ws, header_map, "curr LPC", 8.43)
+        self._set_width_by_header(ws, header_map, "curr Landed cost", 8.43)
+        self._set_width_by_header(ws, header_map, "Best full Price, L", 8.43)
+        self._set_width_by_header(ws, header_map, "Best full Price, L 2", 8.43)
         self._apply_supplier_price_like_widths_until_damaged(ws, header_map)
         self._apply_repeating_supplier_widths(ws, header_map, 3)
 
@@ -256,6 +258,20 @@ class PriceReportExporter:
         except Exception:
             pass
 
+
+    @staticmethod
+    def _headers_with_order_months(headers: Sequence[str], quick_order_months: int | None, safe_stock_months: int | None) -> list[str]:
+        result: list[str] = []
+        for header in headers:
+            h = str(header)
+            if h == "к Быстрому заказу, л" and quick_order_months is not None:
+                result.append(f"к Быстрому заказу, л ({quick_order_months} м)")
+            elif h == "к Заказу, л" and safe_stock_months is not None:
+                result.append(f"к Заказу, л ({safe_stock_months} м)")
+            else:
+                result.append(h)
+        return result
+
     def export_report(
         self,
         *,
@@ -263,6 +279,8 @@ class PriceReportExporter:
         rows: Sequence[Sequence[object]],
         output_path: str | Path,
         report_mode: str,
+        quick_order_months: int | None = None,
+        safe_stock_months: int | None = None,
     ) -> Path:
         output_path = Path(output_path)
         if output_path.suffix.lower() != ".xlsx":
@@ -287,6 +305,7 @@ class PriceReportExporter:
             ws = wb.Worksheets(1)
             ws.Name = "Sheet1"
 
+            headers = self._headers_with_order_months(headers, quick_order_months, safe_stock_months)
             self._write_table(ws, headers, rows)
             self._apply_header_common(ws, len(headers))
             self._set_common_data_alignment(ws, len(headers), len(rows))

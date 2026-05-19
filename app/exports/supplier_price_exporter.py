@@ -9,7 +9,7 @@ import pythoncom
 import win32com.client as win32
 from sqlalchemy.orm import Session
 
-from app.db.models import PriceHistory, Product, ProductStock, Supplier, SupplierPriceCalculation, TempPriceImport
+from app.db.models import PriceHistory, Product, ProductStock, Supplier, SupplierPriceCalculation, TempPriceImport, OrderPlanningCalculation
 from app.services.cost_calculation_service import CostCalculationService
 from app.services.price_repository import PriceRepository
 
@@ -371,7 +371,79 @@ class SupplierPriceExporter:
 
         return prev_price, prev_cost_novo, prev_full_cost, prev_snapshot.price_date
 
-    def build_export_rows(self, batch_id: str, imported_by: str) -> list[dict]:
+
+    def _get_latest_avg_sales_month(self, product_id: int):
+        if not product_id:
+            return None
+
+        row = (
+            self.session.query(OrderPlanningCalculation)
+            .filter(OrderPlanningCalculation.product_id == int(product_id))
+            .order_by(
+                OrderPlanningCalculation.period_to.desc(),
+                OrderPlanningCalculation.period_from.desc(),
+                OrderPlanningCalculation.id.desc(),
+            )
+            .first()
+        )
+        return row.avg_sales_month if row else None
+
+    def _calc_order_liters(self, months: int | None, avg_sales_month: object, stock_month_base: object, pack: object):
+        if months is None:
+            return Decimal("0")
+
+        avg = self._to_decimal(avg_sales_month)
+        pack_value = self._to_decimal(pack)
+        base_qty = self._to_decimal(stock_month_base)
+
+        if avg <= 0 or pack_value <= 0:
+            return Decimal("0")
+
+        raw_liters = (Decimal(str(months)) * avg) - base_qty
+        if raw_liters <= 0:
+            return Decimal("0")
+
+        packs = (raw_liters / pack_value).to_integral_value(rounding="ROUND_CEILING")
+        return packs * pack_value
+
+    def _calc_order_planning_export_values(
+        self,
+        *,
+        product_id: int,
+        stock,
+        pack: object,
+        quick_months: int | None,
+        order_months: int | None,
+    ) -> dict:
+        avg_sales_month = self._get_latest_avg_sales_month(product_id)
+
+        if avg_sales_month is None:
+            return {
+                "Ср.Продажи мес": None,
+                "к Быстрому заказу, л": Decimal("0"),
+                "к Заказу, л": Decimal("0"),
+            }
+
+        stock_qty = self._to_decimal(getattr(stock, "stock_qty", None))
+        transit_qty = self._to_decimal(getattr(stock, "transit_qty", None))
+        is_confirmed_order_qty = self._to_decimal(getattr(stock, "is_confirmed_order_qty", None))
+        order_qty = self._to_decimal(getattr(stock, "order_qty", None))
+        is_order_qty = self._to_decimal(getattr(stock, "is_order_qty", None))
+        reserve_qty = self._to_decimal(getattr(stock, "reserve_qty", None))
+        reserve_ecomm_qty = self._to_decimal(getattr(stock, "reserve_ecomm_qty", None))
+        free_base = stock_qty - reserve_qty - reserve_ecomm_qty
+
+        free_st_tr = free_base + transit_qty + is_confirmed_order_qty
+        free_plus_ord = free_base + transit_qty + order_qty + is_order_qty
+
+        return {
+            "Ср.Продажи мес": avg_sales_month,
+            "к Быстрому заказу, л": self._calc_order_liters(quick_months, avg_sales_month, free_st_tr, pack),
+            "к Заказу, л": self._calc_order_liters(order_months, avg_sales_month, free_plus_ord, pack),
+        }
+
+
+    def build_export_rows(self, batch_id: str, imported_by: str, quick_months: int | None = None, order_months: int | None = None) -> list[dict]:
         rows = (
             self.session.query(TempPriceImport, SupplierPriceCalculation, Product, ProductStock, Supplier)
             .outerjoin(
@@ -431,6 +503,14 @@ class SupplierPriceExporter:
             if stock is not None:
                 transit_total = self._to_decimal(stock.transit_qty) + self._to_decimal(stock.is_confirmed_order_qty)
 
+            order_plan_values = self._calc_order_planning_export_values(
+                product_id=product_id_for_row,
+                stock=stock,
+                pack=pack_value,
+                quick_months=quick_months,
+                order_months=order_months,
+            )
+
             out_rows.append(
                 {
                     "Supplier Article": temp_row.supplier_article or "",
@@ -458,13 +538,17 @@ class SupplierPriceExporter:
                     "Best Suppl 2": best2["supplier"],
                     "Best full Price, L 2": self._excel_value(best2["price"]),
                     "last update Best2": best2["date"],
-                    "Stock": self._excel_value(stock.stock_qty if stock else None),
+                    "Stock": self._excel_value((self._to_decimal(stock.stock_qty) - self._to_decimal(stock.reserve_qty) - self._to_decimal(getattr(stock, "reserve_ecomm_qty", 0))) if stock else None),
                     "Transit": self._excel_value(transit_total),
                     "Purchase Order": self._excel_value(stock.order_qty if stock else None),
                     "Order IS": self._excel_value(stock.is_order_qty if stock else None),
                     "Stock IS": self._excel_value(stock.is_stock_qty if stock else None),
                     "Reserve cust": self._excel_value(stock.reserve_qty if stock else None),
+                    "Reserve E-Comm": self._excel_value(getattr(stock, "reserve_ecomm_qty", 0) if stock else None),
                     "Damaged": self._excel_value(stock.markdown_qty if stock else None),
+                    "Ср.Продажи мес": self._excel_value(order_plan_values["Ср.Продажи мес"]),
+                    "к Быстрому заказу, л": self._excel_value(order_plan_values["к Быстрому заказу, л"]),
+                    "к Заказу, л": self._excel_value(order_plan_values["к Заказу, л"]),
                 }
             )
 
@@ -534,6 +618,8 @@ class SupplierPriceExporter:
         supplier_id: int,
         output_path: str | Path | None = None,
         source_file_path: str | Path | None = None,
+        quick_order_months: int | None = None,
+        safe_stock_months: int | None = None,
     ) -> Path:
         supplier = self.session.query(Supplier).filter(Supplier.id == supplier_id).first()
         supplier_name = self._safe_filename(supplier.name if supplier else "Supplier")
@@ -548,7 +634,7 @@ class SupplierPriceExporter:
             output_path = output_path.with_suffix(".xlsx")
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        rows = self.build_export_rows(batch_id=batch_id, imported_by=imported_by)
+        rows = self.build_export_rows(batch_id=batch_id, imported_by=imported_by, quick_months=quick_order_months, order_months=safe_stock_months)
 
         excel = None
         wb = None
@@ -590,7 +676,11 @@ class SupplierPriceExporter:
                 "Order IS",
                 "Stock IS",
                 "Reserve cust",
+                "Reserve E-Comm",
                 "Damaged",
+                "Ср.Продажи мес",
+                f"к Быстрому заказу, л ({quick_order_months} м)" if quick_order_months is not None else "к Быстрому заказу, л",
+                f"к Заказу, л ({safe_stock_months} м)" if safe_stock_months is not None else "к Заказу, л",
             ]
 
             for col_index, header in enumerate(headers, start=1):
@@ -638,8 +728,12 @@ class SupplierPriceExporter:
             ws.Range("AC1:AD1").Font.Color = self._rgb(255, 255, 255)
 
             # reserve / damaged
-            ws.Range("AE1:AF1").Interior.Color = self._rgb(33, 92, 152)
-            ws.Range("AE1:AF1").Font.Color = self._rgb(255, 255, 255)
+            ws.Range("AE1:AG1").Interior.Color = self._rgb(33, 92, 152)
+            ws.Range("AE1:AG1").Font.Color = self._rgb(255, 255, 255)
+
+            # order planning
+            ws.Range("AH1:AJ1").Interior.Color = self._rgb(160, 43, 147)
+            ws.Range("AH1:AJ1").Font.Color = self._rgb(255, 255, 255)
 
             # ===== Number/date formats: use local Excel formats directly =====
             last_row = max(2, row_num - 1)
@@ -662,7 +756,7 @@ class SupplierPriceExporter:
             ws.Columns("X:X").NumberFormatLocal = "# ##0 ₽"
             ws.Columns("Y:Y").NumberFormatLocal = "ДД.ММ.ГГ;@"
 
-            ws.Columns("Z:AF").NumberFormatLocal = '# ##0;[Red]-# ##0;"-"'
+            ws.Columns("Z:AI").NumberFormatLocal = '# ##0;[Red]-# ##0;"-"'
 
             # ===== Column widths =====
             ws.Columns("B:C").ColumnWidth = 31.14
@@ -675,9 +769,9 @@ class SupplierPriceExporter:
             ws.Columns("V:V").ColumnWidth = 9.43
             ws.Columns("Y:Y").ColumnWidth = 9.86
 
-            ws.Columns("Z:AF").ColumnWidth = 8.14
+            ws.Columns("Z:AJ").ColumnWidth = 8.14
 
-            ws.Range("A1:AF1").AutoFilter(1)
+            ws.Range("A1:AJ1").AutoFilter(1)
 
             try:
                 ws.Activate()

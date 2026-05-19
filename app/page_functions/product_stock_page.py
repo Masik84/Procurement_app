@@ -67,6 +67,7 @@ COLUMN_DEFS: dict[str, list[ColumnDef]] = {
         ColumnDef("transit_qty", "Transit qty", editable=True),
         ColumnDef("markdown_qty", "Markdown qty", editable=True),
         ColumnDef("reserve_qty", "Reserve qty", editable=True),
+        ColumnDef("reserve_ecomm_qty", "Reserve E-Comm", editable=True),
         ColumnDef("has_lpc_warning", "LPC err", kind="indicator"),
         ColumnDef("lpc", "LPC", editable=True),
         ColumnDef("landed_cost", "Landed cost", editable=True),
@@ -103,7 +104,7 @@ COLUMN_DEFS: dict[str, list[ColumnDef]] = {
 
 
 NUMERIC_FIELDS = {
-    "stock_qty", "markdown_qty", "reserve_qty", "lpc", "landed_cost", "distr_price", "promo_price",
+    "stock_qty", "markdown_qty", "reserve_qty", "reserve_ecomm_qty", "lpc", "landed_cost", "distr_price", "promo_price",
     "transit_qty", "order_qty", "confirmed_qty", "remains_qty", "new_pack",
 }
 
@@ -150,6 +151,13 @@ class ProductStockPage(QWidget):
         return SessionLocal()
 
     def eventFilter(self, watched, event):
+        if isinstance(watched, QComboBox):
+            row_id = watched.property("row_id")
+            role = watched.property("combo_role")
+            if row_id and role and event.type() in {QEvent.FocusIn, QEvent.MouseButtonPress}:
+                if role == "brand_combo":
+                    self.populate_brand_combo(watched, keep_current=True)
+
         return super().eventFilter(watched, event)
 
     def setup_ui(self):
@@ -324,6 +332,7 @@ class ProductStockPage(QWidget):
                 "transit_qty": row.transit_qty,
                 "markdown_qty": row.markdown_qty,
                 "reserve_qty": row.reserve_qty,
+                "reserve_ecomm_qty": getattr(row, "reserve_ecomm_qty", 0),
                 "has_lpc_warning": bool(row.has_lpc_warning),
                 "lpc": row.lpc,
                 "landed_cost": row.landed_cost,
@@ -371,7 +380,7 @@ class ProductStockPage(QWidget):
         return f"{num:,.1f}".replace(",", " ")
 
     def _format_cell_value(self, field_name: str, value: Any) -> str:
-        if field_name in {"stock_qty", "transit_qty", "markdown_qty", "reserve_qty", "order_qty", "confirmed_qty", "remains_qty"}:
+        if field_name in {"stock_qty", "transit_qty", "markdown_qty", "reserve_qty", "reserve_ecomm_qty", "order_qty", "confirmed_qty", "remains_qty"}:
             return self._format_int_like(value, blank_zero=True)
         if field_name in {"lpc", "landed_cost", "distr_price", "promo_price"}:
             return self._format_decimal1(value, blank_zero=True)
@@ -463,14 +472,20 @@ class ProductStockPage(QWidget):
                 row_id = item.data(Qt.UserRole)
                 if row_id is not None:
                     break
+
         if row_id is None:
             return
 
         if col.kind == "product_combo":
             combo = self._build_product_combo(row_id, self._get_selected_product_id(row_id))
-            combo.activated.connect(lambda _, r=row, rid=row_id, c=combo, key=col.key: self.finish_product_edit(r, rid, c, key))
+            combo.activated.connect(
+                lambda _, r=row, rid=row_id, c=combo, key=col.key: self.finish_product_edit(r, rid, c, key)
+            )
+
             self.table.setCellWidget(row, column, combo)
+            combo.setFocus()
             QTimer.singleShot(0, combo.showPopup)
+
         elif col.kind == "brand_combo":
             combo = self._build_brand_combo(row_id, self._get_brand_text(row_id), self._get_brand_values())
             combo.activated.connect(
@@ -479,9 +494,6 @@ class ProductStockPage(QWidget):
 
             if combo.lineEdit() is not None:
                 combo.lineEdit().returnPressed.connect(
-                    lambda r=row, rid=row_id, c=combo, key=col.key: self.finish_brand_edit(r, rid, c, key)
-                )
-                combo.lineEdit().editingFinished.connect(
                     lambda r=row, rid=row_id, c=combo, key=col.key: self.finish_brand_edit(r, rid, c, key)
                 )
 
@@ -644,8 +656,11 @@ class ProductStockPage(QWidget):
         combo.setInsertPolicy(QComboBox.NoInsert)
         combo.setProperty("row_id", row_id)
         combo.setProperty("combo_role", "brand_combo")
-        combo.installEventFilter(self)
-        combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        # Важно: для Brand (new) не ставим eventFilter.
+        # Иначе при клике/фокусе combo заново заполняется через populate_brand_combo(),
+        # из-за чего выбранный бренд может не успеть сохраниться и визуально "исчезает".
+        # Поведение должно быть как в supplier_prices_page: combo создается один раз,
+        # выбранное значение фиксируется в finish_brand_edit().
         self.populate_brand_combo(combo, keep_current=False, current_text=value or "")
         return combo
 
@@ -823,7 +838,7 @@ class ProductStockPage(QWidget):
             total_qty = 0
             for row in rows:
                 if model is TempStockImport:
-                    total_qty += float(row.stock_qty or 0) + float(row.transit_qty or 0) + float(row.markdown_qty or 0) + float(row.reserve_qty or 0)
+                    total_qty += float(row.stock_qty or 0) + float(row.transit_qty or 0) + float(row.markdown_qty or 0) + float(row.reserve_qty or 0) + float(getattr(row, "reserve_ecomm_qty", 0) or 0)
                 elif model is TempSupplierOrdersImport:
                     total_qty += float(row.order_qty or 0)
                 else:
@@ -907,6 +922,7 @@ class ProductStockPage(QWidget):
                     "TransitQty": self._format_int_like(getattr(row, "transit_qty", None), blank_zero=True),
                     "MarkdownQty": self._format_int_like(row.markdown_qty, blank_zero=True),
                     "ReserveQty": self._format_int_like(row.reserve_qty, blank_zero=True),
+                    "ReserveECommQty": self._format_int_like(getattr(row, "reserve_ecomm_qty", 0), blank_zero=True),
                     "LPC": self._format_decimal1(row.lpc, blank_zero=True),
                     "Comment": "Есть остаток, но LPC пустой или 0. В расчете будет использовано LPC = 0.",
                 } for row in warn_rows]

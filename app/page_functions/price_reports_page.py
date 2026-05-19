@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QInputDialog,
     QFileDialog,
     QTableWidgetItem,
     QVBoxLayout,
@@ -32,6 +33,7 @@ from app.db.models import (
     Product,
     ProductStock,
     Supplier,
+    OrderPlanningCalculation,
 )
 from app.ui.table_style import *
 from app.exports.price_report_exporter import PriceReportExporter
@@ -84,6 +86,8 @@ class PriceReportsPage(QWidget):
         self._export_headers: List[str] = []
         self._export_rows: List[List[object]] = []
         self._updating_fx_table = False
+        self._export_quick_order_months = None
+        self._export_safe_stock_months = None
 
         self.setup_ui()
         self.setup_connections()
@@ -469,6 +473,7 @@ class PriceReportsPage(QWidget):
             "Order IS",
             "Stock IS",
             "Reserve cust",
+            "Reserve E-Comm",
             "Damaged",
         ]
         for idx in range(1, supplier_count + 1):
@@ -515,6 +520,7 @@ class PriceReportsPage(QWidget):
             "Order IS",
             "Stock IS",
             "Reserve cust",
+            "Reserve E-Comm",
             "Damaged",
         ])
         for idx in range(1, other_count + 1):
@@ -536,12 +542,13 @@ class PriceReportsPage(QWidget):
             self._decimal_or_empty(getattr(stock, "promo_price", None)),
             self._decimal_or_empty(getattr(stock, "lpc", None)),
             self._decimal_or_empty(getattr(stock, "landed_cost", None)),
-            self._decimal_or_empty(getattr(stock, "stock_qty", None)),
+            self._decimal_or_empty((self._to_decimal(getattr(stock, "stock_qty", None), Decimal("0")) or Decimal("0")) - (self._to_decimal(getattr(stock, "reserve_qty", None), Decimal("0")) or Decimal("0")) - (self._to_decimal(getattr(stock, "reserve_ecomm_qty", None), Decimal("0")) or Decimal("0"))),
             self._decimal_or_empty(getattr(stock, "transit_qty", None)),
             self._decimal_or_empty(getattr(stock, "order_qty", None)),
             self._decimal_or_empty(getattr(stock, "is_confirmed_order_qty", None)),
             self._decimal_or_empty(getattr(stock, "is_stock_qty", None)),
             self._decimal_or_empty(getattr(stock, "reserve_qty", None)),
+            self._decimal_or_empty(getattr(stock, "reserve_ecomm_qty", None)),
             self._decimal_or_empty(getattr(stock, "markdown_qty", None)),
         ]
 
@@ -603,12 +610,13 @@ class PriceReportsPage(QWidget):
             best2.supplier_name if best2 else "",
             self._decimal_or_empty(best2.full_cost if best2 else None),
             self._date_or_empty(best2.price_date if best2 else None),
-            self._decimal_or_empty(getattr(stock, "stock_qty", None)),
+            self._decimal_or_empty((self._to_decimal(getattr(stock, "stock_qty", None), Decimal("0")) or Decimal("0")) - (self._to_decimal(getattr(stock, "reserve_qty", None), Decimal("0")) or Decimal("0")) - (self._to_decimal(getattr(stock, "reserve_ecomm_qty", None), Decimal("0")) or Decimal("0"))),
             self._decimal_or_empty(getattr(stock, "transit_qty", None)),
             self._decimal_or_empty(getattr(stock, "order_qty", None)),
             self._decimal_or_empty(getattr(stock, "is_confirmed_order_qty", None)),
             self._decimal_or_empty(getattr(stock, "is_stock_qty", None)),
             self._decimal_or_empty(getattr(stock, "reserve_qty", None)),
+            self._decimal_or_empty(getattr(stock, "reserve_ecomm_qty", None)),
             self._decimal_or_empty(getattr(stock, "markdown_qty", None)),
         ])
 
@@ -676,19 +684,224 @@ class PriceReportsPage(QWidget):
             if not file_path:
                 return
 
+            quick_months, order_months = self._ask_order_plan_months()
+            export_headers, export_rows = self._add_order_plan_columns_for_export(
+                headers=self._export_headers,
+                rows=self._export_rows,
+                quick_months=quick_months,
+                order_months=order_months,
+            )
+
+            self._export_quick_order_months = locals().get("quick_order_months", locals().get("quick_months", getattr(self, "_export_quick_order_months", None)))
+            self._export_safe_stock_months = locals().get("safe_stock_months", locals().get("safe_months", locals().get("order_months", getattr(self, "_export_safe_stock_months", None))))
+
             report_mode = "supplier" if self.ui.radio_BySupplier.isChecked() else "product"
             exporter = PriceReportExporter()
             output_path = exporter.export_report(
-                headers=self._export_headers,
-                rows=self._export_rows,
+                headers=export_headers,
+                rows=export_rows,
                 output_path=file_path,
                 report_mode=report_mode,
+                quick_order_months=getattr(self, "_export_quick_order_months", None),
+                safe_stock_months=getattr(self, "_export_safe_stock_months", None),
             )
 
             QDesktopServices.openUrl(Path(output_path).as_uri())
             self.show_message("Excel файл сохранен")
         except Exception as e:
             self.show_error_message(f"Ошибка экспорта в Excel: {str(e)}")
+
+    def _ask_order_plan_months(self) -> tuple[int | None, int | None]:
+        quick_months, ok = QInputDialog.getInt(
+            self,
+            "Быстрый заказ",
+            "Кол-во месяцев к Быстрому заказу:",
+            0,
+            0,
+            120,
+            1,
+        )
+        if not ok:
+            return None, None
+
+        order_months, ok = QInputDialog.getInt(
+            self,
+            "Заказ",
+            "Кол-во месяцев к Заказу:",
+            0,
+            0,
+            120,
+            1,
+        )
+        if not ok:
+            return None, None
+
+        return int(quick_months), int(order_months)
+
+    def _add_order_plan_columns_for_export(
+        self,
+        *,
+        headers: Sequence[str],
+        rows: Sequence[Sequence[object]],
+        quick_months: int | None,
+        order_months: int | None,
+    ) -> tuple[List[str], List[List[object]]]:
+        if "Damaged" not in headers:
+            return list(headers), [list(row) for row in rows]
+
+        insert_at = list(headers).index("Damaged") + 1
+        new_headers = list(headers)
+        extra_headers = ["Ср.Продажи мес", "к Быстрому заказу, л", "к Заказу, л"]
+
+        # Не дублируем колонки, если отчет уже был подготовлен с ними.
+        if not all(header in new_headers for header in extra_headers):
+            for offset, header in enumerate(extra_headers):
+                if header not in new_headers:
+                    new_headers.insert(insert_at + offset, header)
+
+        product_name_header = "Our Product Name" if self.ui.radio_BySupplier.isChecked() else "Product Name"
+        if product_name_header not in headers:
+            return new_headers, [list(row) for row in rows]
+
+        product_name_idx = list(headers).index(product_name_header)
+        order_plan_by_name = self._load_order_plan_export_values_by_product_name(
+            quick_months=quick_months,
+            order_months=order_months,
+        )
+
+        out_rows: List[List[object]] = []
+        for src_row in rows:
+            row = list(src_row)
+            product_name = str(row[product_name_idx] or "").strip() if product_name_idx < len(row) else ""
+            values = order_plan_by_name.get(product_name, {
+                "Ср.Продажи мес": "",
+                "к Быстрому заказу, л": "",
+                "к Заказу, л": "",
+            })
+
+            # Если колонки уже есть, обновляем значения; если нет — вставляем после Damaged.
+            if all(header in headers for header in extra_headers):
+                for header in extra_headers:
+                    idx = list(headers).index(header)
+                    if idx < len(row):
+                        row[idx] = values.get(header, "")
+                out_rows.append(row)
+            else:
+                row[insert_at:insert_at] = [
+                    values.get("Ср.Продажи мес", ""),
+                    values.get("к Быстрому заказу, л", ""),
+                    values.get("к Заказу, л", ""),
+                ]
+                out_rows.append(row)
+
+        return new_headers, out_rows
+
+    def _load_order_plan_export_values_by_product_name(
+        self,
+        *,
+        quick_months: int | None,
+        order_months: int | None,
+    ) -> Dict[str, dict]:
+        with self.get_session() as session:
+            products = session.query(Product).all()
+            product_by_id = {int(product.id): product for product in products}
+            stock_by_product_id = {
+                int(stock.product_id): stock
+                for stock in session.query(ProductStock).all()
+                if stock.product_id is not None
+            }
+
+            # Берем последний сохраненный расчет Ср.Продажи мес по каждому продукту.
+            calc_rows = (
+                session.query(OrderPlanningCalculation)
+                .order_by(
+                    OrderPlanningCalculation.product_id.asc(),
+                    OrderPlanningCalculation.period_to.desc(),
+                    OrderPlanningCalculation.period_from.desc(),
+                    OrderPlanningCalculation.id.desc(),
+                )
+                .all()
+            )
+
+            latest_calc_by_product_id: Dict[int, OrderPlanningCalculation] = {}
+            for calc in calc_rows:
+                product_id = int(calc.product_id)
+                if product_id not in latest_calc_by_product_id:
+                    latest_calc_by_product_id[product_id] = calc
+
+            result: Dict[str, dict] = {}
+            for product_id, product in product_by_id.items():
+                product_name = (product.name or "").strip()
+                if not product_name:
+                    continue
+
+                calc = latest_calc_by_product_id.get(product_id)
+                avg_sales_month = self._to_decimal(getattr(calc, "avg_sales_month", None)) if calc else None
+                stock = stock_by_product_id.get(product_id)
+
+                if avg_sales_month is None:
+                    result[product_name] = {
+                        "Ср.Продажи мес": "",
+                        "к Быстрому заказу, л": "",
+                        "к Заказу, л": "",
+                    }
+                    continue
+
+                stock_qty = self._to_decimal(getattr(stock, "stock_qty", None), Decimal("0")) or Decimal("0")
+                transit_qty = self._to_decimal(getattr(stock, "transit_qty", None), Decimal("0")) or Decimal("0")
+                is_confirmed_order_qty = self._to_decimal(getattr(stock, "is_confirmed_order_qty", None), Decimal("0")) or Decimal("0")
+                order_qty = self._to_decimal(getattr(stock, "order_qty", None), Decimal("0")) or Decimal("0")
+                is_order_qty = self._to_decimal(getattr(stock, "is_order_qty", None), Decimal("0")) or Decimal("0")
+                reserve_qty = self._to_decimal(getattr(stock, "reserve_qty", None), Decimal("0")) or Decimal("0")
+                reserve_ecomm_qty = self._to_decimal(getattr(stock, "reserve_ecomm_qty", None), Decimal("0")) or Decimal("0")
+                free_base = stock_qty - reserve_qty - reserve_ecomm_qty
+
+                free_st_tr = free_base + transit_qty + is_confirmed_order_qty
+                free_plus_ord = free_base + transit_qty + order_qty + is_order_qty
+
+                result[product_name] = {
+                    "Ср.Продажи мес": avg_sales_month,
+                    "к Быстрому заказу, л": self._calc_order_liters_for_export(
+                        months=quick_months,
+                        avg_sales_month=avg_sales_month,
+                        free_qty=free_st_tr,
+                        pack=getattr(product, "pack", None),
+                    ),
+                    "к Заказу, л": self._calc_order_liters_for_export(
+                        months=order_months,
+                        avg_sales_month=avg_sales_month,
+                        free_qty=free_plus_ord,
+                        pack=getattr(product, "pack", None),
+                    ),
+                }
+
+            return result
+
+    def _calc_order_liters_for_export(
+        self,
+        *,
+        months: int | None,
+        avg_sales_month: Decimal,
+        free_qty: Decimal,
+        pack: object,
+    ) -> Decimal:
+        if months is None:
+            return Decimal("0")
+
+        avg_sales_month = self._to_decimal(avg_sales_month, Decimal("0")) or Decimal("0")
+        if avg_sales_month <= 0:
+            return Decimal("0")
+
+        pack_value = self._to_decimal(pack, Decimal("0")) or Decimal("0")
+        if pack_value <= 0:
+            return Decimal("0")
+
+        target_liters = (Decimal(str(months)) * avg_sales_month) - free_qty
+        if target_liters <= 0:
+            return Decimal("0")
+
+        pieces = (target_liters / pack_value).to_integral_value(rounding=ROUND_CEILING)
+        return pieces * pack_value
 
     def _build_export_file_name(self) -> str:
         now_text = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")

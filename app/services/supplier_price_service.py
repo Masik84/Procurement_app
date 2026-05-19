@@ -667,12 +667,22 @@ class SupplierPriceService:
             saved_calculations_count=stats["saved_calculations_count"],
         )
 
-    def export_calculated(self, batch_id: str, imported_by: str, supplier_id: int, output_path: str | Path | None = None) -> Path:
+    def export_calculated(
+        self,
+        batch_id: str,
+        imported_by: str,
+        supplier_id: int,
+        output_path: str | Path | None = None,
+        quick_order_months: int | None = None,
+        safe_stock_months: int | None = None,
+    ) -> Path:
         return self.exporter.export_calculated(
             batch_id=batch_id,
             imported_by=imported_by,
             supplier_id=supplier_id,
             output_path=output_path,
+            quick_order_months=quick_order_months,
+            safe_stock_months=safe_stock_months,
         )
 
 

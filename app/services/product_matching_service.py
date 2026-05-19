@@ -68,7 +68,7 @@ class ProductMatchingService:
             .all()
         )
         for link in links:
-            key = clean_multi_spaces(link.name)
+            key = clean_multi_spaces(link.name).upper()
             if key and key not in cache:
                 cache[key] = link
         return cache
@@ -247,7 +247,7 @@ class ProductMatchingService:
         return self._article_links_cache.get(key)
 
     def _get_article_link_by_exact_name(self, supplier_name: str) -> Optional[ProductArticle]:
-        key = clean_multi_spaces(supplier_name)
+        key = clean_multi_spaces(supplier_name).upper()
         if not key:
             return None
         if self._name_links_cache is None:

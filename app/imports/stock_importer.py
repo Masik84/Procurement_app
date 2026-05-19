@@ -9,7 +9,7 @@ from app.utils.text import clean_multi_spaces, normalize_product_name
 EXCLUDED_BRANDS = {
     "-", "phoenixoil", "gazpromneft", "нефтемастер", "teboil", "glc", "cnrg",
     "coolstream", "kansler", "mannol", "synthetium", "siberia", "foxy",
-    "oilright", "лавр", "lavr", "eltrans", "astrohim",
+    "oilright", "лавр", "lavr", "eltrans", "astrohim", "лукойл",
 }
 
 
@@ -111,6 +111,7 @@ class StockImporter:
 
         markdown_indexes: list[int] = []
         reserve_indexes: list[int] = []
+        reserve_ecomm_indexes: list[int] = []
         plain_stock_indexes: list[int] = []
         for i in stock_col_indexes:
             h_norm = _norm_header(headers[i])
@@ -118,6 +119,8 @@ class StockImporter:
                 continue
             if _header_contains(h_norm, "УЦЕНКА") or _header_contains(h_norm, "БРАК"):
                 markdown_indexes.append(i)
+            elif _header_contains(h_norm, "E-COM") or _header_contains(h_norm, "ECOM") or _header_contains(h_norm, "E-COM ЧЕХОВ"):
+                reserve_ecomm_indexes.append(i)
             elif _header_contains(h_norm, "РЕЗЕРВ"):
                 reserve_indexes.append(i)
             else:
@@ -145,9 +148,10 @@ class StockImporter:
         compact["stock_qty"] = sum_columns_by_index(plain_stock_indexes)
         compact["markdown_qty"] = sum_columns_by_index(markdown_indexes)
         compact["reserve_qty"] = sum_columns_by_index(reserve_indexes)
+        compact["reserve_ecomm_qty"] = sum_columns_by_index(reserve_ecomm_indexes)
 
         compact["total_qty"] = (
-            compact["stock_qty"] + compact["markdown_qty"] + compact["reserve_qty"] + compact["transit_qty"]
+            compact["stock_qty"] + compact["markdown_qty"] + compact["reserve_qty"] + compact["reserve_ecomm_qty"] + compact["transit_qty"]
         )
         compact["has_lpc_warning"] = (compact["total_qty"] > 0) & (compact["lpc"] == 0)
 
@@ -172,6 +176,7 @@ class StockImporter:
                 "transit_qty": float(rec["transit_qty"] or 0),
                 "markdown_qty": float(rec["markdown_qty"] or 0),
                 "reserve_qty": float(rec["reserve_qty"] or 0),
+                "reserve_ecomm_qty": float(rec["reserve_ecomm_qty"] or 0),
                 "has_lpc_warning": bool(rec["has_lpc_warning"]),
             })
 

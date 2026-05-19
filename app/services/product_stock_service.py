@@ -103,6 +103,7 @@ class ProductStockService:
                 transit_qty=r.get("transit_qty") or 0,
                 markdown_qty=r.get("markdown_qty") or 0,
                 reserve_qty=r.get("reserve_qty") or 0,
+                reserve_ecomm_qty=r.get("reserve_ecomm_qty") or 0,
                 selected_product_id=None,
                 has_lpc_warning=bool(r.get("has_lpc_warning")),
                 new_product_name=None,
@@ -448,7 +449,7 @@ class ProductStockService:
         return Decimal("0")
 
     def save_stock_to_product_stock(self, batch_id: str, imported_by: str) -> int:
-        now = datetime.now()
+        now = datetime.combine(datetime.now().date(), datetime.min.time())
 
         self.session.query(ProductStock).update({
             ProductStock.stock_qty: 0,
@@ -478,6 +479,7 @@ class ProductStockService:
                 TempStockImport.transit_qty,
                 TempStockImport.markdown_qty,
                 TempStockImport.reserve_qty,
+                TempStockImport.reserve_ecomm_qty,
             ).filter(
                 TempStockImport.batch_id == batch_id,
                 TempStockImport.imported_by == imported_by,
@@ -488,6 +490,7 @@ class ProductStockService:
             transit_qty = sum(self._to_decimal(x.transit_qty) for x in sums)
             markdown_qty = sum(self._to_decimal(x.markdown_qty) for x in sums)
             reserve_qty = sum(self._to_decimal(x.reserve_qty) for x in sums)
+            reserve_ecomm_qty = sum(self._to_decimal(getattr(x, "reserve_ecomm_qty", 0)) for x in sums)
 
             lpc_val = self._weighted_field_by_product(batch_id, imported_by, product_id, "lpc")
             landed_val = self._weighted_field_by_product(batch_id, imported_by, product_id, "landed_cost")
@@ -508,6 +511,7 @@ class ProductStockService:
                     stock_qty=stock_qty,
                     markdown_qty=markdown_qty,
                     reserve_qty=reserve_qty,
+                    reserve_ecomm_qty=reserve_ecomm_qty,
                     lpc=lpc_val,
                     landed_cost=landed_val,
                     distr_price=distr_val,
@@ -525,6 +529,7 @@ class ProductStockService:
                 stock.stock_qty = stock_qty
                 stock.markdown_qty = markdown_qty
                 stock.reserve_qty = reserve_qty
+                stock.reserve_ecomm_qty = reserve_ecomm_qty
                 stock.transit_qty = transit_qty
                 stock.lpc = lpc_val
                 stock.landed_cost = landed_val
@@ -538,7 +543,7 @@ class ProductStockService:
         return saved
 
     def save_supplier_orders_to_product_stock(self, batch_id: str, imported_by: str) -> int:
-        now = datetime.now()
+        now = datetime.combine(datetime.now().date(), datetime.min.time())
 
         self.session.query(ProductStock).update({
             ProductStock.order_qty: 0,
@@ -584,6 +589,7 @@ class ProductStockService:
                     stock_qty=0,
                     markdown_qty=0,
                     reserve_qty=0,
+                    reserve_ecomm_qty=0,
                     lpc=0,
                     landed_cost=0,
                     distr_price=0,
@@ -606,7 +612,7 @@ class ProductStockService:
         return saved
 
     def save_is_to_product_stock(self, batch_id: str, imported_by: str) -> int:
-        now = datetime.now()
+        now = datetime.combine(datetime.now().date(), datetime.min.time())
 
         self.session.query(ProductStock).update({
             ProductStock.is_update_date: now,
@@ -650,6 +656,7 @@ class ProductStockService:
                     stock_qty=0,
                     markdown_qty=0,
                     reserve_qty=0,
+                    reserve_ecomm_qty=0,
                     lpc=0,
                     landed_cost=0,
                     distr_price=0,

@@ -45,8 +45,8 @@ class ISImporter:
         if self.orders_sheet in book.sheet_names:
             df = pd.read_excel(book, sheet_name=self.orders_sheet, header=None)
             if len(df) >= 4:
-                headers = [str(x).strip() if pd.notna(x) else "" for x in df.iloc[2].tolist()]
-                data = df.iloc[3:].copy().reset_index(drop=True)
+                headers = [str(x).strip() if pd.notna(x) else "" for x in df.iloc[3].tolist()]
+                data = df.iloc[4:].copy().reset_index(drop=True)
                 data.columns = headers
 
                 col_code = _find_header_index(headers, "Phoenix code")
@@ -65,7 +65,7 @@ class ISImporter:
                     'confirmed_qty': pd.to_numeric(data.iloc[:, col_confirmed], errors='coerce').fillna(0).clip(lower=0).astype(float),
                 })
                 orders['stock_qty'] = 0.0
-                orders['import_row_no'] = orders.index + 4
+                orders['import_row_no'] = orders.index + 5
                 non_empty_mask = (orders['source_article'] != '') | (orders['source_product_name'] != '')
                 qty_mask = (orders['remains_qty'] + orders['confirmed_qty']) > 0
                 orders = orders.loc[non_empty_mask & qty_mask]

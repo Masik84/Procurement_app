@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QAbstractItemView,
 )
-from PySide6.QtCore import Qt, QFile
+from PySide6.QtCore import Qt, QFile, QDate
 from PySide6.QtUiTools import QUiLoader
 
 from app.db.models import Product, Supplier, PriceHistory, CurrentSupplierPrice
@@ -100,6 +100,7 @@ class PriceHistoryPage(QWidget):
 
     def setup_ui(self):
         setup_data_table(self.table, sorting=True)
+        self._setup_date_edits()
         self._init_date_filters()
 
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -107,6 +108,12 @@ class PriceHistoryPage(QWidget):
 
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.clear_message()
+
+    def _setup_date_edits(self):
+        for date_edit in (self.ui.line_Start_date, self.ui.line_End_date):
+            date_edit.setCalendarPopup(True)
+            date_edit.setDisplayFormat("dd.MM.yyyy")
+            date_edit.setSpecialValueText("")
 
     def setup_connections(self):
         self.table.cellDoubleClicked.connect(self.start_cell_edit)
@@ -513,13 +520,11 @@ class PriceHistoryPage(QWidget):
         self.show_message("Скопировано")
 
     def _init_date_filters(self):
-        from PySide6.QtCore import QDate
         today = QDate.currentDate()
         self.ui.line_Start_date.setDate(today)
         self.ui.line_End_date.setDate(today)
 
     def _get_date_filters(self):
-        from PySide6.QtCore import QDate
         start_qdate = self.ui.line_Start_date.date()
         end_qdate = self.ui.line_End_date.date()
         today = QDate.currentDate()

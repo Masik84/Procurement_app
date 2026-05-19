@@ -584,7 +584,6 @@ class ProductArticlesPage(QWidget):
 
         return data
 
-
     def _standalone_search_line_edits(self) -> list[QLineEdit]:
         line_edits = []
         for widget in self.ui.findChildren(QLineEdit):
@@ -908,7 +907,7 @@ class ProductArticlesPage(QWidget):
                 valid_rows.append(
                     {
                         "product_name": product_name,
-                        "article": self.clean_multi_spaces(imported.get("article", "")),
+                        "article": self.normalize_article_value(imported.get("article", "")),
                         "variant_name": self.clean_multi_spaces(imported.get("variant_name", "")).upper(),
                     }
                 )
@@ -1079,6 +1078,21 @@ class ProductArticlesPage(QWidget):
             or bool(self._get_name_search_text())
             or bool(self._get_article_search_text())
         )
+
+    def normalize_article_value(self, value) -> str:
+        if value is None:
+            return ""
+
+        text = str(value).strip()
+        if not text or text.lower() == "nan":
+            return ""
+
+        if text.endswith(".0"):
+            left = text[:-2]
+            if left.isdigit():
+                return left
+
+        return self.clean_multi_spaces(text)
 
     def reset_form(self):
         try:

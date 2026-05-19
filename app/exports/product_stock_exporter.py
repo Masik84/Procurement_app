@@ -57,6 +57,7 @@ class ProductStockExporter:
                 "StockQty": row.stock_qty,
                 "MarkdownQty": row.markdown_qty,
                 "ReserveQty": row.reserve_qty,
+                "ReserveECommQty": getattr(row, "reserve_ecomm_qty", 0),
                 "LPC": row.lpc,
                 "Comment": "Есть остаток, но LPC пустой или 0. В расчете будет использовано LPC = 0.",
             })

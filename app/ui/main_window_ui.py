@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 ################################################################################
-## Form generated from reading UI file 'main_windowfJABGB.ui'
+## Form generated from reading UI file 'main_windowmVWUTe.ui'
 ##
 ## Created by: Qt User Interface Compiler version 6.11.0
 ##
@@ -353,6 +353,11 @@ class Ui_MainWindow(object):
 
         self.verticalLayout_2.addWidget(self.btn_QuickCostCalc)
 
+        self.btn_OrderPlanning = QPushButton(self.docs_page)
+        self.btn_OrderPlanning.setObjectName(u"btn_OrderPlanning")
+
+        self.verticalLayout_2.addWidget(self.btn_OrderPlanning)
+
         self.verticalSpacer_2 = QSpacerItem(20, 350, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
 
         self.verticalLayout_2.addItem(self.verticalSpacer_2)
@@ -581,6 +586,7 @@ class Ui_MainWindow(object):
         self.btn_CustomerCost.setText(QCoreApplication.translate("MainWindow", u"\u041a\u043e\u0441\u0442\u044b \u0434\u043b\u044f \u041a\u043b\u0438\u0435\u043d\u0442\u043e\u0432", None))
         self.btn_Stock.setText(QCoreApplication.translate("MainWindow", u"\u041e\u0441\u0442\u0430\u0442\u043a\u0438 / \u0417\u0430\u043a\u0430\u0437\u044b \u041f\u043e\u0441\u0442-\u043e\u0432", None))
         self.btn_QuickCostCalc.setText(QCoreApplication.translate("MainWindow", u"\u0411\u044b\u0441\u0442\u0440\u044b\u0439 \u0440\u0430\u0441\u0447\u0435\u0442 \u041a\u043e\u0441\u0442\u0430", None))
+        self.btn_OrderPlanning.setText(QCoreApplication.translate("MainWindow", u"\u041f\u043b\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435 \u0417\u0430\u043a\u0443\u043f\u043a\u0438", None))
         self.toolBox.setItemText(self.toolBox.indexOf(self.docs_page), QCoreApplication.translate("MainWindow", u"\u0420\u0430\u0441\u0447\u0435\u0442\u044b/\u041e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435", None))
         self.btn_PriceReports.setText(QCoreApplication.translate("MainWindow", u"\u041e\u0442\u0447\u0435\u0442 \u043f\u043e \u0426\u0435\u043d\u0430\u043c \u041f\u043e\u0441\u0442\u0430\u0432\u0449\u0438\u043a\u043e\u0432", None))
         self.toolBox.setItemText(self.toolBox.indexOf(self.bonus_page), QCoreApplication.translate("MainWindow", u"\u041e\u0442\u0447\u0435\u0442\u044b", None))

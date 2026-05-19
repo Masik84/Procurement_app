@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
+    QInputDialog,
     QHBoxLayout,
     QHeaderView,
     QLineEdit,
@@ -72,6 +73,8 @@ class SupplierPricesPage(QWidget):
         self.batch_id = ""
         self.selected_file_path = ""
         self.rf_prices_include_vat = False
+        self._export_quick_order_months = None
+        self._export_safe_stock_months = None
 
         self._updating_table = False
         self._pending_changes: dict[int, dict] = {}
@@ -278,7 +281,39 @@ class SupplierPricesPage(QWidget):
             == QMessageBox.Yes
         )
 
-    def export_calculated_excel(self, supplier_id: int):
+    def ask_order_planning_months_for_export(self):
+        quick_months, ok = QInputDialog.getInt(
+            self,
+            "Быстрый заказ",
+            "Кол-во месяцев к Быстрому заказу:",
+            value=0,
+            minValue=0,
+            maxValue=120,
+            step=1,
+        )
+        if not ok:
+            return None, None
+
+        safe_months, ok = QInputDialog.getInt(
+            self,
+            "Заказ",
+            "Кол-во месяцев к Заказу:",
+            value=0,
+            minValue=0,
+            maxValue=120,
+            step=1,
+        )
+        if not ok:
+            return None, None
+
+        return int(quick_months), int(safe_months)
+
+    def export_calculated_excel(
+        self,
+        supplier_id: int,
+        quick_order_months: int | None = None,
+        safe_stock_months: int | None = None,
+    ):
         supplier_name = (
             clean_multi_spaces(self.ui.line_NewSupplier.text())
             or clean_multi_spaces(self.ui.cbo_SupplName.currentText())
@@ -308,6 +343,8 @@ class SupplierPricesPage(QWidget):
                 supplier_id=supplier_id,
                 output_path=file_path,
                 source_file_path=self.selected_file_path or None,
+                quick_order_months=quick_order_months,
+                safe_stock_months=safe_stock_months,
             )
 
         QDesktopServices.openUrl(Path(output_path).as_uri())
@@ -1303,9 +1340,17 @@ class SupplierPricesPage(QWidget):
                 session.commit()
 
             export_error_text = None
+            self._export_quick_order_months = locals().get("quick_order_months", locals().get("quick_months"))
+            self._export_safe_stock_months = locals().get("safe_stock_months", locals().get("safe_months", locals().get("order_months")))
+
             if self.ask_export_calculated_excel():
+                quick_order_months, safe_stock_months = self.ask_order_planning_months_for_export()
                 try:
-                    self.export_calculated_excel(supplier_id)
+                    self.export_calculated_excel(
+                        supplier_id,
+                        quick_order_months=quick_order_months,
+                        safe_stock_months=safe_stock_months,
+                    )
                 except Exception as export_error:
                     export_error_text = str(export_error)
 
