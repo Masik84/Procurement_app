@@ -174,7 +174,7 @@ class ProductSearchPage(QWidget):
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Сохранить шаблон",
-            str(Path.home() / "ProductSearchTemplate.xlsx"),
+            str(BASE_DIR / "ProductSearchTemplate.xlsx"),
             "Excel files (*.xlsx)",
         )
         if not file_path:
@@ -700,7 +700,7 @@ class ProductSearchPage(QWidget):
                 save_path, _ = QFileDialog.getSaveFileName(
                     self,
                     "Сохранить итоговый файл",
-                    str(Path.home() / f"ProductSearch_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"),
+                    str(BASE_DIR / f"ProductSearch_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"),
                     "Excel files (*.xlsx)",
                 )
                 if not save_path:

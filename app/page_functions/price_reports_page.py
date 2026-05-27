@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal, InvalidOperation, ROUND_CEILING
+from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_HALF_UP
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
@@ -67,6 +67,7 @@ class SupplierOption:
     supplier_price: Optional[Decimal]
     price_date: Optional[datetime]
     currency: str
+    fx_rate: Optional[Decimal]
     cost_novo: Optional[Decimal]
     full_cost: Optional[Decimal]
 
@@ -482,6 +483,7 @@ class PriceReportsPage(QWidget):
                 f"Full Cost Msk_{idx}",
                 f"Supplier_{idx}",
                 f"last update_{idx}",
+                f"FX rate_{idx}",
                 f"Currency_{idx}",
             ])
         return headers
@@ -494,11 +496,13 @@ class PriceReportsPage(QWidget):
             "Price, L",
             "Price (Pack)",
             "Currency",
+            "FX rate",
             "Cost Novo with VAT",
             "Full Cost Msk",
         ]
         if show_prev:
             headers.extend([
+                "last update (prev)",
                 "Price, L (prev)",
                 "Cost Novo with VAT (prev)",
                 "Full Cost Msk (prev)",
@@ -511,9 +515,13 @@ class PriceReportsPage(QWidget):
             "Best Suppl",
             "Best full Price, L",
             "last update Best1",
+            "FX rate Best1",
+            "Currency Best1",
             "Best Suppl 2",
             "Best full Price, L 2",
             "last update Best2",
+            "FX rate Best2",
+            "Currency Best2",
             "Stock",
             "Transit",
             "Purchase Order",
@@ -529,6 +537,7 @@ class PriceReportsPage(QWidget):
                 f"Full Cost Msk_{idx + 2}",
                 f"Supplier_{idx + 2}",
                 f"last update_{idx + 2}",
+                f"FX rate_{idx + 2}",
                 f"Currency_{idx + 2}",
             ])
         return headers
@@ -542,10 +551,10 @@ class PriceReportsPage(QWidget):
             self._decimal_or_empty(getattr(stock, "promo_price", None)),
             self._decimal_or_empty(getattr(stock, "lpc", None)),
             self._decimal_or_empty(getattr(stock, "landed_cost", None)),
-            self._decimal_or_empty((self._to_decimal(getattr(stock, "stock_qty", None), Decimal("0")) or Decimal("0")) - (self._to_decimal(getattr(stock, "reserve_qty", None), Decimal("0")) or Decimal("0")) - (self._to_decimal(getattr(stock, "reserve_ecomm_qty", None), Decimal("0")) or Decimal("0"))),
+            self._decimal_or_empty(getattr(stock, "stock_qty", None)),
             self._decimal_or_empty(getattr(stock, "transit_qty", None)),
             self._decimal_or_empty(getattr(stock, "order_qty", None)),
-            self._decimal_or_empty(getattr(stock, "is_confirmed_order_qty", None)),
+            self._decimal_or_empty(getattr(stock, "is_order_qty", None)),
             self._decimal_or_empty(getattr(stock, "is_stock_qty", None)),
             self._decimal_or_empty(getattr(stock, "reserve_qty", None)),
             self._decimal_or_empty(getattr(stock, "reserve_ecomm_qty", None)),
@@ -558,13 +567,14 @@ class PriceReportsPage(QWidget):
 
         for option in normalized:
             if option is None:
-                row.extend(["", "", "", "", ""])
+                row.extend(["", "", "", "", "", ""])
             else:
                 row.extend([
                     self._decimal_or_empty(option.cost_novo),
                     self._decimal_or_empty(option.full_cost),
                     option.supplier_name,
                     self._date_or_empty(option.price_date),
+                    self._round_fx_rate(option.fx_rate),
                     option.currency,
                 ])
         return row
@@ -586,11 +596,13 @@ class PriceReportsPage(QWidget):
             self._decimal_or_empty(chosen.supplier_price),
             self._decimal_or_empty(self._pack_price(chosen.supplier_price, product.pack)),
             chosen.currency,
+            self._round_fx_rate(chosen.fx_rate),
             self._decimal_or_empty(chosen.cost_novo),
             self._decimal_or_empty(chosen.full_cost),
         ]
         if show_prev:
             row.extend([
+                self._date_or_empty(prev.price_date if prev else None),
                 self._decimal_or_empty(prev.supplier_price if prev else None),
                 self._decimal_or_empty(prev.cost_novo if prev else None),
                 self._decimal_or_empty(prev.full_cost if prev else None),
@@ -607,13 +619,17 @@ class PriceReportsPage(QWidget):
             best1.supplier_name if best1 else "",
             self._decimal_or_empty(best1.full_cost if best1 else None),
             self._date_or_empty(best1.price_date if best1 else None),
+            self._round_fx_rate(best1.fx_rate if best1 else None),
+            best1.currency if best1 else "",
             best2.supplier_name if best2 else "",
             self._decimal_or_empty(best2.full_cost if best2 else None),
             self._date_or_empty(best2.price_date if best2 else None),
-            self._decimal_or_empty((self._to_decimal(getattr(stock, "stock_qty", None), Decimal("0")) or Decimal("0")) - (self._to_decimal(getattr(stock, "reserve_qty", None), Decimal("0")) or Decimal("0")) - (self._to_decimal(getattr(stock, "reserve_ecomm_qty", None), Decimal("0")) or Decimal("0"))),
+            self._round_fx_rate(best2.fx_rate if best2 else None),
+            best2.currency if best2 else "",
+            self._decimal_or_empty(getattr(stock, "stock_qty", None)),
             self._decimal_or_empty(getattr(stock, "transit_qty", None)),
             self._decimal_or_empty(getattr(stock, "order_qty", None)),
-            self._decimal_or_empty(getattr(stock, "is_confirmed_order_qty", None)),
+            self._decimal_or_empty(getattr(stock, "is_order_qty", None)),
             self._decimal_or_empty(getattr(stock, "is_stock_qty", None)),
             self._decimal_or_empty(getattr(stock, "reserve_qty", None)),
             self._decimal_or_empty(getattr(stock, "reserve_ecomm_qty", None)),
@@ -626,13 +642,14 @@ class PriceReportsPage(QWidget):
 
         for option in normalized:
             if option is None:
-                row.extend(["", "", "", "", ""])
+                row.extend(["", "", "", "", "", ""])
             else:
                 row.extend([
                     self._decimal_or_empty(option.cost_novo),
                     self._decimal_or_empty(option.full_cost),
                     option.supplier_name,
                     self._date_or_empty(option.price_date),
+                    self._round_fx_rate(option.fx_rate),
                     option.currency,
                 ])
 
@@ -849,14 +866,13 @@ class PriceReportsPage(QWidget):
 
                 stock_qty = self._to_decimal(getattr(stock, "stock_qty", None), Decimal("0")) or Decimal("0")
                 transit_qty = self._to_decimal(getattr(stock, "transit_qty", None), Decimal("0")) or Decimal("0")
-                is_confirmed_order_qty = self._to_decimal(getattr(stock, "is_confirmed_order_qty", None), Decimal("0")) or Decimal("0")
                 order_qty = self._to_decimal(getattr(stock, "order_qty", None), Decimal("0")) or Decimal("0")
                 is_order_qty = self._to_decimal(getattr(stock, "is_order_qty", None), Decimal("0")) or Decimal("0")
-                reserve_qty = self._to_decimal(getattr(stock, "reserve_qty", None), Decimal("0")) or Decimal("0")
-                reserve_ecomm_qty = self._to_decimal(getattr(stock, "reserve_ecomm_qty", None), Decimal("0")) or Decimal("0")
-                free_base = stock_qty - reserve_qty - reserve_ecomm_qty
+                free_base = stock_qty
 
-                free_st_tr = free_base + transit_qty + is_confirmed_order_qty
+                # Safe Stock (st+tr) = Stock + Transit
+                # Safe Stock (+ord) = Stock + Transit + Purchase Order + Order IS
+                free_st_tr = free_base + transit_qty
                 free_plus_ord = free_base + transit_qty + order_qty + is_order_qty
 
                 result[product_name] = {
@@ -1010,6 +1026,7 @@ class PriceReportsPage(QWidget):
             supplier_price=latest["price"],
             price_date=latest["price_date"],
             currency=latest["currency"],
+            fx_rate=fx_rates.get((latest["currency"] or "").strip()),
             cost_novo=cost_novo,
             full_cost=full_cost,
         )
@@ -1049,6 +1066,7 @@ class PriceReportsPage(QWidget):
             supplier_price=previous["price"],
             price_date=previous["price_date"],
             currency=previous["currency"],
+            fx_rate=fx_rates.get((previous["currency"] or "").strip()),
             cost_novo=cost_novo,
             full_cost=full_cost,
         )
@@ -1214,6 +1232,14 @@ class PriceReportsPage(QWidget):
     def _display_pack(self, value) -> object:
         decimal_value = self._to_decimal(value)
         return decimal_value if decimal_value is not None else ""
+
+    def _round_fx_rate(self, value: object):
+        if value is None or value == "":
+            return ""
+        try:
+            return int(self._to_decimal(value, Decimal("0")).to_integral_value(rounding=ROUND_HALF_UP))
+        except Exception:
+            return ""
 
     def _to_decimal(self, value, default: Optional[Decimal] = None) -> Optional[Decimal]:
         if value is None or value == "":

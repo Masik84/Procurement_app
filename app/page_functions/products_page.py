@@ -780,7 +780,7 @@ class ProductsPage(QWidget):
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Сохранить шаблон",
-            str(Path.home() / "ProductImportTemplate.xlsx"),
+            str(BASE_DIR / "ProductImportTemplate.xlsx"),
             "Excel files (*.xlsx)",
         )
         if not file_path:
@@ -910,7 +910,7 @@ class ProductsPage(QWidget):
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Сохранить Excel",
-            "Products.xlsx",
+            str(BASE_DIR / "Products.xlsx"),
             "Excel Files (*.xlsx)"
         )
 

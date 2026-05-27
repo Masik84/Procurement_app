@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +45,15 @@ class CustomerCostExporter:
         if isinstance(value, (int, float)) and value == 0:
             return ""
         return value
+
+    @staticmethod
+    def _round_fx_rate(value: object):
+        if value is None or value == "":
+            return ""
+        try:
+            return int(CustomerCostExporter._to_decimal(value).to_integral_value(rounding=ROUND_HALF_UP))
+        except Exception:
+            return ""
 
     @staticmethod
     def _excel_column_letter(col_num: int) -> str:
@@ -139,7 +148,7 @@ class CustomerCostExporter:
             self._apply_kam_layout(ws)
 
             try:
-                excel.ActiveWindow.Zoom = 90
+                excel.ActiveWindow.Zoom = 85
                 ws.Activate()
                 ws.Range("L2").Select()
                 excel.ActiveWindow.FreezePanes = True
@@ -235,6 +244,7 @@ class CustomerCostExporter:
                 data[f"Full Cost Msk_{i}"] = opt.full_cost_msk
                 data[f"Supplier_{i}"] = opt.supplier_name
                 data[f"last update_{i}"] = opt.price_date_used
+                data[f"FX rate_{i}"] = self._round_fx_rate(opt.fx_rate_used)
                 data[f"Currency_{i}"] = opt.currency_code
 
             out_rows.append(data)
@@ -245,6 +255,7 @@ class CustomerCostExporter:
                 row.setdefault(f"Full Cost Msk_{i}", None)
                 row.setdefault(f"Supplier_{i}", None)
                 row.setdefault(f"last update_{i}", None)
+                row.setdefault(f"FX rate_{i}", None)
                 row.setdefault(f"Currency_{i}", None)
 
         return out_rows, max_opt
@@ -278,6 +289,7 @@ class CustomerCostExporter:
                 f"Full Cost Msk_{i}",
                 f"Supplier_{i}",
                 f"last update_{i}",
+                f"FX rate_{i}",
                 f"Currency_{i}",
             ])
 
@@ -323,11 +335,12 @@ class CustomerCostExporter:
                 c3 = self._excel_column_letter(start_col + 2)
                 c4 = self._excel_column_letter(start_col + 3)
                 c5 = self._excel_column_letter(start_col + 4)
+                c6 = self._excel_column_letter(start_col + 5)
 
                 ws.Range(f"{c1}1:{c2}1").Interior.Color = self._rgb(0, 176, 240)
-                ws.Range(f"{c3}1:{c5}1").Interior.Color = self._rgb(146, 208, 80)
+                ws.Range(f"{c3}1:{c6}1").Interior.Color = self._rgb(146, 208, 80)
 
-                start_col += 5
+                start_col += 6
 
             self._set_number_format_safe(ws.Columns("A:A"), "ДД.ММ.ГГ;@")
             self._set_number_format_safe(ws.Columns("B:C"), "@")
@@ -340,12 +353,15 @@ class CustomerCostExporter:
                 c3 = self._excel_column_letter(start_col + 2)
                 c4 = self._excel_column_letter(start_col + 3)
                 c5 = self._excel_column_letter(start_col + 4)
+                c6 = self._excel_column_letter(start_col + 5)
 
                 self._set_number_format_safe(ws.Columns(f"{c1}:{c2}"), '# ##0 ₽')
                 self._set_number_format_safe(ws.Columns(f"{c3}:{c3}"), "@")
                 self._set_number_format_safe(ws.Columns(f"{c4}:{c4}"), "ДД.ММ.ГГ;@")
+                self._set_number_format_safe(ws.Columns(f"{c5}:{c5}"), "# ##0")
+                self._set_number_format_safe(ws.Columns(f"{c6}:{c6}"), "@")
 
-                start_col += 5
+                start_col += 6
 
             ws.Columns("A:A").ColumnWidth = 11.00
             ws.Columns("B:B").ColumnWidth = 16.14
@@ -363,20 +379,22 @@ class CustomerCostExporter:
                 c3 = self._excel_column_letter(start_col + 2)
                 c4 = self._excel_column_letter(start_col + 3)
                 c5 = self._excel_column_letter(start_col + 4)
+                c6 = self._excel_column_letter(start_col + 5)
 
-                ws.Columns(f"{c1}:{c1}").ColumnWidth = 11.50
-                ws.Columns(f"{c2}:{c2}").ColumnWidth = 11.50
+                ws.Columns(f"{c1}:{c1}").ColumnWidth = 9.0
+                ws.Columns(f"{c2}:{c2}").ColumnWidth = 9.0
                 ws.Columns(f"{c3}:{c3}").ColumnWidth = 16.14
                 ws.Columns(f"{c4}:{c4}").ColumnWidth = 10.14
-                ws.Columns(f"{c5}:{c5}").ColumnWidth = 9.14
+                ws.Columns(f"{c5}:{c5}").ColumnWidth = 7.29
+                ws.Columns(f"{c6}:{c6}").ColumnWidth = 9.14
 
-                start_col += 5
+                start_col += 6
 
             last_col = self._excel_column_letter(len(headers))
             ws.Range(f"A1:{last_col}1").AutoFilter(1)
 
             try:
-                excel.ActiveWindow.Zoom = 90
+                excel.ActiveWindow.Zoom = 85
                 ws.Activate()
                 freeze_cell = self._excel_column_letter(len(base_headers) + 1) + "2"
                 ws.Range(freeze_cell).Select()
@@ -503,7 +521,7 @@ class CustomerCostExporter:
             self._apply_kam_layout(ws)
 
             try:
-                excel.ActiveWindow.Zoom = 90
+                excel.ActiveWindow.Zoom = 85
                 ws.Activate()
                 ws.Range("L2").Select()
                 excel.ActiveWindow.FreezePanes = True

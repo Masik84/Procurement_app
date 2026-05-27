@@ -416,15 +416,18 @@ class OrderPlanningService:
 
             stock_qty = self._to_decimal(getattr(stock, "stock_qty", None))
             transit_qty = self._to_decimal(getattr(stock, "transit_qty", None))
-            is_confirmed = self._to_decimal(getattr(stock, "is_confirmed_order_qty", None))
             order_qty = self._to_decimal(getattr(stock, "order_qty", None))
             is_order_qty = self._to_decimal(getattr(stock, "is_order_qty", None))
             reserve_qty = self._to_decimal(getattr(stock, "reserve_qty", None))
             reserve_ecomm_qty = self._to_decimal(getattr(stock, "reserve_ecomm_qty", None))
-            free_base = stock_qty - reserve_qty - reserve_ecomm_qty
+            markdown_qty = self._to_decimal(getattr(stock, "markdown_qty", None))
+            free_base = stock_qty
+            total_stock = stock_qty
 
             free_st = free_base
-            free_st_tr = free_base + transit_qty + is_confirmed
+            # Safe Stock (st+tr) = Stock + Transit
+            # Safe Stock (+ord) = Stock + Transit + Purchase Order + Order IS
+            free_st_tr = free_base + transit_qty
             free_ord = free_base + transit_qty + order_qty + is_order_qty
 
             safe_st_month = self._round4(free_st / avg_sales) if avg_sales > 0 else Decimal("0")
@@ -474,14 +477,14 @@ class OrderPlanningService:
                 "free_stock_st": free_st,
                 "free_stock_st_tr": free_st_tr,
                 "free_stock_ord": free_ord,
-                "stock": free_base,
+                "stock": total_stock,
                 "transit": transit_qty,
                 "purchase_order": order_qty,
                 "order_is": is_order_qty,
                 "stock_is": self._to_decimal(getattr(stock, "is_stock_qty", None)),
                 "reserve": self._to_decimal(getattr(stock, "reserve_qty", None)),
                 "reserve_ecomm": self._to_decimal(getattr(stock, "reserve_ecomm_qty", None)),
-                "markdown": self._to_decimal(getattr(stock, "markdown_qty", None)),
+                "markdown": markdown_qty,
                 "is_auto_matched": bool(item.get("is_auto_matched")),
             })
 

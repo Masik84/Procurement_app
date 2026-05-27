@@ -1210,7 +1210,7 @@ class PriceHistoryPage(QWidget):
             file_path, _ = QFileDialog.getSaveFileName(
                 self,
                 "Сохранить шаблон",
-                str(Path.home() / "PriceHistoryImportTemplate.xlsx"),
+                str(BASE_DIR / "PriceHistoryImportTemplate.xlsx"),
                 "Excel files (*.xlsx)",
             )
             if not file_path:
@@ -1353,7 +1353,7 @@ class PriceHistoryPage(QWidget):
             file_path, _ = QFileDialog.getSaveFileName(
                 self,
                 "Сохранить Excel",
-                default_name,
+                str(BASE_DIR / default_name),
                 "Excel files (*.xlsx)",
             )
             if not file_path:

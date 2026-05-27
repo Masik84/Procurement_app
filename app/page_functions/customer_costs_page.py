@@ -821,7 +821,7 @@ class CustomerCostsPage(QWidget):
             save_path, _ = QFileDialog.getSaveFileName(
                 self,
                 "Сохранить расчет",
-                default_name,
+                str(BASE_DIR / default_name),
                 "Excel files (*.xlsx)"
             )
             if not save_path:
@@ -843,7 +843,7 @@ class CustomerCostsPage(QWidget):
         self._commit_open_editors()
 
         try:
-            folder = QFileDialog.getExistingDirectory(self, "Папка для файлов менеджеров")
+            folder = QFileDialog.getExistingDirectory(self, "Папка для файлов менеджеров", str(BASE_DIR))
             if not folder:
                 return
 
@@ -876,7 +876,7 @@ class CustomerCostsPage(QWidget):
         save_path, _ = QFileDialog.getSaveFileName(
             self,
             "Сохранить шаблон",
-            "Price request_template.xlsx",
+            str(BASE_DIR / "Price request_template.xlsx"),
             "Excel files (*.xlsx)",
         )
         if not save_path:

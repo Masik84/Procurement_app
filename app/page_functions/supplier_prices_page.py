@@ -327,7 +327,7 @@ class SupplierPricesPage(QWidget):
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Сохранить Excel файл",
-            str(Path.home() / default_name),
+            str(BASE_DIR / default_name),
             "Excel files (*.xlsx)",
         )
         if not file_path:
@@ -630,7 +630,7 @@ class SupplierPricesPage(QWidget):
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Сохранить шаблон",
-            str(Path.home() / "ImportTemplate.xlsx"),
+            str(BASE_DIR / "ImportTemplate.xlsx"),
             "Excel files (*.xlsx)",
         )
         if not file_path:

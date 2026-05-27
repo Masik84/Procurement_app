@@ -109,21 +109,43 @@ class StockImporter:
         # бывают повторяющиеся/пустые заголовки, и pandas тогда может подтянуть лишние колонки.
         stock_col_indexes = list(range(col_stock_start, col_transit))
 
+        # В оригинальном файле нет отдельной строки с типами колонок.
+        # Поэтому раскладываем складской блок по РЕАЛЬНЫМ названиям колонок.
+        # Free Stock / Stock = все складские колонки, которые по бизнес-логике являются "сток":
+        #   Свободный сток, Переборка, Чужая маркировка, своб.остаток, Проблема с КМ, Перемещения.
+        # Отдельно считаем: Уценка, Резерв, E-com.
+        # Заказы клиентов внутри диапазона до "Общий Транзит, л" специально игнорируем.
         markdown_indexes: list[int] = []
         reserve_indexes: list[int] = []
         reserve_ecomm_indexes: list[int] = []
         plain_stock_indexes: list[int] = []
+
         for i in stock_col_indexes:
             h_norm = _norm_header(headers[i])
             if not h_norm:
                 continue
+
             if _header_contains(h_norm, "УЦЕНКА") or _header_contains(h_norm, "БРАК"):
                 markdown_indexes.append(i)
-            elif _header_contains(h_norm, "E-COM") or _header_contains(h_norm, "ECOM") or _header_contains(h_norm, "E-COM ЧЕХОВ"):
+                continue
+
+            if _header_contains(h_norm, "E-COM") or _header_contains(h_norm, "ECOM"):
                 reserve_ecomm_indexes.append(i)
-            elif _header_contains(h_norm, "РЕЗЕРВ"):
+                continue
+
+            if _header_contains(h_norm, "РЕЗЕРВ"):
                 reserve_indexes.append(i)
-            else:
+                continue
+
+            is_free_stock = (
+                (_header_contains(h_norm, "СВОБОДНЫЙ") and _header_contains(h_norm, "СТОК"))
+                or (_header_contains(h_norm, "СВОБ") and _header_contains(h_norm, "ОСТАТОК"))
+                or _header_contains(h_norm, "ПЕРЕБОРКА")
+                or (_header_contains(h_norm, "ЧУЖАЯ") and _header_contains(h_norm, "МАРКИРОВ"))
+                or (_header_contains(h_norm, "ПРОБЛЕМА") and _header_contains(h_norm, "КМ"))
+                or _header_contains(h_norm, "ПЕРЕМЕЩЕНИ")
+            )
+            if is_free_stock:
                 plain_stock_indexes.append(i)
 
         compact = pd.DataFrame({

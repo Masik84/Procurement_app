@@ -302,7 +302,7 @@ class OrderPlanningExporter:
                 window.SplitColumn = max((header_map.get("Дистр цена") or 1) - 1, 1)
                 window.ScrollRow = 1
                 window.ScrollColumn = 1
-                window.Zoom = 90
+                window.Zoom = 85
                 window.FreezePanes = True
                 ws.Range("A1").Select()
             except Exception:

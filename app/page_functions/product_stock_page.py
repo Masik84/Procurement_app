@@ -1002,7 +1002,7 @@ class ProductStockPage(QWidget):
         wb.save(output_path)
 
     def _open_issue_save_dialog(self, sheets: list[tuple[str, list[dict[str, Any]]]]):
-        dialog = QFileDialog(self, "Сохранить файл с ошибками", str(Path.home() / self._default_issue_filename()), "Excel files (*.xlsx)")
+        dialog = QFileDialog(self, "Сохранить файл с ошибками", str(BASE_DIR / self._default_issue_filename()), "Excel files (*.xlsx)")
         dialog.setAcceptMode(QFileDialog.AcceptSave)
         dialog.setFileMode(QFileDialog.AnyFile)
         dialog.setOption(QFileDialog.DontUseNativeDialog, False)
