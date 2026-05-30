@@ -10,7 +10,6 @@ import win32com.client as win32
 from sqlalchemy.orm import Session
 
 from app.db.models import TempCustomerCostImport, TempCustomerCostOption
-from app.utils.excel_export_format import apply_column_formats, excel_cell_value
 
 
 class CustomerCostExporter:
@@ -339,7 +338,7 @@ class CustomerCostExporter:
             row_num = 2
             for row in rows:
                 for col_index, header in enumerate(headers, start=1):
-                    ws.Cells(row_num, col_index).Value = excel_cell_value(header, row.get(header))
+                    ws.Cells(row_num, col_index).Value = self._excel_value_or_blank(row.get(header))
                 row_num += 1
 
             self._apply_header_common(ws, len(headers))
@@ -533,7 +532,7 @@ class CustomerCostExporter:
             row_num = 2
             for row in rows:
                 for col_index, header in enumerate(headers, start=1):
-                    ws.Cells(row_num, col_index).Value = excel_cell_value(header, row.get(header))
+                    ws.Cells(row_num, col_index).Value = self._excel_value_or_blank(row.get(header))
                 row_num += 1
 
             self._apply_header_common(ws, len(headers))

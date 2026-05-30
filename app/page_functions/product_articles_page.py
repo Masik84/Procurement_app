@@ -2,8 +2,6 @@ from pathlib import Path
 
 import pythoncom
 import win32com.client as win32
-
-from app.utils.excel_export_format import write_and_format_table
 from sqlalchemy.exc import SQLAlchemyError
 from PySide6.QtWidgets import (
     QMessageBox,
@@ -700,21 +698,48 @@ class ProductArticlesPage(QWidget):
                 "Article",
                 "Product name (variant)",
             ]
-            table_rows = [
-                [
-                    row.get("id"),
-                    row.get("product_name", "") or "",
-                    "" if row.get("article", "") is None else str(row.get("article", "")),
-                    row.get("variant_name", "") or "",
-                ]
-                for row in rows
-            ]
-            write_and_format_table(ws, headers, table_rows, widths={
-                "ID": 10,
-                "Product name": 34,
-                "Article": 22,
-                "Product name (variant)": 34,
-            })
+
+            for col_index, header in enumerate(headers, start=1):
+                ws.Cells(1, col_index).Value = header
+
+            ws.Cells.Font.Name = "Aptos Narrow"
+            ws.Cells.Font.Size = 11
+
+            header_range = ws.Range("A1:D1")
+            header_range.Font.Name = "Aptos Narrow"
+            header_range.Font.Size = 11
+            header_range.Font.Bold = True
+            header_range.Interior.Color = 0xCDCDCD
+            header_range.WrapText = True
+            header_range.HorizontalAlignment = -4108
+            header_range.VerticalAlignment = -4160
+
+            ws.Rows(1).EntireRow.AutoFit()
+
+            try:
+                ws.Range("A1:D1").AutoFilter(1)
+            except Exception:
+                pass
+
+            ws.Columns("A:A").ColumnWidth = 10
+            ws.Columns("B:B").ColumnWidth = 34
+            ws.Columns("C:C").ColumnWidth = 22
+            ws.Columns("D:D").ColumnWidth = 34
+
+            ws.Columns("C:C").NumberFormat = "@"
+
+            row_num = 2
+            for row in rows:
+                ws.Cells(row_num, 1).Value = row.get("id")
+                ws.Cells(row_num, 2).Value = row.get("product_name", "") or ""
+
+                article_value = row.get("article", "")
+                if article_value is None:
+                    article_value = ""
+                ws.Cells(row_num, 3).Value = str(article_value)
+
+                ws.Cells(row_num, 4).Value = row.get("variant_name", "") or ""
+                row_num += 1
 
             wb.SaveAs(str(Path(file_path).resolve()))
 

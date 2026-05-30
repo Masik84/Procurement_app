@@ -8,8 +8,6 @@ from math import isnan
 
 from openpyxl import Workbook
 
-from app.utils.excel_export_format import write_openpyxl_dict_sheet
-
 from PySide6.QtCore import QFile, Qt, QUrl, QTimer, QEvent, QPoint
 from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
@@ -983,7 +981,24 @@ class ProductStockPage(QWidget):
             ws = wb.active if first else wb.create_sheet(title=title[:31])
             ws.title = title[:31]
             first = False
-            write_openpyxl_dict_sheet(ws, rows)
+
+            headers = list(rows[0].keys()) if rows else []
+            if headers:
+                ws.append(headers)
+                for row in rows:
+                    ws.append([row.get(h, "") for h in headers])
+
+            for cell in ws[1]:
+                cell.font = cell.font.copy(bold=True)
+
+            for col_cells in ws.columns:
+                max_len = 0
+                col_letter = col_cells[0].column_letter
+                for cell in col_cells:
+                    val = "" if cell.value is None else str(cell.value)
+                    max_len = max(max_len, len(val))
+                ws.column_dimensions[col_letter].width = min(max(max_len + 2, 12), 40)
+
         wb.save(output_path)
 
     def _open_issue_save_dialog(self, sheets: list[tuple[str, list[dict[str, Any]]]]):

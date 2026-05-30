@@ -5,8 +5,6 @@ from pathlib import Path
 import pythoncom
 import win32com.client as win32
 
-from app.utils.excel_export_format import write_and_format_table
-
 
 class ProductSearchExporter:
     def __init__(self):
@@ -70,7 +68,13 @@ class ProductSearchExporter:
 
             headers = ["Article", "Product name"]
 
-            write_and_format_table(ws, headers, [], widths={"Article": 28, "Product name": 28}, apply_filter=False)
+            for col_index, header in enumerate(headers, start=1):
+                ws.Cells(1, col_index).Value = header
+
+            self._apply_base_style(ws, len(headers), apply_filter=False)
+
+            ws.Columns("A:A").NumberFormat = "@"
+            ws.Columns("A:B").ColumnWidth = 28
 
             wb.SaveAs(str(Path(file_path).resolve()))
 
@@ -112,14 +116,26 @@ class ProductSearchExporter:
                 "Excise duty",
             ]
 
-            table_rows = [[
-                row.get("source_article"), row.get("source_product_name"), row.get("product_name"),
-                row.get("brand"), row.get("pack"), row.get("is_excise"),
-            ] for row in rows]
-            write_and_format_table(ws, headers, table_rows, widths={
-                "Article": 18, "Supplier Product name": 30, "Product name": 30,
-                "Brand": 30, "Pack": 12, "Excise duty": 14,
-            }, apply_filter=True)
+            for col_index, header in enumerate(headers, start=1):
+                ws.Cells(1, col_index).Value = header
+
+            row_num = 2
+            for row in rows:
+                ws.Cells(row_num, 1).Value = self._safe_value(row.get("source_article"))
+                ws.Cells(row_num, 2).Value = self._safe_value(row.get("source_product_name"))
+                ws.Cells(row_num, 3).Value = self._safe_value(row.get("product_name"))
+                ws.Cells(row_num, 4).Value = self._safe_value(row.get("brand"))
+                ws.Cells(row_num, 5).Value = self._safe_value(row.get("pack"))
+                ws.Cells(row_num, 6).Value = self._safe_value(row.get("is_excise"))
+                row_num += 1
+
+            self._apply_base_style(ws, len(headers), apply_filter=True)
+
+            ws.Columns("A:A").NumberFormat = "@"
+            ws.Columns("A:A").ColumnWidth = 18
+            ws.Columns("B:D").ColumnWidth = 30
+            ws.Columns("E:E").ColumnWidth = 12
+            ws.Columns("F:F").ColumnWidth = 14
 
             wb.SaveAs(str(Path(file_path).resolve()))
 

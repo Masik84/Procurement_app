@@ -6,8 +6,6 @@ from decimal import Decimal, InvalidOperation
 import re
 import pythoncom
 import win32com.client as win32
-
-from app.utils.excel_export_format import write_and_format_table
 from sqlalchemy.exc import SQLAlchemyError
 from PySide6.QtWidgets import (
     QMessageBox,
@@ -887,25 +885,57 @@ class ProductsPage(QWidget):
                 "Excise duty",
                 "Product Family",
             ]
-            table_rows = [
-                [
-                    row.get("id"),
-                    row.get("name", "") or "",
-                    row.get("brand", "") or "",
-                    row.get("pack"),
-                    "Да" if bool(row.get("is_excise")) else "Нет",
-                    row.get("family", "") or "",
-                ]
-                for row in rows
-            ]
-            write_and_format_table(ws, headers, table_rows, widths={
-                "ID": 10,
-                "Product name": 30,
-                "Brand": 24,
-                "Pack": 12,
-                "Excise duty": 14,
-                "Product Family": 24,
-            })
+
+            for col_index, header in enumerate(headers, start=1):
+                ws.Cells(1, col_index).Value = header
+
+            ws.Cells.Font.Name = "Aptos Narrow"
+            ws.Cells.Font.Size = 11
+
+            header_range = ws.Range("A1:F1")
+            header_range.Font.Name = "Aptos Narrow"
+            header_range.Font.Size = 11
+            header_range.Font.Bold = True
+            header_range.Interior.Color = 0xCDCDCD
+            header_range.WrapText = True
+            header_range.HorizontalAlignment = -4108
+            header_range.VerticalAlignment = -4160
+
+            ws.Rows(1).EntireRow.AutoFit()
+
+            try:
+                ws.Range("A1:F1").AutoFilter(1)
+            except Exception:
+                pass
+
+            ws.Columns("A:A").ColumnWidth = 10
+            ws.Columns("B:B").ColumnWidth = 30
+            ws.Columns("C:C").ColumnWidth = 24
+            ws.Columns("D:D").ColumnWidth = 12
+            ws.Columns("E:E").ColumnWidth = 14
+            ws.Columns("F:F").ColumnWidth = 24
+
+            row_num = 2
+            for row in rows:
+                ws.Cells(row_num, 1).Value = row.get("id")
+                ws.Cells(row_num, 2).Value = row.get("name", "") or ""
+                ws.Cells(row_num, 3).Value = row.get("brand", "") or ""
+
+                pack = row.get("pack")
+                if pack not in (None, ""):
+                    try:
+                        ws.Cells(row_num, 4).Value = float(pack)
+                    except Exception:
+                        ws.Cells(row_num, 4).Value = str(pack)
+                else:
+                    ws.Cells(row_num, 4).Value = ""
+
+                ws.Cells(row_num, 5).Value = "Да" if bool(row.get("is_excise")) else "Нет"
+                ws.Cells(row_num, 6).Value = row.get("family", "") or ""
+                row_num += 1
+
+            # if row_num > 2:
+            #     ws.Range(f"D2:D{row_num - 1}").NumberFormat = "General"
 
             wb.SaveAs(str(Path(file_path).resolve()))
 

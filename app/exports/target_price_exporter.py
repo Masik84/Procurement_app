@@ -9,7 +9,6 @@ import win32com.client as win32
 from sqlalchemy.orm import Session
 
 from app.db.models import Product, TargetPriceCalculation, TempTargetPriceImport, TempTargetPriceOption
-from app.utils.excel_export_format import apply_column_formats, excel_cell_value
 
 
 class TargetPriceExporter:
@@ -117,9 +116,8 @@ class TargetPriceExporter:
                 ws.Cells(1, col_index).Value = header
             for row_num, row in enumerate(rows, start=2):
                 for col_index, header in enumerate(headers, start=1):
-                    ws.Cells(row_num, col_index).Value = excel_cell_value(header, row.get(header))
+                    ws.Cells(row_num, col_index).Value = self._excel_value_or_blank(row.get(header))
             self._apply_header_common(ws, len(headers))
-            apply_column_formats(ws, headers)
             formatter(ws, headers)
             last_col = self._excel_column_letter(len(headers))
             ws.Range(f"A1:{last_col}1").AutoFilter(1)

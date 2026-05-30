@@ -6,8 +6,6 @@ from pathlib import Path
 import pythoncom
 import win32com.client as win32
 
-from app.utils.excel_export_format import write_and_format_table
-
 
 class PriceHistoryExporter:
     def __init__(self):
@@ -56,10 +54,11 @@ class PriceHistoryExporter:
                 "Price",
                 "Currency",
             ]
-            write_and_format_table(ws, headers, [], widths={
-                "Supplier name": 24, "Article": 18, "Supplier Product name": 32,
-                "Our Product Name": 32, "Price date": 12, "Price": 12, "Currency": 12,
-            }, apply_filter=False)
+            for col_index, header in enumerate(headers, start=1):
+                ws.Cells(1, col_index).Value = header
+
+            self._apply_base_font(ws)
+            self._apply_header_range(ws, "A", "G", 0xCDCDCD, white_font=False)
 
             ws.Rows(1).RowHeight = 45
             ws.Columns("A:A").ColumnWidth = 24
@@ -97,24 +96,48 @@ class PriceHistoryExporter:
             ws.Name = "Sheet1"
 
             headers = ["Product name", "Supplier name", "Price date", "Price", "Currency"]
-            table_rows = [
-                [
-                    row.get("product_name", ""),
-                    row.get("supplier_name", ""),
-                    row.get("price_date"),
-                    row.get("price"),
-                    row.get("currency", ""),
-                ]
-                for row in rows
-            ]
-            write_and_format_table(ws, headers, table_rows, widths={
-                "Product name": 31.8,
-                "Supplier name": 24,
-                "Price date": 13,
-                "Price": 13,
-                "Currency": 13,
-            }, apply_filter=True)
-            ws.Rows(1).RowHeight = 45 if report_type == "current" else 60
+            for col_index, header in enumerate(headers, start=1):
+                ws.Cells(1, col_index).Value = header
+
+            self._apply_base_font(ws)
+            self._apply_header_range(ws, "A", "E", 0xCDCDCD, white_font=False)
+
+            if report_type == "current":
+                ws.Rows(1).RowHeight = 45
+            else:
+                ws.Rows(1).RowHeight = 60
+
+            ws.Range("A1:E1").AutoFilter(1)
+
+            ws.Columns("A:A").ColumnWidth = 31.8
+            ws.Columns("B:B").ColumnWidth = 24
+            ws.Columns("C:C").ColumnWidth = 13
+            ws.Columns("D:D").ColumnWidth = 13
+            ws.Columns("E:E").ColumnWidth = 13
+
+            row_num = 2
+            for row in rows:
+                ws.Cells(row_num, 1).Value = row.get("product_name", "")
+                ws.Cells(row_num, 2).Value = row.get("supplier_name", "")
+
+                price_date = row.get("price_date")
+                if price_date is not None:
+                    ws.Cells(row_num, 3).Value = price_date
+
+                price = row.get("price")
+                if price is not None:
+                    try:
+                        ws.Cells(row_num, 4).Value = float(price)
+                    except Exception:
+                        ws.Cells(row_num, 4).Value = None
+
+                ws.Cells(row_num, 5).Value = row.get("currency", "")
+
+                row_num += 1
+
+            if row_num > 2:
+                ws.Range(f"C2:C{row_num - 1}").NumberFormatLocal = "ДД.ММ.ГГ;@"
+                ws.Range(f"D2:D{row_num - 1}").NumberFormatLocal = "0,00"
 
             wb.SaveAs(str(Path(file_path).resolve()))
         except PermissionError:
@@ -132,8 +155,10 @@ class PriceHistoryExporter:
                     excel.Quit()
             except Exception:
                 pass
-            pythoncom.CoUninitialize()
-
-
+            pythoncom.CoUninitialize()    
+    
+    
+    
+    
 # Backward-compatible alias.
 PriceHistoryExcelExporter = PriceHistoryExporter

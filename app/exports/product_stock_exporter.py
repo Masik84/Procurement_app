@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from openpyxl import Workbook
+import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.db.models import TempIsImport, TempStockImport, TempSupplierOrdersImport
-from app.utils.excel_export_format import write_openpyxl_dict_sheet
 
 
 class ProductStockExporter:
@@ -14,14 +13,10 @@ class ProductStockExporter:
 
     def _write(self, rows: list[dict], output_path: str | Path) -> Path:
         output_path = Path(output_path)
-        if output_path.suffix.lower() != ".xlsx":
-            output_path = output_path.with_suffix(".xlsx")
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Sheet1"
-        write_openpyxl_dict_sheet(ws, rows)
-        wb.save(output_path)
+        df = pd.DataFrame(rows)
+        with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Sheet1")
         return output_path
 
     def export_stock_product_issues(self, batch_id: str, imported_by: str, output_path: str | Path) -> Path | None:
