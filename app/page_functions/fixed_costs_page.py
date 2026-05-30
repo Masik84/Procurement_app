@@ -91,8 +91,8 @@ class FixedCostsPage(QWidget):
 
     def setup_ui(self):
         setup_data_table(self.table, sorting=False)
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table.customContextMenuRequested.connect(self.show_context_menu)
+        from app.utils.gui_table_actions import install_standard_table_context_menu
+        install_standard_table_context_menu(self, self.table)
 
     def setup_connections(self):
         self.table.itemChanged.connect(self.on_item_changed)
@@ -114,18 +114,6 @@ class FixedCostsPage(QWidget):
         except (InvalidOperation, ValueError):
             raise Exception(f"Поле '{field_name}' должно быть числом")
 
-    def show_context_menu(self, position):
-        menu = QMenu()
-        copy_action = menu.addAction("Копировать")
-        apply_action = menu.addAction("Применить изменения")
-        revert_action = menu.addAction("Отменить изменения")
-
-        copy_action.triggered.connect(self.copy_cell_content)
-        apply_action.triggered.connect(self.apply_pending_changes)
-        revert_action.triggered.connect(self.revert_changes)
-
-        menu.exec_(self.table.viewport().mapToGlobal(position))
-
     def on_item_changed(self, item):
         if self._updating_table:
             return
@@ -143,29 +131,6 @@ class FixedCostsPage(QWidget):
 
         except Exception as e:
             self.show_error_message(f"Ошибка: {str(e)}")
-
-    def copy_cell_content(self):
-        selected_items = self.table.selectedItems()
-        if not selected_items:
-            return
-
-        clipboard = QApplication.clipboard()
-
-        if len(selected_items) == 1:
-            text = selected_items[0].text()
-        else:
-            rows = {}
-            for item in selected_items:
-                rows.setdefault(item.row(), {})
-                rows[item.row()][item.column()] = item.text()
-
-            text = "\n".join(
-                "\t".join(value for _, value in sorted(cols.items()))
-                for _, cols in sorted(rows.items())
-            )
-
-        clipboard.setText(text.strip())
-        self.show_message("Скопировано")
 
     def revert_changes(self):
         try:

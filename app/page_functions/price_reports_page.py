@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_HALF_UP
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
-from PySide6.QtCore import QFile, Qt
+from PySide6.QtCore import QFile, Qt, QThread
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
@@ -37,6 +37,7 @@ from app.db.models import (
 )
 from app.ui.table_style import *
 from app.exports.price_report_exporter import PriceReportExporter
+from app.workers.excel_export_worker import ExcelExportWorker
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -72,6 +73,25 @@ class SupplierOption:
     full_cost: Optional[Decimal]
 
 
+def _export_price_report_file(
+    *,
+    headers: Sequence[str],
+    rows: Sequence[Sequence[object]],
+    output_path: str,
+    report_mode: str,
+    quick_order_months: int | None,
+    safe_stock_months: int | None,
+) -> Path:
+    return PriceReportExporter().export_report(
+        headers=headers,
+        rows=rows,
+        output_path=output_path,
+        report_mode=report_mode,
+        quick_order_months=quick_order_months,
+        safe_stock_months=safe_stock_months,
+    )
+
+
 class PriceReportsPage(QWidget):
     def __init__(self):
         super().__init__()
@@ -89,6 +109,9 @@ class PriceReportsPage(QWidget):
         self._updating_fx_table = False
         self._export_quick_order_months = None
         self._export_safe_stock_months = None
+        self._excel_export_thread: QThread | None = None
+        self._excel_export_worker: ExcelExportWorker | None = None
+        self._export_button_text = ""
 
         self.setup_ui()
         self.setup_connections()
@@ -116,6 +139,7 @@ class PriceReportsPage(QWidget):
         self.ui.radio_ByProduct.setChecked(True)
         self.ui.cbx_ShowPrevPrice.setChecked(False)
         self.ui.cbx_ShowPrevPrice.setEnabled(False)
+        self._export_button_text = self.ui.btn_ExportExcel.text()
 
         self.ui.lst_Brand.setSelectionMode(QAbstractItemView.MultiSelection)
         self.ui.lst_ProductFamily.setSelectionMode(QAbstractItemView.MultiSelection)
@@ -686,6 +710,10 @@ class PriceReportsPage(QWidget):
         self.preview_table.setColumnCount(0)
 
     def export_excel(self):
+        if self._excel_export_thread is not None:
+            self.show_message("Excel файл уже формируется. Дождись окончания экспорта.")
+            return
+
         if not self._export_headers or not self._export_rows:
             self.show_error_message("Сначала сформируй отчет")
             return
@@ -709,24 +737,76 @@ class PriceReportsPage(QWidget):
                 order_months=order_months,
             )
 
-            self._export_quick_order_months = locals().get("quick_order_months", locals().get("quick_months", getattr(self, "_export_quick_order_months", None)))
-            self._export_safe_stock_months = locals().get("safe_stock_months", locals().get("safe_months", locals().get("order_months", getattr(self, "_export_safe_stock_months", None))))
+            self._export_quick_order_months = quick_months
+            self._export_safe_stock_months = order_months
 
             report_mode = "supplier" if self.ui.radio_BySupplier.isChecked() else "product"
-            exporter = PriceReportExporter()
-            output_path = exporter.export_report(
-                headers=export_headers,
-                rows=export_rows,
+            self._start_excel_export(
+                headers=list(export_headers),
+                rows=[list(row) for row in export_rows],
                 output_path=file_path,
                 report_mode=report_mode,
-                quick_order_months=getattr(self, "_export_quick_order_months", None),
-                safe_stock_months=getattr(self, "_export_safe_stock_months", None),
+                quick_order_months=self._export_quick_order_months,
+                safe_stock_months=self._export_safe_stock_months,
             )
-
-            QDesktopServices.openUrl(Path(output_path).as_uri())
-            self.show_message("Excel файл сохранен")
         except Exception as e:
             self.show_error_message(f"Ошибка экспорта в Excel: {str(e)}")
+
+    def _start_excel_export(
+        self,
+        *,
+        headers: list[str],
+        rows: list[list[object]],
+        output_path: str,
+        report_mode: str,
+        quick_order_months: int | None,
+        safe_stock_months: int | None,
+    ) -> None:
+        self.ui.btn_ExportExcel.setEnabled(False)
+        self.ui.btn_ExportExcel.setText("Формируется...")
+        self.show_message("Excel файл формируется в фоновом режиме. Можно продолжать работать в программе.")
+
+        self._excel_export_thread = QThread(self)
+        self._excel_export_worker = ExcelExportWorker(
+            _export_price_report_file,
+            headers=headers,
+            rows=rows,
+            output_path=output_path,
+            report_mode=report_mode,
+            quick_order_months=quick_order_months,
+            safe_stock_months=safe_stock_months,
+        )
+        self._excel_export_worker.moveToThread(self._excel_export_thread)
+
+        self._excel_export_thread.started.connect(self._excel_export_worker.run)
+        self._excel_export_worker.finished.connect(self._on_excel_export_finished)
+        self._excel_export_worker.error.connect(self._on_excel_export_error)
+        self._excel_export_worker.finished.connect(self._excel_export_thread.quit)
+        self._excel_export_worker.error.connect(self._excel_export_thread.quit)
+        self._excel_export_worker.finished.connect(self._excel_export_worker.deleteLater)
+        self._excel_export_worker.error.connect(self._excel_export_worker.deleteLater)
+        self._excel_export_thread.finished.connect(self._excel_export_thread.deleteLater)
+        self._excel_export_thread.finished.connect(self._clear_excel_export_refs)
+
+        self._excel_export_thread.start()
+
+    def _finish_excel_export_ui(self) -> None:
+        self.ui.btn_ExportExcel.setEnabled(True)
+        self.ui.btn_ExportExcel.setText(self._export_button_text or "Export Excel")
+
+    def _on_excel_export_finished(self, output_path: object) -> None:
+        self._finish_excel_export_ui()
+        path = Path(output_path)
+        self.show_message(f"Excel файл сохранен: {path}")
+        QDesktopServices.openUrl(path.as_uri())
+
+    def _on_excel_export_error(self, error_text: str) -> None:
+        self._finish_excel_export_ui()
+        self.show_error_message(f"Ошибка экспорта в Excel: {error_text}")
+
+    def _clear_excel_export_refs(self) -> None:
+        self._excel_export_thread = None
+        self._excel_export_worker = None
 
     def _ask_order_plan_months(self) -> tuple[int | None, int | None]:
         quick_months, ok = QInputDialog.getInt(

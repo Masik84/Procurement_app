@@ -32,6 +32,7 @@ from app.ui.table_style import *
 from app.utils.batch import get_current_username
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
+from app.workers.excel_export_worker import start_excel_export
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -79,6 +80,8 @@ class ProductSearchPage(QWidget):
         self._pending_changes: dict[int, dict] = {}
         self._pending_deletes: set[int] = set()
         self._table_row_ids: list[int] = []
+        self._excel_export_thread = None
+        self._excel_export_worker = None
 
         self.columns = [
             "selected_product_id",
@@ -108,7 +111,8 @@ class ProductSearchPage(QWidget):
         self.table = self.ui.table
         setup_data_table(self.table, sorting=False)
         self.table.horizontalHeader().setSectionsMovable(False)
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        from app.utils.gui_table_actions import install_standard_table_context_menu
+        install_standard_table_context_menu(self, self.table)
         self.ui.label_msg.setText("Сообщений нет")
 
         self.ui.line_FindProduct.setToolTip("Фильтр по названию продукта из базы")
@@ -117,13 +121,15 @@ class ProductSearchPage(QWidget):
     def setup_connections(self):
         self.table.cellDoubleClicked.connect(self.start_cell_edit)
         self.table.itemChanged.connect(self.on_item_changed)
-        self.table.customContextMenuRequested.connect(self.show_context_menu)
 
         self.ui.btn_DownFile.clicked.connect(self.download_template)
         self.ui.btn_Import.clicked.connect(self.import_file)
         self.ui.btn_AddLine.clicked.connect(self.add_line)
         self.ui.btn_Save.clicked.connect(self.apply_pending_changes)
         self.ui.btn_Reset.clicked.connect(self.reset_form)
+
+        self.ui.cbo_FindBrand.currentTextChanged.connect(self.refresh_current_product_combo)
+        self.ui.line_FindProduct.textChanged.connect(self.refresh_current_product_combo)
 
     def get_session(self):
         return SessionLocal()
@@ -140,6 +146,7 @@ class ProductSearchPage(QWidget):
     def load_initial_state(self):
         self.start_new_batch()
         self.cleanup_old_temp_rows()
+        self.load_find_brands()
         self.load_table_rows()
 
     def start_new_batch(self):
@@ -401,6 +408,64 @@ class ProductSearchPage(QWidget):
             )
         return [row[0] for row in rows if row[0]]
 
+    def load_find_brands(self):
+        current_text = self.ui.cbo_FindBrand.currentText().strip()
+        brands = self.get_brand_names()
+
+        self.ui.cbo_FindBrand.blockSignals(True)
+        self.ui.cbo_FindBrand.clear()
+        self.ui.cbo_FindBrand.addItem("-")
+        if brands:
+            self.ui.cbo_FindBrand.addItems(brands)
+        self.ui.cbo_FindBrand.blockSignals(False)
+
+        if current_text:
+            self.set_combo_text(self.ui.cbo_FindBrand, current_text if current_text != "" else "-")
+
+    def refresh_current_product_combo(self):
+        row = self.table.currentRow()
+        if row < 0 or row >= len(self._table_row_ids):
+            return
+
+        combo = self.table.cellWidget(row, self.COL_PRODUCT)
+        if not isinstance(combo, QComboBox):
+            return
+
+        if combo.property("combo_role") != "product_combo":
+            return
+
+        current_text = combo.currentText()
+        current_product_id = combo.currentData()
+
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("", None)
+        for product in self.get_filtered_products():
+            combo.addItem(product.name, product.id)
+
+        restored = False
+        if current_product_id is not None:
+            index = combo.findData(current_product_id)
+            if index >= 0:
+                combo.setCurrentIndex(index)
+                restored = True
+            elif current_text:
+                combo.addItem(current_text, current_product_id)
+                combo.setCurrentIndex(combo.count() - 1)
+                restored = True
+
+        if not restored:
+            if current_text:
+                index = combo.findText(current_text)
+                if index >= 0:
+                    combo.setCurrentIndex(index)
+                else:
+                    combo.setCurrentText(current_text)
+            else:
+                combo.setCurrentIndex(0)
+
+        combo.blockSignals(False)
+
     def build_product_combo(self, row_id: int, selected_product_id: int | None, selected_name: str) -> QComboBox:
         combo = QComboBox()
         combo.setEditable(True)
@@ -541,49 +606,6 @@ class ProductSearchPage(QWidget):
         self._pending_changes.setdefault(row_id, {})
         self._pending_changes[row_id][column_name] = value or None
 
-    def show_context_menu(self, position):
-        menu = QMenu()
-        copy_action = menu.addAction("Копировать")
-        delete_action = menu.addAction("Удалить строку")
-        apply_action = menu.addAction("Применить изменения")
-        revert_action = menu.addAction("Обновить")
-
-        copy_action.triggered.connect(self.copy_cell_content)
-        delete_action.triggered.connect(self.delete_selected_row)
-        apply_action.triggered.connect(self.apply_pending_changes)
-        revert_action.triggered.connect(self.load_table_rows)
-
-        menu.exec_(self.table.viewport().mapToGlobal(position))
-
-    def copy_cell_content(self):
-        selected_items = self.table.selectedItems()
-        if not selected_items:
-            return
-
-        clipboard = QApplication.clipboard()
-        if len(selected_items) == 1:
-            clipboard.setText(selected_items[0].text())
-        else:
-            rows = {}
-            for item in selected_items:
-                rows.setdefault(item.row(), {})[item.column()] = item.text()
-            text_rows = []
-            for _, cols in sorted(rows.items()):
-                text_rows.append("\t".join(value for _, value in sorted(cols.items())))
-            clipboard.setText("\n".join(text_rows).strip())
-
-        self.show_message("Скопировано")
-
-    def delete_selected_row(self):
-        row = self.table.currentRow()
-        if row < 0 or row >= len(self._table_row_ids):
-            self.show_error_message("Не выбрана строка")
-            return
-
-        row_id = self._table_row_ids[row]
-        self._pending_deletes.add(row_id)
-        self.apply_pending_changes(save_to_db_only=True)
-
     def add_line(self):
         try:
             with self.get_session() as session:
@@ -709,19 +731,36 @@ class ProductSearchPage(QWidget):
                     if not save_path.lower().endswith(".xlsx"):
                         save_path += ".xlsx"
 
-                    try:
+                    rows = self._build_export_rows()
+
+                    def do_export():
                         exporter = ProductSearchExporter()
-                        exporter.export_result(save_path, self._build_export_rows())
-                        self.show_message("Данные сохранены")
-                    except PermissionError:
-                        self.show_popup_error(
-                            "Не удалось сохранить файл.\n\n"
-                            "Скорее всего, файл уже открыт в Excel.\n"
-                            "Закрой файл и попробуй снова."
-                        )
+                        return exporter.export_result(save_path, rows)
+
+                    def error(text):
+                        if "Permission" in str(text):
+                            self.show_popup_error(
+                                "Не удалось сохранить файл.\n\n"
+                                "Скорее всего, файл уже открыт в Excel.\n"
+                                "Закрой файл и попробуй снова."
+                            )
+                        else:
+                            self.show_popup_error(f"Ошибка при сохранении файла: {text}")
+
+                    if not start_excel_export(
+                        self,
+                        do_export,
+                        on_finished=lambda _output: self.show_message("Данные сохранены"),
+                        on_error=error,
+                    ):
+                        self.show_message("Excel файл уже формируется. Можно продолжать работать в программе.")
+                    else:
+                        self.show_message("Excel файл формируется в фоновом режиме. Можно продолжать работать в программе.")
 
             self._pending_changes.clear()
             self._pending_deletes.clear()
+            if not save_to_db_only:
+                self.load_find_brands()
             self.load_table_rows()
 
             if save_to_db_only:
@@ -742,6 +781,7 @@ class ProductSearchPage(QWidget):
             self.start_new_batch()
             self.selected_file_path = ""
             self.ui.line_FindProduct.clear()
+            self.set_combo_text(self.ui.cbo_FindBrand, "-")
             self.load_table_rows()
             self.show_message("Форма очищена")
         except Exception as e:

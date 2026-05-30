@@ -323,7 +323,20 @@ QScrollBar::handle:vertical {
              </widget>
             </item>
             <item>
-             <widget class="QComboBox" name="cbo_Customer"/>
+             <widget class="QComboBox" name="cbo_Customer">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>25</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>25</height>
+               </size>
+              </property>
+             </widget>
             </item>
             <item>
              <widget class="QLabel" name="label_brand">
@@ -333,7 +346,20 @@ QScrollBar::handle:vertical {
              </widget>
             </item>
             <item>
-             <widget class="QComboBox" name="cbo_Brand"/>
+             <widget class="QComboBox" name="cbo_Brand">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>25</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>25</height>
+               </size>
+              </property>
+             </widget>
             </item>
             <item>
              <widget class="QLabel" name="label_product_family">
@@ -343,7 +369,20 @@ QScrollBar::handle:vertical {
              </widget>
             </item>
             <item>
-             <widget class="QComboBox" name="cbo_ProdFamily"/>
+             <widget class="QComboBox" name="cbo_ProdFamily">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>25</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>25</height>
+               </size>
+              </property>
+             </widget>
             </item>
             <item>
              <widget class="QLabel" name="label_product_name">

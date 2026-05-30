@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, date
 import uuid
 from pathlib import Path
 from decimal import Decimal
@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.exports.customer_cost_exporter import CustomerCostExporter
 from app.imports.customer_cost_importer import CustomerCostImporter
-from app.db.models import CustomerPriceCalculation, TempCustomerCostImport, TempCustomerCostOption
+from app.db.models import CustomerPriceCalculation, Supplier, TempCustomerCostImport, TempCustomerCostOption
 from app.services.cost_calculation_service import CostCalculationService
 from app.services.price_repository import PriceRepository
 from app.services.product_matching_service import ProductMatchingService
@@ -49,6 +49,24 @@ class CustomerCostService:
         ).delete(synchronize_session=False)
         self.session.flush()
         return int(deleted_count or 0)
+
+
+    def cleanup_old_temp_rows(self, imported_by: str, before_date: date | None = None) -> int:
+        cutoff = before_date or date.today()
+        cutoff_dt = datetime.combine(cutoff, datetime.min.time())
+
+        deleted_options = self.session.query(TempCustomerCostOption).filter(
+            TempCustomerCostOption.imported_by == imported_by,
+            TempCustomerCostOption.import_date < cutoff_dt,
+        ).delete(synchronize_session=False)
+
+        deleted_rows = self.session.query(TempCustomerCostImport).filter(
+            TempCustomerCostImport.imported_by == imported_by,
+            TempCustomerCostImport.import_date < cutoff_dt,
+        ).delete(synchronize_session=False)
+
+        self.session.flush()
+        return int(deleted_options or 0) + int(deleted_rows or 0)
 
     def import_rows(self, rows: list[dict], batch_id: str, imported_by: str, replace_existing: bool = True) -> int:
         if replace_existing:
@@ -181,6 +199,141 @@ class CustomerCostService:
             raise ValueError(f"Для валюты '{currency_code}' не найден корректный курс rate_to_rub.")
         return self._to_decimal(rate)
 
+    def save_manual_supplier_prices(self, manual_prices: list[dict] | None) -> int:
+        if not manual_prices:
+            return 0
+
+        price_date = datetime.utcnow()
+        saved_count = 0
+
+        for manual_price in manual_prices:
+            temp_import_id = manual_price.get("temp_import_id")
+            supplier_id = manual_price.get("supplier_id")
+            price = manual_price.get("price")
+
+            if temp_import_id is None or supplier_id is None or price in (None, ""):
+                continue
+
+            row = self.session.query(TempCustomerCostImport).filter(
+                TempCustomerCostImport.id == int(temp_import_id)
+            ).first()
+            if row is None or row.selected_product_id is None:
+                continue
+
+            supplier = self.session.query(Supplier).filter(Supplier.id == int(supplier_id)).first()
+            if supplier is None:
+                continue
+
+            self.price_repository.save_supplier_price(
+                supplier_id=int(supplier_id),
+                product_id=int(row.selected_product_id),
+                price=price,
+                currency_code=supplier.base_currency,
+                price_date=price_date,
+            )
+            saved_count += 1
+
+        self.session.flush()
+        return saved_count
+
+    def select_manual_options(self, batch_id: str, imported_by: str, manual_prices: list[dict] | None) -> None:
+        if not manual_prices:
+            return
+
+        manual_suppliers_by_row: dict[int, set[int]] = {}
+        for manual_price in manual_prices:
+            try:
+                temp_import_id = int(manual_price.get("temp_import_id"))
+                supplier_id = int(manual_price.get("supplier_id"))
+            except (TypeError, ValueError):
+                continue
+            manual_suppliers_by_row.setdefault(temp_import_id, set()).add(supplier_id)
+
+        for temp_import_id, supplier_ids in manual_suppliers_by_row.items():
+            options = self.session.query(TempCustomerCostOption).filter(
+                TempCustomerCostOption.batch_id == batch_id,
+                TempCustomerCostOption.imported_by == imported_by,
+                TempCustomerCostOption.temp_import_id == temp_import_id,
+                TempCustomerCostOption.supplier_id.in_(supplier_ids),
+            ).order_by(
+                TempCustomerCostOption.full_cost_msk.asc(),
+                TempCustomerCostOption.id.desc(),
+            ).all()
+
+            if not options:
+                continue
+
+            row = self.session.query(TempCustomerCostImport).filter(
+                TempCustomerCostImport.id == temp_import_id,
+                TempCustomerCostImport.batch_id == batch_id,
+                TempCustomerCostImport.imported_by == imported_by,
+            ).first()
+            if row is not None:
+                row.selected_option_id = options[0].id
+
+        self.session.flush()
+
+
+    def _capture_selected_option_suppliers(self, batch_id: str, imported_by: str) -> dict[int, int]:
+        """Запоминает выбранного пользователем финального поставщика перед пересчетом options.
+
+        При пересчете временная таблица options пересоздается и id вариантов меняются.
+        Поэтому сохраняем не id option, а supplier_id выбранного варианта по каждой строке.
+        """
+        result: dict[int, int] = {}
+        rows = self.session.query(TempCustomerCostImport).filter(
+            TempCustomerCostImport.batch_id == batch_id,
+            TempCustomerCostImport.imported_by == imported_by,
+            TempCustomerCostImport.selected_option_id.isnot(None),
+        ).all()
+
+        for row in rows:
+            option = self.session.query(TempCustomerCostOption).filter(
+                TempCustomerCostOption.id == row.selected_option_id,
+                TempCustomerCostOption.batch_id == batch_id,
+                TempCustomerCostOption.imported_by == imported_by,
+                TempCustomerCostOption.temp_import_id == row.id,
+            ).first()
+            if option is not None and option.supplier_id is not None:
+                result[int(row.id)] = int(option.supplier_id)
+
+        return result
+
+    def _restore_selected_option_suppliers(
+        self,
+        batch_id: str,
+        imported_by: str,
+        selected_suppliers_by_row: dict[int, int],
+    ) -> None:
+        """Восстанавливает выбор финального поставщика после пересчета options."""
+        if not selected_suppliers_by_row:
+            return
+
+        for temp_import_id, supplier_id in selected_suppliers_by_row.items():
+            row = self.session.query(TempCustomerCostImport).filter(
+                TempCustomerCostImport.id == temp_import_id,
+                TempCustomerCostImport.batch_id == batch_id,
+                TempCustomerCostImport.imported_by == imported_by,
+            ).first()
+            if row is None:
+                continue
+
+            option = self.session.query(TempCustomerCostOption).filter(
+                TempCustomerCostOption.batch_id == batch_id,
+                TempCustomerCostOption.imported_by == imported_by,
+                TempCustomerCostOption.temp_import_id == temp_import_id,
+                TempCustomerCostOption.supplier_id == supplier_id,
+            ).order_by(
+                TempCustomerCostOption.opt_rank.asc(),
+                TempCustomerCostOption.full_cost_msk.asc(),
+                TempCustomerCostOption.id.asc(),
+            ).first()
+
+            if option is not None:
+                row.selected_option_id = option.id
+
+        self.session.flush()
+
     def build_supplier_options(self, batch_id: str, imported_by: str) -> int:
         self.delete_temp_options(batch_id, imported_by)
 
@@ -240,7 +393,7 @@ class CustomerCostService:
             product_id=row.selected_product_id,
             supplier_name=supplier_price.supplier_name,
             supplier_article=row.supplier_article,
-            supplier_product_name=row.product_name,
+            customer_product_name=row.product_name,
             supplier_price=calc.supplier_price,
             price_date_used=supplier_price.price_date,
             cost_novo_wvat=calc.cost_novo_wvat,
@@ -349,7 +502,7 @@ class CustomerCostService:
                 supplier_id=option.supplier_id,
                 product_id=row.selected_product_id,
                 supplier_article=row.supplier_article,
-                supplier_product_name=row.product_name,
+                customer_product_name=row.product_name,
                 pack=row.pack,
                 qty_pcs=row.qty_pcs,
                 volume_l=row.volume_l,
@@ -382,14 +535,23 @@ class CustomerCostService:
         self.session.flush()
         return saved_count
 
-    def run_calculation(self, batch_id: str, imported_by: str) -> dict:
+    def run_calculation(self, batch_id: str, imported_by: str, manual_prices: list[dict] | None = None) -> dict:
+        # ВАЖНО: options при расчете пересоздаются, поэтому id выбранных вариантов меняются.
+        # Перед пересчетом запоминаем выбранного пользователем поставщика по строке,
+        # а после пересчета восстанавливаем selected_option_id на новый option.id.
+        selected_suppliers_by_row = self._capture_selected_option_suppliers(batch_id, imported_by)
+
         self.validate_new_products_before_save(batch_id, imported_by)
         created_products_count = self.create_products_from_temp(batch_id, imported_by)
         product_articles_count = self.create_or_update_product_articles(batch_id, imported_by)
+        manual_prices_count = self.save_manual_supplier_prices(manual_prices)
         options_count = self.build_supplier_options(batch_id, imported_by)
+        self._restore_selected_option_suppliers(batch_id, imported_by, selected_suppliers_by_row)
+        self.select_manual_options(batch_id, imported_by, manual_prices)
         return {
             "created_products_count": created_products_count,
             "product_articles_count": product_articles_count,
+            "manual_prices_count": manual_prices_count,
             "options_count": options_count,
         }
 

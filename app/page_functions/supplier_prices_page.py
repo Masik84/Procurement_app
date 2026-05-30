@@ -38,6 +38,7 @@ from app.utils.batch import get_current_username
 from app.utils.parsers import parse_flexible_date, parse_loose_number
 from app.utils.text import clean_multi_spaces
 from app.ui.table_style import *
+from app.workers.excel_export_worker import start_excel_export
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -75,6 +76,8 @@ class SupplierPricesPage(QWidget):
         self.rf_prices_include_vat = False
         self._export_quick_order_months = None
         self._export_safe_stock_months = None
+        self._excel_export_thread = None
+        self._excel_export_worker = None
 
         self._updating_table = False
         self._pending_changes: dict[int, dict] = {}
@@ -118,7 +121,8 @@ class SupplierPricesPage(QWidget):
         self.table = self.ui.table
         setup_data_table(self.table, sorting=False)
         self.table.horizontalHeader().setSectionsMovable(False)
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        from app.utils.gui_table_actions import install_standard_table_context_menu
+        install_standard_table_context_menu(self, self.table)
 
         self.ui.label_msg.setText("Сообщений нет")
         self.ui.line_NewSupplier.setEnabled(False)
@@ -138,7 +142,6 @@ class SupplierPricesPage(QWidget):
     def setup_connections(self):
         self.table.cellDoubleClicked.connect(self.start_cell_edit)
         self.table.itemChanged.connect(self.on_item_changed)
-        self.table.customContextMenuRequested.connect(self.show_context_menu)
 
         self.ui.cbo_SupplName.currentIndexChanged.connect(self.on_supplier_changed)
         self.ui.cbx_NewSupplier.toggled.connect(self.on_new_supplier_toggled)
@@ -335,18 +338,34 @@ class SupplierPricesPage(QWidget):
         if not file_path.lower().endswith('.xlsx'):
             file_path += '.xlsx'
 
-        with self.get_session() as session:
-            exporter = SupplierPriceExporter(session)
-            output_path = exporter.export_calculated(
-                batch_id=self.batch_id,
-                imported_by=self.imported_by,
-                supplier_id=supplier_id,
-                output_path=file_path,
-                source_file_path=self.selected_file_path or None,
-                quick_order_months=quick_order_months,
-                safe_stock_months=safe_stock_months,
-            )
+        batch_id = self.batch_id
+        imported_by = self.imported_by
+        source_file_path = self.selected_file_path or None
 
+        def do_export():
+            with self.get_session() as session:
+                exporter = SupplierPriceExporter(session)
+                return exporter.export_calculated(
+                    batch_id=batch_id,
+                    imported_by=imported_by,
+                    supplier_id=supplier_id,
+                    output_path=file_path,
+                    source_file_path=source_file_path,
+                    quick_order_months=quick_order_months,
+                    safe_stock_months=safe_stock_months,
+                )
+
+        if not start_excel_export(
+            self,
+            do_export,
+            on_finished=self._on_excel_export_finished,
+            on_error=lambda text: self.show_error_message(f"Ошибка экспорта в Excel: {text}"),
+        ):
+            self.show_message("Excel файл уже формируется. Можно продолжать работать в программе.")
+        else:
+            self.show_message("Excel файл формируется в фоновом режиме. Можно продолжать работать в программе.")
+
+    def _on_excel_export_finished(self, output_path):
         QDesktopServices.openUrl(Path(output_path).as_uri())
         self.show_message("Excel файл сохранен")
 
@@ -1057,64 +1076,6 @@ class SupplierPricesPage(QWidget):
 
         if column_name in {"supplier_article", "product_name"}:
             self._pending_changes[row_id]["selected_product_id"] = None
-
-    def show_context_menu(self, position):
-        item = self.table.itemAt(position)
-        if item is not None:
-            self.table.setCurrentCell(item.row(), item.column())
-
-        menu = QMenu()
-        copy_action = menu.addAction("Копировать")
-        delete_action = menu.addAction("Удалить строку")
-        apply_action = menu.addAction("Применить изменения")
-        revert_action = menu.addAction("Обновить")
-
-        copy_action.triggered.connect(self.copy_cell_content)
-        delete_action.triggered.connect(self.delete_selected_row)
-        apply_action.triggered.connect(self.apply_pending_changes)
-        revert_action.triggered.connect(self.load_table_rows)
-
-        menu.exec_(self.table.viewport().mapToGlobal(position))
-
-    def copy_cell_content(self):
-        selected_items = self.table.selectedItems()
-        if not selected_items:
-            return
-
-        clipboard = QApplication.clipboard()
-        if len(selected_items) == 1:
-            item = selected_items[0]
-            clipboard.setText(item.text())
-        else:
-            rows = {}
-            for item in selected_items:
-                rows.setdefault(item.row(), {})[item.column()] = item.text()
-            text_rows = []
-            for _, cols in sorted(rows.items()):
-                text_rows.append("\t".join(value for _, value in sorted(cols.items())))
-            clipboard.setText("\n".join(text_rows).strip())
-
-        self.show_message("Скопировано")
-
-    def delete_selected_row(self):
-        row = self.table.currentRow()
-        if row < 0 or row >= len(self._table_row_ids):
-            self.show_error_message("Не выбрана строка")
-            return
-
-        row_id = self._table_row_ids[row]
-
-        self._pending_deletes.add(row_id)
-        self._pending_changes.pop(row_id, None)
-
-        self._updating_table = True
-        try:
-            self.table.removeRow(row)
-            del self._table_row_ids[row]
-        finally:
-            self._updating_table = False
-
-        self.show_message("Строка помечена на удаление. Нажми 'Сохранить' для применения.")
 
     def refresh_current_product_combo(self):
         row = self.table.currentRow()

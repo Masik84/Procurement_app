@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtUiTools import QUiLoader
 
 from app.db.db import SessionLocal
-from app.db.models import Product, TempCustomerCostImport, TempCustomerCostOption
+from app.db.models import Product, Supplier, TempCustomerCostImport, TempCustomerCostOption
 from app.exports.customer_cost_exporter import CustomerCostExporter
 from app.services.customer_cost_service import CustomerCostService
 from app.utils.batch import get_current_username
@@ -28,6 +28,7 @@ from app.imports.customer_cost_importer import CustomerCostImporter
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
 from app.ui.table_style import *
+from app.workers.excel_export_worker import start_excel_export
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -38,6 +39,7 @@ TEMPLATE_PATH = BASE_DIR / "Price request_template.xlsx"
 COL_SUPPLIER_OPTION = 0
 COL_PRODUCT = 1
 COL_BRAND = 12
+BASE_HEADERS_COUNT = 15
 
 
 def load_ui(ui_path: Path):
@@ -67,6 +69,9 @@ class CustomerCostsPage(QWidget):
         self._imported_by = get_current_username()
         self._current_file_path = ""
         self._table_row_ids: list[int] = []
+        self._excel_export_thread = None
+        self._excel_export_worker = None
+        self._manual_price_blocks = 0
 
         self.columns = [
             "selected_option_id",
@@ -127,7 +132,8 @@ class CustomerCostsPage(QWidget):
         self.table = self.ui.table
         setup_data_table(self.table, sorting=False)
         self.table.horizontalHeader().setSectionsMovable(False)
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        from app.utils.gui_table_actions import install_standard_table_context_menu
+        install_standard_table_context_menu(self, self.table)
 
         self.ui.label_msg.setText("")
         self.ui.line_FindProduct.setToolTip("Часть названия продукта")
@@ -137,12 +143,12 @@ class CustomerCostsPage(QWidget):
     def setup_connections(self):
         self.table.cellDoubleClicked.connect(self.start_cell_edit)
         self.table.itemChanged.connect(self.on_item_changed)
-        self.table.customContextMenuRequested.connect(self.show_context_menu)
 
         self.ui.btn_DownFile.clicked.connect(self.download_template)
         self.ui.btn_Import.clicked.connect(self.import_file)
         self.ui.btn_AddLine.clicked.connect(self.add_line)
         self.ui.btn_CalcCost.clicked.connect(self.calculate_costs)
+        self.ui.btn_ManualPrice.clicked.connect(self.add_manual_price_columns)
         self.ui.btn_Save.clicked.connect(self.save_all)
         self.ui.btn_Reset.clicked.connect(self.reset_all)
 
@@ -185,6 +191,7 @@ class CustomerCostsPage(QWidget):
         self.table.clearContents()
         self.table.setRowCount(0)
         self._table_row_ids = []
+        self._manual_price_blocks = 0
     
     def refresh_filters(self):
         with self.get_session() as session:
@@ -259,6 +266,28 @@ class CustomerCostsPage(QWidget):
             row = session.query(TempCustomerCostImport).filter(TempCustomerCostImport.id == row_id).first()
             return row.selected_option_id if row else None
 
+    def _get_supplier_values(self) -> list[tuple[int, str]]:
+        with self.get_session() as session:
+            rows = session.query(Supplier).order_by(Supplier.name.asc()).all()
+        return [(int(s.id), s.name or "") for s in rows]
+
+    def _manual_supplier_column(self, block_index: int) -> int:
+        return BASE_HEADERS_COUNT + block_index * 2
+
+    def _manual_price_column(self, block_index: int) -> int:
+        return BASE_HEADERS_COUNT + block_index * 2 + 1
+
+    def _manual_block_for_column(self, column: int) -> int | None:
+        if column < BASE_HEADERS_COUNT:
+            return None
+        offset = column - BASE_HEADERS_COUNT
+        if offset % 2 != 0:
+            return None
+        block_index = offset // 2
+        if 0 <= block_index < self._manual_price_blocks:
+            return block_index
+        return None
+
     def _get_row_brand(self, row_id: int) -> str:
         with self.get_session() as session:
             row = session.query(TempCustomerCostImport).filter(TempCustomerCostImport.id == row_id).first()
@@ -305,10 +334,15 @@ class CustomerCostsPage(QWidget):
         try:
             self._table_row_ids = [row.id for row in rows]
 
+            display_headers = list(self.headers)
+            for block_index in range(self._manual_price_blocks):
+                suffix = f" {block_index + 1}" if self._manual_price_blocks > 1 else ""
+                display_headers.extend([f"Manual Supplier{suffix}", f"Manual Price{suffix}"])
+
             self.table.clear()
-            self.table.setColumnCount(len(self.headers))
+            self.table.setColumnCount(len(display_headers))
             self.table.setRowCount(len(rows))
-            self.table.setHorizontalHeaderLabels(self.headers)
+            self.table.setHorizontalHeaderLabels(display_headers)
 
             for row_index, row in enumerate(rows):
                 row_id = row.id
@@ -360,6 +394,20 @@ class CustomerCostsPage(QWidget):
                     14,
                     self.build_checkbox_widget(row_id, bool(row.new_is_excise) if row.new_is_excise is not None else False),
                 )
+
+                for block_index in range(self._manual_price_blocks):
+                    supplier_col = self._manual_supplier_column(block_index)
+                    price_col = self._manual_price_column(block_index)
+                    self.table.setItem(
+                        row_index,
+                        supplier_col,
+                        self.build_display_item(row_id, f"manual_supplier_{block_index}", "-"),
+                    )
+                    self.table.setItem(
+                        row_index,
+                        price_col,
+                        self.build_manual_price_item(row_id, block_index, ""),
+                    )
 
             self.table.resizeColumnsToContents()
             self.table.resizeRowsToContents()
@@ -423,6 +471,14 @@ class CustomerCostsPage(QWidget):
         item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         return item
 
+    def build_manual_price_item(self, row_id: int, block_index: int, value: str) -> QTableWidgetItem:
+        item = QTableWidgetItem(value)
+        item.setData(Qt.UserRole, f"manual_price_{block_index}")
+        item.setData(Qt.UserRole + 1, row_id)
+        item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
+        item.setTextAlignment(Qt.AlignCenter)
+        return item
+
     def build_checkbox_widget(self, row_id: int, checked: bool) -> QWidget:
         checkbox = QCheckBox()
         checkbox.setChecked(checked)
@@ -450,7 +506,8 @@ class CustomerCostsPage(QWidget):
         if self._updating_table:
             return
 
-        if column not in (COL_SUPPLIER_OPTION, COL_PRODUCT, COL_BRAND):
+        manual_block = self._manual_block_for_column(column)
+        if column not in (COL_SUPPLIER_OPTION, COL_PRODUCT, COL_BRAND) and manual_block is None:
             return
 
         if row < 0 or row >= len(self._table_row_ids):
@@ -458,7 +515,16 @@ class CustomerCostsPage(QWidget):
 
         row_id = self._table_row_ids[row]
 
-        if column == COL_SUPPLIER_OPTION:
+        if manual_block is not None:
+            combo = self._build_manual_supplier_combo(row, manual_block)
+            combo.activated.connect(
+                lambda _, r=row, b=manual_block, c=combo: self.finish_manual_supplier_edit(r, b, c)
+            )
+            self.table.setCellWidget(row, column, combo)
+            combo.setFocus()
+            QTimer.singleShot(0, combo.showPopup)
+
+        elif column == COL_SUPPLIER_OPTION:
             current_option_id = self._get_row_selected_option_id(row_id)
             combo = self._build_supplier_option_combo(row_id, current_option_id)
             combo.activated.connect(
@@ -491,6 +557,31 @@ class CustomerCostsPage(QWidget):
             self.table.setCellWidget(row, column, combo)
             combo.setFocus()
             QTimer.singleShot(0, combo.showPopup)
+
+    def _build_manual_supplier_combo(self, row: int, block_index: int) -> QComboBox:
+        combo = QComboBox()
+        combo.addItem("-", None)
+        for supplier_id, supplier_name in self._get_supplier_values():
+            combo.addItem(supplier_name, supplier_id)
+
+        item = self.table.item(row, self._manual_supplier_column(block_index))
+        current_id = item.data(Qt.UserRole + 2) if item else None
+        idx = combo.findData(current_id)
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+        return combo
+
+    def finish_manual_supplier_edit(self, row: int, block_index: int, combo: QComboBox):
+        supplier_id = combo.currentData()
+        supplier_name = combo.currentText() if supplier_id is not None else "-"
+
+        self._updating_table = True
+        col = self._manual_supplier_column(block_index)
+        self.table.removeCellWidget(row, col)
+        item = self.build_display_item(self._table_row_ids[row], f"manual_supplier_{block_index}", supplier_name)
+        item.setData(Qt.UserRole + 2, supplier_id)
+        self.table.setItem(row, col, item)
+        self._updating_table = False
+        self.table.resizeColumnsToContents()
 
     def _build_product_combo(self, row_id: int, selected_product_id: int | None) -> QComboBox:
         combo = QComboBox()
@@ -690,13 +781,18 @@ class CustomerCostsPage(QWidget):
         if not column_name:
             return
 
-        if column_name in {"selected_option_id", "selected_product_id", "new_brand"}:
+        column_name_str = str(column_name)
+        if (
+            column_name in {"selected_option_id", "selected_product_id", "new_brand"}
+            or column_name_str.startswith("manual_supplier_")
+            or column_name_str.startswith("manual_price_")
+        ):
             return
 
         value = clean_multi_spaces(item.text())
-        header = self.headers[item.column()]
+        header = self.headers[item.column()] if item.column() < len(self.headers) else None
 
-        if header in self.numeric_headers:
+        if header and header in self.numeric_headers:
             value = parse_loose_number(value)
         elif value == "":
             value = None
@@ -754,7 +850,9 @@ class CustomerCostsPage(QWidget):
 
     def _commit_open_editors(self):
         for row in range(self.table.rowCount()):
-            for column in (COL_SUPPLIER_OPTION, COL_PRODUCT, COL_BRAND):
+            columns = [COL_SUPPLIER_OPTION, COL_PRODUCT, COL_BRAND]
+            columns.extend(self._manual_supplier_column(i) for i in range(self._manual_price_blocks))
+            for column in columns:
                 widget = self.table.cellWidget(row, column)
                 if not isinstance(widget, QComboBox):
                     continue
@@ -767,6 +865,69 @@ class CustomerCostsPage(QWidget):
                     self.finish_product_edit(row, row_id, widget)
                 elif column == COL_BRAND:
                     self.finish_brand_edit(row, row_id, widget)
+                else:
+                    manual_block = self._manual_block_for_column(column)
+                    if manual_block is not None:
+                        self.finish_manual_supplier_edit(row, manual_block, widget)
+
+    def add_manual_price_columns(self):
+        self._commit_open_editors()
+        self._manual_price_blocks += 1
+        supplier_col = self._manual_supplier_column(self._manual_price_blocks - 1)
+        price_col = self._manual_price_column(self._manual_price_blocks - 1)
+
+        suffix = f" {self._manual_price_blocks}" if self._manual_price_blocks > 1 else ""
+        self.table.setColumnCount(self.table.columnCount() + 2)
+        self.table.setHorizontalHeaderItem(supplier_col, QTableWidgetItem(f"Manual Supplier{suffix}"))
+        self.table.setHorizontalHeaderItem(price_col, QTableWidgetItem(f"Manual Price{suffix}"))
+
+        for row in range(self.table.rowCount()):
+            row_id = self._table_row_ids[row]
+            self.table.setItem(row, supplier_col, self.build_display_item(row_id, f"manual_supplier_{self._manual_price_blocks - 1}", "-"))
+            self.table.setItem(row, price_col, self.build_manual_price_item(row_id, self._manual_price_blocks - 1, ""))
+
+        self.table.resizeColumnsToContents()
+        self.show_message("Добавлены колонки для ручной цены")
+
+    def _collect_manual_prices(self) -> list[dict]:
+        self._commit_open_editors()
+        manual_prices: list[dict] = []
+        errors: list[str] = []
+
+        for row in range(self.table.rowCount()):
+            if row >= len(self._table_row_ids):
+                continue
+            row_id = self._table_row_ids[row]
+            product_name_item = self.table.item(row, COL_PRODUCT)
+            product_name = product_name_item.text().strip() if product_name_item else f"строка {row + 1}"
+
+            for block_index in range(self._manual_price_blocks):
+                supplier_item = self.table.item(row, self._manual_supplier_column(block_index))
+                price_item = self.table.item(row, self._manual_price_column(block_index))
+                supplier_id = supplier_item.data(Qt.UserRole + 2) if supplier_item else None
+                price_text = clean_multi_spaces(price_item.text()) if price_item else ""
+                price_value = parse_loose_number(price_text) if price_text else None
+
+                if price_text and price_value is None:
+                    errors.append(f"Проверьте ручную цену по продукту: {product_name or f'строка {row + 1}'}")
+                    continue
+
+                if price_value is None or price_value == 0:
+                    continue
+
+                if supplier_id is None:
+                    errors.append(f"Укажите поставщика для ручной цены по продукту: {product_name or f'строка {row + 1}'}")
+                    continue
+
+                manual_prices.append({
+                    "temp_import_id": row_id,
+                    "supplier_id": int(supplier_id),
+                    "price": price_value,
+                })
+
+        if errors:
+            raise ValueError("\n".join(errors))
+        return manual_prices
 
     def add_line(self):
         try:
@@ -827,15 +988,38 @@ class CustomerCostsPage(QWidget):
             if not save_path:
                 return
 
-            with self.get_session() as session:
-                service = CustomerCostService(session)
-                exporter = CustomerCostExporter(session)
-                service.run_calculation(self._batch_id, self._imported_by)
-                exporter.export_calculated(self._batch_id, self._imported_by, save_path)
-                session.commit()
+            batch_id = self._batch_id
+            imported_by = self._imported_by
+            manual_prices = self._collect_manual_prices()
+            pending_deletes = set(getattr(self, "_pending_deletes", set()) or set())
 
-            self.load_table()
-            self.show_message("Расчет выполнен")
+            # ВАЖНО: btn_CalcCost не является финальным сохранением.
+            # Поэтому визуально удаленные через контекстное меню строки НЕ удаляем из БД здесь
+            # и не обращаемся к Qt-таблице из фонового потока.
+            def do_export():
+                with self.get_session() as session:
+                    service = CustomerCostService(session)
+                    exporter = CustomerCostExporter(session)
+                    service.run_calculation(batch_id, imported_by, manual_prices=manual_prices)
+                    output = exporter.export_calculated(
+                        batch_id,
+                        imported_by,
+                        save_path,
+                        excluded_temp_import_ids=pending_deletes,
+                    )
+                    session.commit()
+                    return output
+
+            def done(output_path):
+                # Не перезагружаем таблицу после расчета, чтобы не сбрасывать
+                # визуально удаленные строки до нажатия btn_Save.
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_path)))
+                self.show_message("Расчет выполнен")
+
+            if not start_excel_export(self, do_export, on_finished=done, on_error=lambda text: self.show_error_message(str(text))):
+                self.show_message("Excel файл уже формируется. Можно продолжать работать в программе.")
+            else:
+                self.show_message("Расчет и Excel файл формируются в фоновом режиме. Можно продолжать работать в программе.")
         except Exception as e:
             self.show_error_message(str(e))
 
@@ -847,15 +1031,43 @@ class CustomerCostsPage(QWidget):
             if not folder:
                 return
 
-            with self.get_session() as session:
-                service = CustomerCostService(session)
-                exporter = CustomerCostExporter(session)
-                service.run_calculation(self._batch_id, self._imported_by)
-                service.save_calculations(self._batch_id, self._imported_by)
-                exporter.export_kam_files(self._batch_id, self._imported_by, folder)
-                session.commit()
+            batch_id = self._batch_id
+            imported_by = self._imported_by
+            manual_prices = self._collect_manual_prices()
+            pending_deletes = set(getattr(self, "_pending_deletes", set()) or set())
 
-            self.show_message("Данные сохранены")
+            def do_export():
+                with self.get_session() as session:
+                    if pending_deletes:
+                        from app.db.models import TempCustomerCostImport, TempCustomerCostOption
+                        session.query(TempCustomerCostOption).filter(
+                            TempCustomerCostOption.batch_id == batch_id,
+                            TempCustomerCostOption.imported_by == imported_by,
+                            TempCustomerCostOption.temp_import_id.in_(pending_deletes),
+                        ).delete(synchronize_session=False)
+                        session.query(TempCustomerCostImport).filter(
+                            TempCustomerCostImport.batch_id == batch_id,
+                            TempCustomerCostImport.imported_by == imported_by,
+                            TempCustomerCostImport.id.in_(pending_deletes),
+                        ).delete(synchronize_session=False)
+                    service = CustomerCostService(session)
+                    exporter = CustomerCostExporter(session)
+                    service.run_calculation(batch_id, imported_by, manual_prices=manual_prices)
+                    service.save_calculations(batch_id, imported_by)
+                    output = exporter.export_kam_files(batch_id, imported_by, folder)
+                    service.delete_temp_rows(batch_id, imported_by)
+                    session.commit()
+                    return output
+
+            if not start_excel_export(
+                self,
+                do_export,
+                on_finished=lambda _output: (getattr(self, "_pending_deletes", set()).clear(), getattr(self, "_deleted_row_snapshots", []).clear(), self.start_new_batch(), self.load_table(), self.show_message("Данные сохранены")),
+                on_error=lambda text: self.show_error_message(str(text)),
+            ):
+                self.show_message("Excel файл уже формируется. Можно продолжать работать в программе.")
+            else:
+                self.show_message("Файлы менеджеров формируются в фоновом режиме. Можно продолжать работать в программе.")
         except Exception as e:
             self.show_error_message(str(e))
 
@@ -896,26 +1108,3 @@ class CustomerCostsPage(QWidget):
         except Exception as e:
             self.show_error_message(str(e))
 
-    def show_context_menu(self, position):
-        menu = QMenu()
-        copy_action = menu.addAction("Копировать")
-        action = menu.exec_(self.table.viewport().mapToGlobal(position))
-        if action == copy_action:
-            self.copy_cell_content()
-
-    def copy_cell_content(self):
-        selected_items = self.table.selectedItems()
-        if not selected_items:
-            return
-
-        clipboard = QApplication.clipboard()
-        if len(selected_items) == 1:
-            clipboard.setText(selected_items[0].text())
-        else:
-            rows = {}
-            for item in selected_items:
-                rows.setdefault(item.row(), {})[item.column()] = item.text()
-            text = "\n".join("\t".join(cols[c] for c in sorted(cols)) for _, cols in sorted(rows.items()))
-            clipboard.setText(text)
-
-        self.show_message("Скопировано")

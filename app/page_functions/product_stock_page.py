@@ -8,6 +8,8 @@ from math import isnan
 
 from openpyxl import Workbook
 
+from app.utils.excel_export_format import write_openpyxl_dict_sheet
+
 from PySide6.QtCore import QFile, Qt, QUrl, QTimer, QEvent, QPoint
 from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
@@ -163,7 +165,8 @@ class ProductStockPage(QWidget):
     def setup_ui(self):
         setup_data_table(self.table, sorting=True)
         self.table.horizontalHeader().setSectionsMovable(False)
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        from app.utils.gui_table_actions import install_standard_table_context_menu
+        install_standard_table_context_menu(self, self.table)
 
         # font = QFont("Tahoma", 10)
         for widget in (self.ui.line_RowsLoaded, self.ui.line_TotalQty, self.ui.line_RowsError):
@@ -184,7 +187,6 @@ class ProductStockPage(QWidget):
         self.ui.btn_Import.clicked.connect(self.import_file)
         self.ui.btn_Save.clicked.connect(self.save_all)
         self.ui.btn_Reset.clicked.connect(self.reset_all)
-        self.table.customContextMenuRequested.connect(self.show_context_menu)
         self.table.cellDoubleClicked.connect(self.start_cell_edit)
         self.table.itemChanged.connect(self.on_item_changed)
 
@@ -981,24 +983,7 @@ class ProductStockPage(QWidget):
             ws = wb.active if first else wb.create_sheet(title=title[:31])
             ws.title = title[:31]
             first = False
-
-            headers = list(rows[0].keys()) if rows else []
-            if headers:
-                ws.append(headers)
-                for row in rows:
-                    ws.append([row.get(h, "") for h in headers])
-
-            for cell in ws[1]:
-                cell.font = cell.font.copy(bold=True)
-
-            for col_cells in ws.columns:
-                max_len = 0
-                col_letter = col_cells[0].column_letter
-                for cell in col_cells:
-                    val = "" if cell.value is None else str(cell.value)
-                    max_len = max(max_len, len(val))
-                ws.column_dimensions[col_letter].width = min(max(max_len + 2, 12), 40)
-
+            write_openpyxl_dict_sheet(ws, rows)
         wb.save(output_path)
 
     def _open_issue_save_dialog(self, sheets: list[tuple[str, list[dict[str, Any]]]]):
@@ -1045,6 +1030,8 @@ class ProductStockPage(QWidget):
 
         try:
             with self.get_session() as session:
+                from app.utils.gui_table_actions import apply_pending_table_deletes_to_db
+                apply_pending_table_deletes_to_db(session, self)
                 rows = self._query_mode_rows(session)
                 if not rows:
                     self.show_error_message("Нет данных для сохранения. Сначала импортируйте файл или добавьте строки.")
@@ -1095,29 +1082,3 @@ class ProductStockPage(QWidget):
         except Exception as e:
             self.show_error_message(str(e))
 
-    def show_context_menu(self, position):
-        menu = QMenu()
-        copy_action = menu.addAction("Копировать")
-        open_files_action = None
-        if self._current_file_path:
-            open_files_action = menu.addAction("Открыть папку файла")
-        action = menu.exec(self.table.viewport().mapToGlobal(position))
-        if action == copy_action:
-            self.copy_cell_content()
-        elif action == open_files_action:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(self._current_file_path).parent)))
-
-    def copy_cell_content(self):
-        selected_items = self.table.selectedItems()
-        if not selected_items:
-            return
-        clipboard = QApplication.clipboard()
-        if len(selected_items) == 1:
-            clipboard.setText(selected_items[0].text())
-        else:
-            rows: dict[int, dict[int, str]] = {}
-            for item in selected_items:
-                rows.setdefault(item.row(), {})[item.column()] = item.text()
-            text = "\n".join("\t".join(cols[c] for c in sorted(cols)) for _, cols in sorted(rows.items()))
-            clipboard.setText(text)
-        self.show_message("Скопировано")

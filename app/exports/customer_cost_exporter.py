@@ -10,6 +10,7 @@ import win32com.client as win32
 from sqlalchemy.orm import Session
 
 from app.db.models import TempCustomerCostImport, TempCustomerCostOption
+from app.utils.excel_export_format import apply_column_formats, excel_cell_value
 
 
 class CustomerCostExporter:
@@ -200,11 +201,20 @@ class CustomerCostExporter:
 
         ws.Range("A1:O1").AutoFilter(1)
 
-    def _collect_export_rows(self, batch_id: str, imported_by: str) -> tuple[list[dict], int]:
-        rows = self.session.query(TempCustomerCostImport).filter(
+    def _collect_export_rows(
+        self,
+        batch_id: str,
+        imported_by: str,
+        excluded_temp_import_ids: set[int] | None = None,
+    ) -> tuple[list[dict], int]:
+        query = self.session.query(TempCustomerCostImport).filter(
             TempCustomerCostImport.batch_id == batch_id,
             TempCustomerCostImport.imported_by == imported_by,
-        ).order_by(
+        )
+        if excluded_temp_import_ids:
+            query = query.filter(~TempCustomerCostImport.id.in_(excluded_temp_import_ids))
+
+        rows = query.order_by(
             TempCustomerCostImport.import_row_no.asc(),
             TempCustomerCostImport.id.asc(),
         ).all()
@@ -260,13 +270,23 @@ class CustomerCostExporter:
 
         return out_rows, max_opt
 
-    def export_calculated(self, batch_id: str, imported_by: str, file_path: str | Path) -> Path:
+    def export_calculated(
+        self,
+        batch_id: str,
+        imported_by: str,
+        file_path: str | Path,
+        excluded_temp_import_ids: set[int] | None = None,
+    ) -> Path:
         file_path = Path(file_path)
         if file_path.suffix.lower() != ".xlsx":
             file_path = file_path.with_suffix(".xlsx")
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        rows, max_opt = self._collect_export_rows(batch_id=batch_id, imported_by=imported_by)
+        rows, max_opt = self._collect_export_rows(
+            batch_id=batch_id,
+            imported_by=imported_by,
+            excluded_temp_import_ids=excluded_temp_import_ids,
+        )
 
         base_headers = [
             "Дата",
@@ -319,7 +339,7 @@ class CustomerCostExporter:
             row_num = 2
             for row in rows:
                 for col_index, header in enumerate(headers, start=1):
-                    ws.Cells(row_num, col_index).Value = self._excel_value_or_blank(row.get(header))
+                    ws.Cells(row_num, col_index).Value = excel_cell_value(header, row.get(header))
                 row_num += 1
 
             self._apply_header_common(ws, len(headers))
@@ -513,7 +533,7 @@ class CustomerCostExporter:
             row_num = 2
             for row in rows:
                 for col_index, header in enumerate(headers, start=1):
-                    ws.Cells(row_num, col_index).Value = self._excel_value_or_blank(row.get(header))
+                    ws.Cells(row_num, col_index).Value = excel_cell_value(header, row.get(header))
                 row_num += 1
 
             self._apply_header_common(ws, len(headers))

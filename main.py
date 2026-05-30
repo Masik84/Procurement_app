@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import traceback
 from pathlib import Path
 
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QSize, QRect, QEvent
@@ -29,6 +30,19 @@ import importlib
 
 PAGE_STYLESHEET = ""
 
+
+def global_exception_handler(exc_type, exc_value, exc_traceback):
+    traceback.print_exception(exc_type, exc_value, exc_traceback)
+
+    print("\n" + "=" * 80)
+    print("APPLICATION CRASHED")
+    print("=" * 80)
+
+    input("\nPress Enter to close...")
+    sys.exit(1)
+
+
+sys.excepthook = global_exception_handler
 
 def lazy_page(module_name: str, class_name: str):
     def factory():
@@ -121,6 +135,8 @@ class MyWindow(QMainWindow):
         self.btn_product_search = self.ui.btn_ProdSearchDB
         self.btn_supplier_price = self.ui.btn_SupplierPrice
         self.btn_customer_cost = self.ui.btn_CustomerCost
+        self.btn_target_price = self.ui.btn_TargetPrice
+        self.btn_customer_cost_report = self.ui.btn_CustCostReport
         self.btn_product_stock = self.ui.btn_Stock
         self.btn_quick_cost_calc = self.ui.btn_QuickCostCalc
         self.btn_price_reports = self.ui.btn_PriceReports
@@ -139,6 +155,8 @@ class MyWindow(QMainWindow):
             self.btn_product_search: lazy_page("app.page_functions.product_search_page", "ProductSearchPage"),
             self.btn_supplier_price: lazy_page("app.page_functions.supplier_prices_page", "SupplierPricesPage"),
             self.btn_customer_cost: lazy_page("app.page_functions.customer_costs_page", "CustomerCostsPage"),
+            self.btn_target_price: lazy_page("app.page_functions.target_prices_page", "TargetPricesPage"),
+            self.btn_customer_cost_report: lazy_page("app.page_functions.customer_costs_reports_page", "CustomerCostsReportsPage"),
             self.btn_product_stock: lazy_page("app.page_functions.product_stock_page", "ProductStockPage"),
             self.btn_quick_cost_calc: lazy_page("app.page_functions.quick_cost_calc_page", "QuickCostCalcPage"),
             self.btn_price_reports: lazy_page("app.page_functions.price_reports_page", "PriceReportsPage"),
@@ -405,16 +423,8 @@ if __name__ == "__main__":
 
     app = QApplication(sys.argv)
 
-    # style_path = Path(__file__).resolve().parent / "app" / "ui" / "styles" / "app_styles.qss"
-    # if style_path.exists():
-    #     app.setStyleSheet(style_path.read_text(encoding="utf-8"))
-
     style_path = Path(__file__).resolve().parent / "app" / "ui" / "styles" / "app_styles.qss"
     PAGE_STYLESHEET = style_path.read_text(encoding="utf-8") if style_path.exists() else ""
-
-    # Не вызываем Base.metadata.create_all() при каждом запуске.
-    # Схему БД обновляй миграциями Alembic отдельно, иначе старт блокируется
-    # запросами к БД и особенно заметно тормозит на удаленном сервере.
 
     window = MyWindow()
     window.show()

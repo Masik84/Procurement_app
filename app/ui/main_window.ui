@@ -305,7 +305,7 @@ QTabBar::tab:hover:!selected {
               <property name="minimumSize">
                <size>
                 <width>0</width>
-                <height>25</height>
+                <height>30</height>
                </size>
               </property>
               <property name="font">
@@ -388,7 +388,7 @@ QTabBar::tab:hover:!selected {
               <property name="minimumSize">
                <size>
                 <width>0</width>
-                <height>0</height>
+                <height>30</height>
                </size>
               </property>
               <property name="font">
@@ -412,6 +412,12 @@ QTabBar::tab:hover:!selected {
             </item>
             <item>
              <widget class="QPushButton" name="btn_Articles">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
               <property name="text">
                <string>База артикулов и названий</string>
               </property>
@@ -419,6 +425,12 @@ QTabBar::tab:hover:!selected {
             </item>
             <item>
              <widget class="QPushButton" name="btn_Supplier">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
               <property name="text">
                <string>Поставщики</string>
               </property>
@@ -426,6 +438,12 @@ QTabBar::tab:hover:!selected {
             </item>
             <item>
              <widget class="QPushButton" name="btn_ExchangeRates">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
               <property name="font">
                <font>
                 <family>Tahoma</family>
@@ -447,6 +465,12 @@ QTabBar::tab:hover:!selected {
             </item>
             <item>
              <widget class="QPushButton" name="btn_FixedCosts">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
               <property name="font">
                <font>
                 <family>Tahoma</family>
@@ -465,6 +489,12 @@ QTabBar::tab:hover:!selected {
             </item>
             <item>
              <widget class="QPushButton" name="btn_MarkingRates">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
               <property name="font">
                <font>
                 <family>Tahoma</family>
@@ -483,7 +513,7 @@ QTabBar::tab:hover:!selected {
               <property name="minimumSize">
                <size>
                 <width>0</width>
-                <height>0</height>
+                <height>30</height>
                </size>
               </property>
               <property name="font">
@@ -501,6 +531,12 @@ QTabBar::tab:hover:!selected {
             </item>
             <item>
              <widget class="QPushButton" name="btn_PriceHistory">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
               <property name="text">
                <string>Последние цены и История</string>
               </property>
@@ -508,6 +544,12 @@ QTabBar::tab:hover:!selected {
             </item>
             <item>
              <widget class="QPushButton" name="btn_ProdSearchDB">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
               <property name="text">
                <string>Подбор Продуктов по списку</string>
               </property>
@@ -565,6 +607,12 @@ QTabBar::tab:hover:!selected {
             </property>
             <item>
              <widget class="QPushButton" name="btn_SupplierPrice">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
               <property name="text">
                <string>Прайс Поставщика</string>
               </property>
@@ -572,6 +620,12 @@ QTabBar::tab:hover:!selected {
             </item>
             <item>
              <widget class="QPushButton" name="btn_CustomerCost">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
               <property name="text">
                <string>Косты для Клиентов</string>
               </property>
@@ -579,6 +633,12 @@ QTabBar::tab:hover:!selected {
             </item>
             <item>
              <widget class="QPushButton" name="btn_Stock">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
               <property name="text">
                <string>Остатки / Заказы Пост-ов</string>
               </property>
@@ -586,13 +646,38 @@ QTabBar::tab:hover:!selected {
             </item>
             <item>
              <widget class="QPushButton" name="btn_QuickCostCalc">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
               <property name="text">
                <string>Быстрый расчет Коста</string>
               </property>
              </widget>
             </item>
             <item>
+             <widget class="QPushButton" name="btn_TargetPrice">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>Таргет цены для Пост-ов</string>
+              </property>
+             </widget>
+            </item>
+            <item>
              <widget class="QPushButton" name="btn_OrderPlanning">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
               <property name="text">
                <string>Планирование Закупки</string>
               </property>
@@ -673,6 +758,12 @@ QTabBar::tab:hover:!selected {
             </item>
             <item>
              <widget class="QPushButton" name="btn_CustCostReport">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
               <property name="text">
                <string>Отчет по костам для Клиентов</string>
               </property>

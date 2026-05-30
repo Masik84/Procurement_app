@@ -2,6 +2,8 @@ from pathlib import Path
 
 import pythoncom
 import win32com.client as win32
+
+from app.utils.excel_export_format import write_and_format_table
 from sqlalchemy.exc import SQLAlchemyError
 from PySide6.QtWidgets import (
     QMessageBox,
@@ -23,6 +25,7 @@ from app.db.db import SessionLocal
 from app.ui.table_style import *
 from app.imports.product_article_importer import ProductArticleImporter
 from app.exports.product_article_exporter import ProductArticleExporter
+from app.workers.excel_export_worker import start_excel_export
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -60,6 +63,8 @@ class ProductArticlesPage(QWidget):
         self._pending_deletes = set()
         self._new_rows = set()
         self._temp_row_id = -1
+        self._excel_export_thread = None
+        self._excel_export_worker = None
 
         self.setup_ui()
         self.setup_connections()
@@ -68,8 +73,8 @@ class ProductArticlesPage(QWidget):
     def setup_ui(self):
         self.table = self.ui.table
         setup_data_table(self.table, sorting=True)
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table.customContextMenuRequested.connect(self.show_context_menu)
+        from app.utils.gui_table_actions import install_standard_table_context_menu
+        install_standard_table_context_menu(self, self.table)
         self.table.cellDoubleClicked.connect(self.on_cell_double_clicked)
 
     def setup_connections(self):
@@ -93,20 +98,6 @@ class ProductArticlesPage(QWidget):
 
     def get_session(self):
         return SessionLocal()
-
-    def show_context_menu(self, position):
-        menu = QMenu()
-        copy_action = menu.addAction("Копировать")
-        delete_action = menu.addAction("Удалить строку")
-        apply_action = menu.addAction("Применить изменения")
-        revert_action = menu.addAction("Отменить изменения")
-
-        copy_action.triggered.connect(self.copy_cell_content)
-        delete_action.triggered.connect(self.delete_selected_row)
-        apply_action.triggered.connect(self.apply_pending_changes)
-        revert_action.triggered.connect(self.revert_changes)
-
-        menu.exec_(self.table.viewport().mapToGlobal(position))
 
     def on_item_changed(self, item):
         if not hasattr(self, "_updating_table") or self._updating_table:
@@ -239,59 +230,6 @@ class ProductArticlesPage(QWidget):
 
     def clean_multi_spaces(self, text: str) -> str:
         return " ".join((text or "").split())
-
-    def copy_cell_content(self):
-        selected_items = self.table.selectedItems()
-        if not selected_items:
-            return
-
-        clipboard = QApplication.clipboard()
-
-        if len(selected_items) == 1:
-            text = selected_items[0].text()
-        else:
-            rows = {}
-            for item in selected_items:
-                row = item.row()
-                col = item.column()
-                if row not in rows:
-                    rows[row] = {}
-                rows[row][col] = item.text()
-
-            text_rows = []
-            for _, cols in sorted(rows.items()):
-                text_rows.append("\t".join(value for _, value in sorted(cols.items())))
-            text = "\n".join(text_rows)
-
-        clipboard.setText(text.strip())
-        self.show_message("Скопировано")
-
-    def delete_selected_row(self):
-        row = self.table.currentRow()
-        if row < 0:
-            self.show_error_message("Не выбрана строка для удаления")
-            return
-
-        id_item = self.table.item(row, 0)
-        if not id_item:
-            self.show_error_message("Не удалось определить ID строки")
-            return
-
-        row_id_text = id_item.text().strip()
-        if not row_id_text:
-            self.show_error_message("Не удалось определить ID строки")
-            return
-
-        row_id = int(row_id_text)
-
-        if row_id in self._new_rows:
-            self._new_rows.discard(row_id)
-            self._pending_changes.pop(row_id, None)
-        else:
-            self._pending_deletes.add(row_id)
-
-        self.table.removeRow(row)
-        self.show_message("Строка помечена на удаление")
 
     def revert_changes(self):
         try:
@@ -722,15 +660,24 @@ class ProductArticlesPage(QWidget):
             self.show_message("Нет данных для выгрузки")
             return
 
-        try:
+        def do_export():
             self._export_product_articles_to_excel(file_path, rows)
+            return file_path
+
+        def done(output_path):
+            QDesktopServices.openUrl(Path(output_path).as_uri())
             self.show_message("Данные сохранены в Excel")
-        except PermissionError:
-            self.show_error_message(
-                "Не удалось сохранить файл Excel. Возможно, файл уже открыт."
-            )
-        except Exception as e:
-            self.show_error_message(f"Ошибка при сохранении Excel: {str(e)}")
+
+        def error(text):
+            if "Permission" in str(text):
+                self.show_error_message("Не удалось сохранить файл Excel. Возможно, файл уже открыт.")
+            else:
+                self.show_error_message(f"Ошибка при сохранении Excel: {text}")
+
+        if not start_excel_export(self, do_export, on_finished=done, on_error=error):
+            self.show_message("Excel файл уже формируется. Можно продолжать работать в программе.")
+        else:
+            self.show_message("Excel файл формируется в фоновом режиме. Можно продолжать работать в программе.")
 
     def _export_product_articles_to_excel(self, file_path: str, rows: list[dict]):
         excel = None
@@ -753,48 +700,21 @@ class ProductArticlesPage(QWidget):
                 "Article",
                 "Product name (variant)",
             ]
-
-            for col_index, header in enumerate(headers, start=1):
-                ws.Cells(1, col_index).Value = header
-
-            ws.Cells.Font.Name = "Aptos Narrow"
-            ws.Cells.Font.Size = 11
-
-            header_range = ws.Range("A1:D1")
-            header_range.Font.Name = "Aptos Narrow"
-            header_range.Font.Size = 11
-            header_range.Font.Bold = True
-            header_range.Interior.Color = 0xCDCDCD
-            header_range.WrapText = True
-            header_range.HorizontalAlignment = -4108
-            header_range.VerticalAlignment = -4160
-
-            ws.Rows(1).EntireRow.AutoFit()
-
-            try:
-                ws.Range("A1:D1").AutoFilter(1)
-            except Exception:
-                pass
-
-            ws.Columns("A:A").ColumnWidth = 10
-            ws.Columns("B:B").ColumnWidth = 34
-            ws.Columns("C:C").ColumnWidth = 22
-            ws.Columns("D:D").ColumnWidth = 34
-
-            ws.Columns("C:C").NumberFormat = "@"
-
-            row_num = 2
-            for row in rows:
-                ws.Cells(row_num, 1).Value = row.get("id")
-                ws.Cells(row_num, 2).Value = row.get("product_name", "") or ""
-
-                article_value = row.get("article", "")
-                if article_value is None:
-                    article_value = ""
-                ws.Cells(row_num, 3).Value = str(article_value)
-
-                ws.Cells(row_num, 4).Value = row.get("variant_name", "") or ""
-                row_num += 1
+            table_rows = [
+                [
+                    row.get("id"),
+                    row.get("product_name", "") or "",
+                    "" if row.get("article", "") is None else str(row.get("article", "")),
+                    row.get("variant_name", "") or "",
+                ]
+                for row in rows
+            ]
+            write_and_format_table(ws, headers, table_rows, widths={
+                "ID": 10,
+                "Product name": 34,
+                "Article": 22,
+                "Product name (variant)": 34,
+            })
 
             wb.SaveAs(str(Path(file_path).resolve()))
 

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QFile, QDate
 from PySide6.QtUiTools import QUiLoader
+from PySide6.QtGui import QDesktopServices
 
 from app.db.models import Product, Supplier, PriceHistory, CurrentSupplierPrice
 from app.db.db import SessionLocal
@@ -30,6 +31,7 @@ from app.utils.batch import get_current_username
 from app.db.models import CurrentSupplierPrice, PriceHistory, Product, Supplier
 from app.db.models import PriceHistory as PriceHistoryModel
 from app.db.models import CurrentSupplierPrice as CurrentSupplierPriceModel
+from app.workers.excel_export_worker import start_excel_export
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -89,6 +91,8 @@ class PriceHistoryPage(QWidget):
         self._temp_row_id = -1
         self._import_preview_active = False
         self._import_preview_rows = []
+        self._excel_export_thread = None
+        self._excel_export_worker = None
 
         self.columns = ["product_id", "supplier_id", "price_date", "price", "currency"]
         self.headers = ["Product name", "Supplier name", "Price date", "Price", "Currency"]
@@ -106,7 +110,8 @@ class PriceHistoryPage(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
 
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        from app.utils.gui_table_actions import install_standard_table_context_menu
+        install_standard_table_context_menu(self, self.table)
         self.clear_message()
 
     def _setup_date_edits(self):
@@ -118,7 +123,6 @@ class PriceHistoryPage(QWidget):
     def setup_connections(self):
         self.table.cellDoubleClicked.connect(self.start_cell_edit)
         self.table.itemChanged.connect(self.on_item_changed)
-        self.table.customContextMenuRequested.connect(self.show_context_menu)
 
         self.ui.btn_Search.clicked.connect(self.find_rows)
         self.ui.btn_AddLine.clicked.connect(self.add_line)
@@ -481,43 +485,6 @@ class PriceHistoryPage(QWidget):
                 query = query.filter(Supplier.name == supplier_name)
 
             return query.order_by(Supplier.name).all()
-
-    def show_context_menu(self, position):
-        menu = QMenu()
-        copy_action = menu.addAction("Копировать")
-        delete_action = menu.addAction("Удалить строку")
-        apply_action = menu.addAction("Применить изменения")
-        revert_action = menu.addAction("Отменить изменения")
-
-        copy_action.triggered.connect(self.copy_cell_content)
-        delete_action.triggered.connect(self.delete_selected_row)
-        apply_action.triggered.connect(self.apply_pending_changes)
-        revert_action.triggered.connect(self.revert_changes)
-
-        menu.exec_(self.table.viewport().mapToGlobal(position))
-
-    def copy_cell_content(self):
-        selected_items = self.table.selectedItems()
-        if not selected_items:
-            return
-
-        clipboard = QApplication.clipboard()
-
-        if len(selected_items) == 1:
-            text = selected_items[0].text()
-        else:
-            rows = {}
-            for item in selected_items:
-                rows.setdefault(item.row(), {})
-                rows[item.row()][item.column()] = item.text()
-
-            text = "\n".join(
-                "\t".join(value for _, value in sorted(cols.items()))
-                for _, cols in sorted(rows.items())
-            )
-
-        clipboard.setText(text.strip())
-        self.show_message("Скопировано")
 
     def _init_date_filters(self):
         today = QDate.currentDate()
@@ -904,42 +871,6 @@ class PriceHistoryPage(QWidget):
         self._display_data(data)
         self.table.setCurrentCell(0, 2)
         self.show_message("Добавлена новая строка")
-
-    def delete_selected_row(self):
-        selected_rows = sorted({index.row() for index in self.table.selectedIndexes()}, reverse=True)
-
-        if not selected_rows:
-            self.show_error_message("Не выбраны строки для удаления")
-            return
-
-        deleted_count = 0
-
-        for row in selected_rows:
-            row_key = None
-            date_item = self.table.item(row, 2)
-            if date_item:
-                row_key = date_item.data(Qt.UserRole)
-
-            if not row_key:
-                continue
-
-            if row_key in self._new_rows:
-                self._new_rows.discard(row_key)
-                self._pending_changes.pop(row_key, None)
-                if self._import_preview_active:
-                    self._import_preview_rows = [
-                        r for r in self._import_preview_rows if r["row_key"] != row_key
-                    ]
-            else:
-                self._pending_deletes.add(row_key)
-
-            self.table.removeRow(row)
-            deleted_count += 1
-
-        if deleted_count:
-            self.show_message(f"Строк помечено на удаление: {deleted_count}")
-        else:
-            self.show_error_message("Не удалось определить строки для удаления")
 
     def revert_changes(self):
         try:
@@ -1360,12 +1291,21 @@ class PriceHistoryPage(QWidget):
                 return
 
             data = self.get_rows_from_db()
-            exporter = PriceHistoryExporter()
-
             report_type = "current" if mode == MODE_CURRENT else "history"
-            exporter.export_rows(data, file_path, report_type=report_type)
 
-            self.show_message("Excel файл сохранен")
+            def do_export():
+                exporter = PriceHistoryExporter()
+                exporter.export_rows(data, file_path, report_type=report_type)
+                return file_path
+
+            def done(output_path):
+                QDesktopServices.openUrl(Path(output_path).as_uri())
+                self.show_message("Excel файл сохранен")
+
+            if not start_excel_export(self, do_export, on_finished=done, on_error=lambda text: self.show_error_message(str(text))):
+                self.show_message("Excel файл уже формируется. Можно продолжать работать в программе.")
+            else:
+                self.show_message("Excel файл формируется в фоновом режиме. Можно продолжать работать в программе.")
 
         except Exception as e:
             self.show_error_message(str(e))

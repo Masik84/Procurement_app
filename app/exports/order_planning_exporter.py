@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.db.models import CurrentSupplierPrice, PriceHistory, Product, ProductStock, Supplier
 from app.services.cost_calculation_service import CostCalculationService
 from app.services.supplier_service import SupplierService
+from app.utils.excel_export_format import apply_column_formats, excel_cell_value
 
 
 class OrderPlanningExporter:
@@ -257,9 +258,11 @@ class OrderPlanningExporter:
                 ws.Cells(1, col_index).Value = header
             for row_index, row in enumerate(rows, start=2):
                 for col_index, value in enumerate(row, start=1):
-                    ws.Cells(row_index, col_index).Value = self._excel_value(value)
+                    header = headers[col_index - 1]
+                    ws.Cells(row_index, col_index).Value = excel_cell_value(header, value)
 
             self._apply_header_common(ws, len(headers))
+            apply_column_formats(ws, headers)
             header_map = self._header_map(headers)
 
             self._color_headers(ws, header_map, "Brand", "Safe Stock (+ord), mnth", self._rgb(205, 205, 205))

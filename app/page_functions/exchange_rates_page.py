@@ -79,8 +79,8 @@ class ExchangeRatesPage(QWidget):
 
     def setup_ui(self):
         setup_data_table(self.table, sorting=True)
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table.customContextMenuRequested.connect(self.show_context_menu)
+        from app.utils.gui_table_actions import install_standard_table_context_menu
+        install_standard_table_context_menu(self, self.table)
 
     def setup_connections(self):
         self.table.itemChanged.connect(self.on_item_changed)
@@ -134,20 +134,6 @@ class ExchangeRatesPage(QWidget):
             return None
         return item.data(Qt.UserRole)
 
-    def show_context_menu(self, position):
-        menu = QMenu()
-        copy_action = menu.addAction("Копировать")
-        delete_action = menu.addAction("Удалить строку")
-        apply_action = menu.addAction("Применить изменения")
-        revert_action = menu.addAction("Отменить изменения")
-
-        copy_action.triggered.connect(self.copy_cell_content)
-        delete_action.triggered.connect(self.delete_selected_row)
-        apply_action.triggered.connect(self.apply_pending_changes)
-        revert_action.triggered.connect(self.revert_changes)
-
-        menu.exec_(self.table.viewport().mapToGlobal(position))
-
     def on_item_changed(self, item):
         if self._updating_table:
             return
@@ -173,49 +159,6 @@ class ExchangeRatesPage(QWidget):
 
         except Exception as e:
             self.show_error_message(f"Ошибка: {str(e)}")
-
-    def copy_cell_content(self):
-        selected_items = self.table.selectedItems()
-        if not selected_items:
-            return
-
-        clipboard = QApplication.clipboard()
-
-        if len(selected_items) == 1:
-            text = selected_items[0].text()
-        else:
-            rows = {}
-            for item in selected_items:
-                rows.setdefault(item.row(), {})
-                rows[item.row()][item.column()] = item.text()
-
-            text = "\n".join(
-                "\t".join(value for _, value in sorted(cols.items()))
-                for _, cols in sorted(rows.items())
-            )
-
-        clipboard.setText(text.strip())
-        self.show_message("Скопировано")
-
-    def delete_selected_row(self):
-        row = self.table.currentRow()
-        if row < 0:
-            self.show_error_message("Не выбрана строка для удаления")
-            return
-
-        row_key = self._get_row_key(row)
-        if row_key is None:
-            self.show_error_message("Не удалось определить строку")
-            return
-
-        if row_key in self._new_rows:
-            self._new_rows.discard(row_key)
-            self._pending_changes.pop(row_key, None)
-        else:
-            self._pending_deletes.add(row_key)
-
-        self.table.removeRow(row)
-        self.show_message("Строка помечена на удаление")
 
     def revert_changes(self):
         try:

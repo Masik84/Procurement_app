@@ -6,6 +6,8 @@ from decimal import Decimal, InvalidOperation
 import re
 import pythoncom
 import win32com.client as win32
+
+from app.utils.excel_export_format import write_and_format_table
 from sqlalchemy.exc import SQLAlchemyError
 from PySide6.QtWidgets import (
     QMessageBox,
@@ -30,6 +32,7 @@ from app.imports.product_importer import ProductImporter
 from app.ui.table_style import *
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
+from app.workers.excel_export_worker import start_excel_export
 from app.exports.product_exporter import ProductExporter
 
 
@@ -69,6 +72,8 @@ class ProductsPage(QWidget):
         self._new_rows: set[int] = set()
         self._import_update_rows: set[int] = set()
         self._temp_row_id = -1
+        self._excel_export_thread = None
+        self._excel_export_worker = None
 
         self.columns = ["id", "name", "brand", "pack", "is_excise", "family"]
         self.headers = ["id", "Product name", "Brand", "Pack", "Excise duty", "Product Family"]
@@ -84,8 +89,8 @@ class ProductsPage(QWidget):
         setup_data_table(self.table, sorting=True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.table.customContextMenuRequested.connect(self.show_context_menu)
+        from app.utils.gui_table_actions import install_standard_table_context_menu
+        install_standard_table_context_menu(self, self.table)
         self.table.cellDoubleClicked.connect(self.on_cell_double_clicked)
 
     def setup_connections(self):
@@ -111,20 +116,6 @@ class ProductsPage(QWidget):
 
     def get_session(self):
         return SessionLocal()
-
-    def show_context_menu(self, position):
-        menu = QMenu()
-        copy_action = menu.addAction("Копировать")
-        delete_action = menu.addAction("Удалить строку")
-        apply_action = menu.addAction("Применить изменения")
-        revert_action = menu.addAction("Отменить изменения")
-
-        copy_action.triggered.connect(self.copy_cell_content)
-        delete_action.triggered.connect(self.delete_selected_row)
-        apply_action.triggered.connect(self.apply_pending_changes)
-        revert_action.triggered.connect(self.revert_changes)
-
-        menu.exec_(self.table.viewport().mapToGlobal(position))
 
     def on_item_changed(self, item):
         if self._updating_table:
@@ -172,32 +163,6 @@ class ProductsPage(QWidget):
         except Exception as e:
             self.show_error_message(f"Ошибка: {str(e)}")
 
-    def copy_cell_content(self):
-        selected_items = self.table.selectedItems()
-        if not selected_items:
-            return
-
-        clipboard = QApplication.clipboard()
-
-        if len(selected_items) == 1:
-            item = selected_items[0]
-            text = self._get_cell_display_text(item.row(), item.column())
-        else:
-            rows = {}
-            for item in selected_items:
-                row = item.row()
-                col = item.column()
-                rows.setdefault(row, {})
-                rows[row][col] = self._get_cell_display_text(row, col)
-
-            text_rows = []
-            for _, cols in sorted(rows.items()):
-                text_rows.append("\t".join(value for _, value in sorted(cols.items())))
-            text = "\n".join(text_rows)
-
-        clipboard.setText(text.strip())
-        self.show_message("Скопировано")
-
     def _get_cell_display_text(self, row, col):
         if self.columns[col] == "is_excise":
             checkbox = self._get_checkbox_from_cell(row, col)
@@ -213,51 +178,6 @@ class ProductsPage(QWidget):
 
         checkbox = container.findChild(QCheckBox)
         return checkbox
-
-    def delete_selected_row(self):
-        selected_rows = sorted({index.row() for index in self.table.selectedIndexes()}, reverse=True)
-
-        if not selected_rows:
-            current_row = self.table.currentRow()
-            if current_row >= 0:
-                selected_rows = [current_row]
-
-        if not selected_rows:
-            self.show_error_message("Не выбраны строки для удаления")
-            return
-
-        deleted_count = 0
-
-        for row in selected_rows:
-            id_item = self.table.item(row, 0)
-            if not id_item:
-                continue
-
-            row_id_text = id_item.text().strip()
-            if not row_id_text:
-                continue
-
-            try:
-                row_id = int(row_id_text)
-            except ValueError:
-                continue
-
-            if row_id in self._new_rows:
-                self._new_rows.discard(row_id)
-                self._pending_changes.pop(row_id, None)
-                self._import_update_rows.discard(row_id)
-            else:
-                self._pending_deletes.add(row_id)
-                self._pending_changes.pop(row_id, None)
-                self._import_update_rows.discard(row_id)
-
-            self.table.removeRow(row)
-            deleted_count += 1
-
-        if deleted_count:
-            self.show_message(f"Строк помечено на удаление: {deleted_count}")
-        else:
-            self.show_error_message("Не удалось определить строки для удаления")
 
     def revert_changes(self):
         try:
@@ -925,15 +845,24 @@ class ProductsPage(QWidget):
             self.show_message("Нет данных для выгрузки")
             return
 
-        try:
+        def do_export():
             self._export_products_to_excel(file_path, rows)
+            return file_path
+
+        def done(output_path):
+            QDesktopServices.openUrl(Path(output_path).as_uri())
             self.show_message("Данные сохранены в Excel")
-        except PermissionError:
-            self.show_error_message(
-                "Не удалось сохранить файл Excel. Возможно, файл уже открыт."
-            )
-        except Exception as e:
-            self.show_error_message(f"Ошибка при сохранении Excel: {str(e)}")
+
+        def error(text):
+            if "Permission" in str(text):
+                self.show_error_message("Не удалось сохранить файл Excel. Возможно, файл уже открыт.")
+            else:
+                self.show_error_message(f"Ошибка при сохранении Excel: {text}")
+
+        if not start_excel_export(self, do_export, on_finished=done, on_error=error):
+            self.show_message("Excel файл уже формируется. Можно продолжать работать в программе.")
+        else:
+            self.show_message("Excel файл формируется в фоновом режиме. Можно продолжать работать в программе.")
 
     def _export_products_to_excel(self, file_path: str, rows: list[dict]):
         excel = None
@@ -958,57 +887,25 @@ class ProductsPage(QWidget):
                 "Excise duty",
                 "Product Family",
             ]
-
-            for col_index, header in enumerate(headers, start=1):
-                ws.Cells(1, col_index).Value = header
-
-            ws.Cells.Font.Name = "Aptos Narrow"
-            ws.Cells.Font.Size = 11
-
-            header_range = ws.Range("A1:F1")
-            header_range.Font.Name = "Aptos Narrow"
-            header_range.Font.Size = 11
-            header_range.Font.Bold = True
-            header_range.Interior.Color = 0xCDCDCD
-            header_range.WrapText = True
-            header_range.HorizontalAlignment = -4108
-            header_range.VerticalAlignment = -4160
-
-            ws.Rows(1).EntireRow.AutoFit()
-
-            try:
-                ws.Range("A1:F1").AutoFilter(1)
-            except Exception:
-                pass
-
-            ws.Columns("A:A").ColumnWidth = 10
-            ws.Columns("B:B").ColumnWidth = 30
-            ws.Columns("C:C").ColumnWidth = 24
-            ws.Columns("D:D").ColumnWidth = 12
-            ws.Columns("E:E").ColumnWidth = 14
-            ws.Columns("F:F").ColumnWidth = 24
-
-            row_num = 2
-            for row in rows:
-                ws.Cells(row_num, 1).Value = row.get("id")
-                ws.Cells(row_num, 2).Value = row.get("name", "") or ""
-                ws.Cells(row_num, 3).Value = row.get("brand", "") or ""
-
-                pack = row.get("pack")
-                if pack not in (None, ""):
-                    try:
-                        ws.Cells(row_num, 4).Value = float(pack)
-                    except Exception:
-                        ws.Cells(row_num, 4).Value = str(pack)
-                else:
-                    ws.Cells(row_num, 4).Value = ""
-
-                ws.Cells(row_num, 5).Value = "Да" if bool(row.get("is_excise")) else "Нет"
-                ws.Cells(row_num, 6).Value = row.get("family", "") or ""
-                row_num += 1
-
-            # if row_num > 2:
-            #     ws.Range(f"D2:D{row_num - 1}").NumberFormat = "General"
+            table_rows = [
+                [
+                    row.get("id"),
+                    row.get("name", "") or "",
+                    row.get("brand", "") or "",
+                    row.get("pack"),
+                    "Да" if bool(row.get("is_excise")) else "Нет",
+                    row.get("family", "") or "",
+                ]
+                for row in rows
+            ]
+            write_and_format_table(ws, headers, table_rows, widths={
+                "ID": 10,
+                "Product name": 30,
+                "Brand": 24,
+                "Pack": 12,
+                "Excise duty": 14,
+                "Product Family": 24,
+            })
 
             wb.SaveAs(str(Path(file_path).resolve()))
 

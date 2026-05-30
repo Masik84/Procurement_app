@@ -7,6 +7,8 @@ from typing import Any
 
 import pythoncom
 import win32com.client as win32
+
+from app.utils.excel_export_format import apply_column_formats, excel_cell_value
 from sqlalchemy.orm import Session
 
 from app.db.models import PriceHistory, Product, ProductStock, Supplier, SupplierPriceCalculation, TempPriceImport, OrderPlanningCalculation
@@ -309,6 +311,8 @@ class SupplierPriceExporter:
         ]
         date_headers = ["last update", "last update (prev)", "last update Best1", "last update Best2"]
         integer_headers = [
+            "Qty, pcs",
+            "Volume, L",
             "Stock",
             "Transit",
             "Purchase Order",
@@ -872,9 +876,9 @@ class SupplierPriceExporter:
                     if self._is_order_plan_export_header(header):
                         # Для колонок заказа 0 — это значение, а не пустая ячейка.
                         # Формат Excel сам покажет ноль как "-".
-                        ws.Cells(row_num, col_index).Value = self._excel_value(value)
+                        ws.Cells(row_num, col_index).Value = excel_cell_value(header, value)
                     else:
-                        ws.Cells(row_num, col_index).Value = self._excel_value_or_blank(value)
+                        ws.Cells(row_num, col_index).Value = excel_cell_value(header, value)
                 row_num += 1
 
             self._apply_header_common(ws, len(headers))

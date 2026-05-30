@@ -29,6 +29,7 @@ from app.exports.order_planning_exporter import OrderPlanningExporter
 from app.services.order_planning_service import OrderPlanningService
 from app.ui.table_style import *
 from app.utils.text import clean_multi_spaces
+from app.workers.excel_export_worker import start_excel_export
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -143,6 +144,8 @@ class OrderPlanningPage(QWidget):
         self._period_from: date | None = None
         self._period_to: date | None = None
         self._updating_table = False
+        self._excel_export_thread = None
+        self._excel_export_worker = None
 
         self.setup_ui()
         self.setup_connections()
@@ -581,11 +584,21 @@ class OrderPlanningPage(QWidget):
             file_path, _ = QFileDialog.getSaveFileName(self, "Сохранить Excel файл", str(BASE_DIR / default_name), "Excel Files (*.xlsx)")
             if not file_path:
                 return
-            with self.get_session() as session:
-                exporter = OrderPlanningExporter(session)
-                output_path = exporter.export_report(display_rows=self._rows, output_path=file_path)
-            QDesktopServices.openUrl(Path(output_path).as_uri())
-            self.show_message("Excel файл сохранен")
+            rows = [dict(row) for row in self._rows]
+
+            def do_export():
+                with self.get_session() as session:
+                    exporter = OrderPlanningExporter(session)
+                    return exporter.export_report(display_rows=rows, output_path=file_path)
+
+            def done(output_path):
+                QDesktopServices.openUrl(Path(output_path).as_uri())
+                self.show_message("Excel файл сохранен")
+
+            if not start_excel_export(self, do_export, on_finished=done, on_error=lambda text: self.show_error_message(str(text))):
+                self.show_message("Excel файл уже формируется. Можно продолжать работать в программе.")
+            else:
+                self.show_message("Excel файл формируется в фоновом режиме. Можно продолжать работать в программе.")
         except Exception as e:
             self.show_error_message(str(e))
 

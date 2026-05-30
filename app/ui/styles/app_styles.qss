@@ -193,6 +193,22 @@ QListWidget:focus, QListView:focus {
     border: 1px solid #f28223;
 }
 
+QCheckBox {
+    spacing: 6px;
+    color: #262626;
+    font-family: Tahoma;
+    font-size: 10pt;
+    background: transparent;
+}
+
+QCheckBox:enabled {
+    color: #262626;
+}
+
+QCheckBox:disabled {
+    color: #aaaaaa;
+}
+
 QCheckBox::indicator {
     width: 16px;
     height: 16px;

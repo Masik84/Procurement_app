@@ -8,6 +8,8 @@ from typing import Any, Sequence
 import pythoncom
 import win32com.client as win32
 
+from app.utils.excel_export_format import apply_column_formats, excel_cell_value
+
 
 class PriceReportExporter:
     """Excel export for PriceReportsPage.
@@ -116,9 +118,9 @@ class PriceReportExporter:
                 if self._is_order_plan_export_header(header):
                     # Для колонок заказа 0 — это значение, а не пустая ячейка.
                     # Формат Excel сам покажет ноль как "-".
-                    ws.Cells(row_index, col_index).Value = self._excel_value_keep_zero(value)
+                    ws.Cells(row_index, col_index).Value = excel_cell_value(header, value)
                 else:
-                    ws.Cells(row_index, col_index).Value = self._excel_value(value)
+                    ws.Cells(row_index, col_index).Value = excel_cell_value(header, value)
 
     def _header_map(self, headers: Sequence[str]) -> dict[str, int]:
         return {str(header): idx + 1 for idx, header in enumerate(headers)}

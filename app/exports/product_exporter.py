@@ -5,6 +5,8 @@ from pathlib import Path
 import pythoncom
 import win32com.client as win32
 
+from app.utils.excel_export_format import write_and_format_table
+
 
 class ProductExporter:
     def __init__(self):
@@ -73,10 +75,7 @@ class ProductExporter:
             ws.Name = "Sheet1"
 
             headers = ["ID", "Product name", "Brand", "Pack", "is_excise"]
-            for col_index, header in enumerate(headers, start=1):
-                ws.Cells(1, col_index).Value = header
-
-            self._apply_base_style(ws, len(headers), apply_filter=False)
+            write_and_format_table(ws, headers, [], widths={'ID': 10, 'Product name': 34, 'Brand': 22, 'Pack': 12, 'is_excise': 14}, apply_filter=False)
 
             ws.Columns("A:A").ColumnWidth = 10
             ws.Columns("B:B").ColumnWidth = 34

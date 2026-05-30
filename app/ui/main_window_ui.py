@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 ################################################################################
-## Form generated from reading UI file 'main_windowuUNSJD.ui'
+## Form generated from reading UI file 'main_windowAvCZTZ.ui'
 ##
 ## Created by: Qt User Interface Compiler version 6.11.0
 ##
@@ -232,7 +232,7 @@ class Ui_MainWindow(object):
         self.verticalLayout.setContentsMargins(5, 0, 5, 5)
         self.btn_Home = QPushButton(self.general_page)
         self.btn_Home.setObjectName(u"btn_Home")
-        self.btn_Home.setMinimumSize(QSize(0, 25))
+        self.btn_Home.setMinimumSize(QSize(0, 30))
         font1 = QFont()
         font1.setFamilies([u"Tahoma"])
         font1.setPointSize(10)
@@ -263,7 +263,7 @@ class Ui_MainWindow(object):
         self.verticalLayout_3.setContentsMargins(5, 0, 5, 5)
         self.btn_Products = QPushButton(self.updater_page)
         self.btn_Products.setObjectName(u"btn_Products")
-        self.btn_Products.setMinimumSize(QSize(0, 0))
+        self.btn_Products.setMinimumSize(QSize(0, 30))
         self.btn_Products.setFont(font1)
         self.btn_Products.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.btn_Products.setCheckable(True)
@@ -272,16 +272,19 @@ class Ui_MainWindow(object):
 
         self.btn_Articles = QPushButton(self.updater_page)
         self.btn_Articles.setObjectName(u"btn_Articles")
+        self.btn_Articles.setMinimumSize(QSize(0, 30))
 
         self.verticalLayout_3.addWidget(self.btn_Articles)
 
         self.btn_Supplier = QPushButton(self.updater_page)
         self.btn_Supplier.setObjectName(u"btn_Supplier")
+        self.btn_Supplier.setMinimumSize(QSize(0, 30))
 
         self.verticalLayout_3.addWidget(self.btn_Supplier)
 
         self.btn_ExchangeRates = QPushButton(self.updater_page)
         self.btn_ExchangeRates.setObjectName(u"btn_ExchangeRates")
+        self.btn_ExchangeRates.setMinimumSize(QSize(0, 30))
         self.btn_ExchangeRates.setFont(font1)
         self.btn_ExchangeRates.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.btn_ExchangeRates.setCheckable(True)
@@ -290,6 +293,7 @@ class Ui_MainWindow(object):
 
         self.btn_FixedCosts = QPushButton(self.updater_page)
         self.btn_FixedCosts.setObjectName(u"btn_FixedCosts")
+        self.btn_FixedCosts.setMinimumSize(QSize(0, 30))
         self.btn_FixedCosts.setFont(font1)
         self.btn_FixedCosts.setCheckable(True)
 
@@ -297,24 +301,27 @@ class Ui_MainWindow(object):
 
         self.btn_MarkingRates = QPushButton(self.updater_page)
         self.btn_MarkingRates.setObjectName(u"btn_MarkingRates")
+        self.btn_MarkingRates.setMinimumSize(QSize(0, 30))
         self.btn_MarkingRates.setFont(font1)
 
         self.verticalLayout_3.addWidget(self.btn_MarkingRates)
 
         self.btn_PackTypes = QPushButton(self.updater_page)
         self.btn_PackTypes.setObjectName(u"btn_PackTypes")
-        self.btn_PackTypes.setMinimumSize(QSize(0, 0))
+        self.btn_PackTypes.setMinimumSize(QSize(0, 30))
         self.btn_PackTypes.setFont(font1)
 
         self.verticalLayout_3.addWidget(self.btn_PackTypes)
 
         self.btn_PriceHistory = QPushButton(self.updater_page)
         self.btn_PriceHistory.setObjectName(u"btn_PriceHistory")
+        self.btn_PriceHistory.setMinimumSize(QSize(0, 30))
 
         self.verticalLayout_3.addWidget(self.btn_PriceHistory)
 
         self.btn_ProdSearchDB = QPushButton(self.updater_page)
         self.btn_ProdSearchDB.setObjectName(u"btn_ProdSearchDB")
+        self.btn_ProdSearchDB.setMinimumSize(QSize(0, 30))
 
         self.verticalLayout_3.addWidget(self.btn_ProdSearchDB)
 
@@ -335,26 +342,37 @@ class Ui_MainWindow(object):
         self.verticalLayout_2.setContentsMargins(5, 0, 5, 5)
         self.btn_SupplierPrice = QPushButton(self.docs_page)
         self.btn_SupplierPrice.setObjectName(u"btn_SupplierPrice")
+        self.btn_SupplierPrice.setMinimumSize(QSize(0, 30))
 
         self.verticalLayout_2.addWidget(self.btn_SupplierPrice)
 
         self.btn_CustomerCost = QPushButton(self.docs_page)
         self.btn_CustomerCost.setObjectName(u"btn_CustomerCost")
+        self.btn_CustomerCost.setMinimumSize(QSize(0, 30))
 
         self.verticalLayout_2.addWidget(self.btn_CustomerCost)
 
         self.btn_Stock = QPushButton(self.docs_page)
         self.btn_Stock.setObjectName(u"btn_Stock")
+        self.btn_Stock.setMinimumSize(QSize(0, 30))
 
         self.verticalLayout_2.addWidget(self.btn_Stock)
 
         self.btn_QuickCostCalc = QPushButton(self.docs_page)
         self.btn_QuickCostCalc.setObjectName(u"btn_QuickCostCalc")
+        self.btn_QuickCostCalc.setMinimumSize(QSize(0, 30))
 
         self.verticalLayout_2.addWidget(self.btn_QuickCostCalc)
 
+        self.btn_TargetPrice = QPushButton(self.docs_page)
+        self.btn_TargetPrice.setObjectName(u"btn_TargetPrice")
+        self.btn_TargetPrice.setMinimumSize(QSize(0, 30))
+
+        self.verticalLayout_2.addWidget(self.btn_TargetPrice)
+
         self.btn_OrderPlanning = QPushButton(self.docs_page)
         self.btn_OrderPlanning.setObjectName(u"btn_OrderPlanning")
+        self.btn_OrderPlanning.setMinimumSize(QSize(0, 30))
 
         self.verticalLayout_2.addWidget(self.btn_OrderPlanning)
 
@@ -384,6 +402,7 @@ class Ui_MainWindow(object):
 
         self.btn_CustCostReport = QPushButton(self.bonus_page)
         self.btn_CustCostReport.setObjectName(u"btn_CustCostReport")
+        self.btn_CustCostReport.setMinimumSize(QSize(0, 30))
 
         self.verticalLayout_4.addWidget(self.btn_CustCostReport)
 
@@ -591,6 +610,7 @@ class Ui_MainWindow(object):
         self.btn_CustomerCost.setText(QCoreApplication.translate("MainWindow", u"\u041a\u043e\u0441\u0442\u044b \u0434\u043b\u044f \u041a\u043b\u0438\u0435\u043d\u0442\u043e\u0432", None))
         self.btn_Stock.setText(QCoreApplication.translate("MainWindow", u"\u041e\u0441\u0442\u0430\u0442\u043a\u0438 / \u0417\u0430\u043a\u0430\u0437\u044b \u041f\u043e\u0441\u0442-\u043e\u0432", None))
         self.btn_QuickCostCalc.setText(QCoreApplication.translate("MainWindow", u"\u0411\u044b\u0441\u0442\u0440\u044b\u0439 \u0440\u0430\u0441\u0447\u0435\u0442 \u041a\u043e\u0441\u0442\u0430", None))
+        self.btn_TargetPrice.setText(QCoreApplication.translate("MainWindow", u"\u0422\u0430\u0440\u0433\u0435\u0442 \u0446\u0435\u043d\u044b \u0434\u043b\u044f \u041f\u043e\u0441\u0442-\u043e\u0432", None))
         self.btn_OrderPlanning.setText(QCoreApplication.translate("MainWindow", u"\u041f\u043b\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435 \u0417\u0430\u043a\u0443\u043f\u043a\u0438", None))
         self.toolBox.setItemText(self.toolBox.indexOf(self.docs_page), QCoreApplication.translate("MainWindow", u"\u0420\u0430\u0441\u0447\u0435\u0442\u044b/\u041e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435", None))
         self.btn_PriceReports.setText(QCoreApplication.translate("MainWindow", u"\u041e\u0442\u0447\u0435\u0442 \u043f\u043e \u0426\u0435\u043d\u0430\u043c \u041f\u043e\u0441\u0442\u0430\u0432\u0449\u0438\u043a\u043e\u0432", None))
