@@ -24,6 +24,7 @@ from app.ui.table_style import *
 from app.imports.product_article_importer import ProductArticleImporter
 from app.exports.product_article_exporter import ProductArticleExporter
 from app.workers.excel_export_worker import start_excel_export
+from app.utils.output_headers import display_headers, standardize_output_header
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -700,7 +701,7 @@ class ProductArticlesPage(QWidget):
             ]
 
             for col_index, header in enumerate(headers, start=1):
-                ws.Cells(1, col_index).Value = header
+                ws.Cells(1, col_index).Value = standardize_output_header(header)
 
             ws.Cells.Font.Name = "Aptos Narrow"
             ws.Cells.Font.Size = 11
@@ -875,7 +876,7 @@ class ProductArticlesPage(QWidget):
 
         self.table.setColumnCount(len(headers))
         self.table.setRowCount(len(valid_rows))
-        self.table.setHorizontalHeaderLabels(headers)
+        self.table.setHorizontalHeaderLabels(display_headers(headers))
 
         for i, row in enumerate(valid_rows):
             row_id = self._temp_row_id
@@ -931,7 +932,7 @@ class ProductArticlesPage(QWidget):
 
         self.table.setColumnCount(len(headers))
         self.table.setRowCount(len(data))
-        self.table.setHorizontalHeaderLabels(headers)
+        self.table.setHorizontalHeaderLabels(display_headers(headers))
 
         for i, row_data in enumerate(data):
             row_id = int(row_data["id"])
@@ -970,7 +971,7 @@ class ProductArticlesPage(QWidget):
 
         if self.table.columnCount() == 0:
             self.table.setColumnCount(len(headers))
-            self.table.setHorizontalHeaderLabels(headers)
+            self.table.setHorizontalHeaderLabels(display_headers(headers))
 
         self.table.insertRow(0)
 

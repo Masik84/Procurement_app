@@ -20,6 +20,7 @@ from PySide6.QtUiTools import QUiLoader
 from app.db.models import PackType
 from app.db.db import SessionLocal
 from app.ui.table_style import *
+from app.utils.output_headers import display_headers
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -328,7 +329,7 @@ class PackTypesPage(QWidget):
 
         self.table.setColumnCount(len(self.headers))
         self.table.setRowCount(len(data))
-        self.table.setHorizontalHeaderLabels(self.headers)
+        self.table.setHorizontalHeaderLabels(display_headers(self.headers))
 
         for row_index, row_data in enumerate(data):
             self.table.setItem(row_index, 0, self._build_item(row_data["id"], editable=False, align_left=False))

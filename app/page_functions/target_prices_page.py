@@ -62,6 +62,8 @@ class TargetPricesPage(QWidget):
         self._showing_options = False
         self._excel_export_thread = None
         self._excel_export_worker = None
+        self._manual_full_cost_visible = False
+        self._manual_full_costs: dict[int, Decimal] = {}
 
         self.import_headers = [
             "Our Product Name",
@@ -120,6 +122,8 @@ class TargetPricesPage(QWidget):
         self.ui.btn_Import.clicked.connect(self.import_file)
         self.ui.btn_AddLine.clicked.connect(self.add_line)
         self.ui.btn_CalcCost.clicked.connect(self.calculate_costs)
+        if hasattr(self.ui, "btn_ManualPrice"):
+            self.ui.btn_ManualPrice.clicked.connect(self.add_manual_price_column)
         self.ui.btn_Save.clicked.connect(self.save_all)
         self.ui.btn_Reset.clicked.connect(self.reset_all)
 
@@ -150,10 +154,14 @@ class TargetPricesPage(QWidget):
         self.ui.label_msg.setVisible(True)
 
     def show_error_message(self, text: str):
+        text = str(text or "Неизвестная ошибка").strip() or "Неизвестная ошибка"
         msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Warning)
         msg.setWindowTitle("Ошибка")
+        msg.setTextFormat(Qt.PlainText)
         msg.setText(text)
+        msg.setMinimumWidth(520)
+        msg.setStyleSheet("QMessageBox { background-color: #fffaf4; } QMessageBox QLabel { color: #262626; } QPushButton { color: #262626; }")
         copy_btn = msg.addButton("Copy", QMessageBox.ActionRole)
         msg.addButton(QMessageBox.Ok)
         msg.exec()
@@ -183,6 +191,8 @@ class TargetPricesPage(QWidget):
         self.ui.cbo_SupplName.clear()
         self.ui.cbo_SupplName.addItem("-", None)
         for supplier in suppliers:
+            if (supplier.name or "").strip().lower() == "manual":
+                continue
             self.ui.cbo_SupplName.addItem(supplier.name, supplier.id)
         self.ui.cbo_SupplName.blockSignals(False)
         if current_text:
@@ -317,6 +327,13 @@ class TargetPricesPage(QWidget):
         supplier_id = self.ui.cbo_SupplName.currentData()
         if self.ui.cbx_NewSupplier.isChecked():
             supplier_id = None
+            if not clean_multi_spaces(self.ui.line_NewSupplier.text()):
+                raise ValueError("Введите название нового поставщика.")
+        elif supplier_id is None:
+            raise ValueError("Выберите поставщика.")
+        currency = clean_multi_spaces(self.ui.cbo_Currency.currentText()).upper()
+        if not currency or currency == "-":
+            raise ValueError("Выберите валюту поставщика.")
         with self.get_session() as session:
             service = SupplierService(session)
             supplier = service.ensure_supplier(
@@ -401,8 +418,12 @@ class TargetPricesPage(QWidget):
         widget.setText(self.format_percent(d))
 
     def import_file(self):
-        supplier_id = self.ensure_supplier()
-        file_path, _ = QFileDialog.getOpenFileName(self, "Выберите файл", "", "Excel files (*.xls *.xlsx)")
+        try:
+            supplier_id = self.ensure_supplier()
+        except Exception as e:
+            self.show_error_message(str(e))
+            return
+        file_path, _ = QFileDialog.getOpenFileName(self, "Выберите файл", str(BASE_DIR), "Excel files (*.xls *.xlsx)")
         if not file_path:
             return
         try:
@@ -431,7 +452,9 @@ class TargetPricesPage(QWidget):
         self._updating_table = True
         try:
             self._table_row_ids = [r.id for r in rows]
-            headers = self.calc_headers if self._showing_options else self.import_headers
+            headers = list(self.calc_headers if self._showing_options else self.import_headers)
+            if self._showing_options and self._manual_full_cost_visible and "Manual Full Cost Msk" not in headers:
+                headers.append("Manual Full Cost Msk")
             self.table.clear()
             self.table.setColumnCount(len(headers))
             self.table.setRowCount(len(rows))
@@ -444,6 +467,11 @@ class TargetPricesPage(QWidget):
                     self.table.setItem(row_index, 1, self.build_display_item(row_id, "selected_product_id", self._get_product_name_by_id(row.selected_product_id)))
                     self.table.setItem(row_index, 2, self.build_table_item(row_id, "supplier_article", self._format_article_text(row.supplier_article), True))
                     self.table.setItem(row_index, 3, self.build_table_item(row_id, "product_name", self._clean_table_text(row.product_name), True))
+                    if self._manual_full_cost_visible:
+                        manual_value = self._manual_full_costs.get(row_id)
+                        if manual_value is None:
+                            manual_value = self._get_manual_full_cost(row_id)
+                        self.table.setItem(row_index, 4, self.build_table_item(row_id, "manual_full_cost_msk", self._format_number_text(manual_value), False))
                 else:
                     self.table.setItem(row_index, 0, self.build_display_item(row_id, "selected_product_id", self._get_product_name_by_id(row.selected_product_id)))
                     self.table.setItem(row_index, 1, self.build_table_item(row_id, "supplier_article", self._format_article_text(row.supplier_article), True))
@@ -648,12 +676,36 @@ class TargetPricesPage(QWidget):
         if row_id is None or not column_name or column_name in {"selected_option_id", "selected_product_id", "new_brand"}:
             return
         value = clean_multi_spaces(item.text())
+        if column_name == "manual_full_cost_msk":
+            parsed = parse_loose_number(value) if value else None
+            if parsed is None or Decimal(str(parsed)) == 0:
+                self._manual_full_costs.pop(int(row_id), None)
+            else:
+                manual_value = Decimal(str(parsed))
+                self._manual_full_costs[int(row_id)] = manual_value
+                self._sync_manual_full_cost_to_temp(int(row_id), manual_value)
+            return
         header = self.table.horizontalHeaderItem(item.column()).text()
         if header in self.numeric_headers:
             value = parse_loose_number(value)
         elif value == "":
             value = None
         self.update_temp_field(row_id, column_name, value)
+
+    def _sync_manual_full_cost_to_temp(self, row_id: int, value: Decimal):
+        """Persist Manual Full Cost immediately so final Supplier is really Manual in temp DB."""
+        try:
+            with self.get_session() as session:
+                service = TargetPriceService(session)
+                service.apply_manual_full_costs(self.batch_id, self.imported_by, {int(row_id): value})
+                session.commit()
+            if self._showing_options and row_id in self._table_row_ids:
+                table_row = self._table_row_ids.index(row_id)
+                self._updating_table = True
+                self.table.setItem(table_row, COL_SUPPLIER_OPTION, self.build_display_item(row_id, "selected_option_id", "Manual"))
+                self._updating_table = False
+        except Exception as e:
+            self.show_error_message(str(e))
 
     def update_temp_field(self, row_id: int, field_name: str, value):
         if self._updating_table:
@@ -698,6 +750,42 @@ class TargetPricesPage(QWidget):
                 elif role == "product_combo": self.finish_product_edit(row, row_id, widget)
                 elif role == "brand_combo": self.finish_brand_edit(row, row_id, widget)
 
+    def add_manual_price_column(self):
+        self._commit_open_editors()
+        self._manual_full_cost_visible = True
+        self._showing_options = True
+        self.load_table()
+        self.show_message("Добавлена колонка Manual Full Cost Msk")
+
+    def _get_manual_full_cost(self, row_id: int):
+        with self.get_session() as session:
+            opt = session.query(TempTargetPriceOption).filter(
+                TempTargetPriceOption.batch_id == self.batch_id,
+                TempTargetPriceOption.imported_by == self.imported_by,
+                TempTargetPriceOption.temp_import_id == row_id,
+                TempTargetPriceOption.supplier_name == "Manual",
+            ).first()
+            return opt.full_cost_msk if opt else None
+
+    def collect_manual_full_costs_from_table(self) -> dict[int, Decimal]:
+        result = dict(self._manual_full_costs)
+        for row in range(self.table.rowCount()):
+            if row >= len(self._table_row_ids):
+                continue
+            row_id = int(self._table_row_ids[row])
+            for col in range(self.table.columnCount()):
+                item = self.table.item(row, col)
+                if item is None or item.data(Qt.UserRole) != "manual_full_cost_msk":
+                    continue
+                text = clean_multi_spaces(item.text())
+                parsed = parse_loose_number(text) if text else None
+                if parsed is None or Decimal(str(parsed)) == 0:
+                    result.pop(row_id, None)
+                else:
+                    result[row_id] = Decimal(str(parsed))
+        self._manual_full_costs = result
+        return result
+
     def add_line(self):
         supplier_id = self.ensure_supplier()
         try:
@@ -715,30 +803,32 @@ class TargetPricesPage(QWidget):
     def calculate_costs(self):
         self._commit_open_editors()
         try:
-            self.ensure_supplier()
-            default = f"TargetPriceCalc_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
+            supplier_id = self.ensure_supplier()
+            supplier_name = clean_multi_spaces(self.ui.cbo_SupplName.currentText()) or clean_multi_spaces(self.ui.line_NewSupplier.text()) or "NoName"
+            safe_supplier_name = "".join(ch if ch not in r'<>:"/\|?*' else "_" for ch in supplier_name)
+            default = f"TargetPriceCalc_{safe_supplier_name}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
+            manual_full_costs = self.collect_manual_full_costs_from_table()
             save_path, _ = QFileDialog.getSaveFileName(self, "Сохранить расчет", str(BASE_DIR / default), "Excel files (*.xlsx)")
             if not save_path: return
             batch_id = self.batch_id
             imported_by = self.imported_by
 
-            # btn_CalcCost только формирует расчет. Визуальные удаления через
-            # контекстное меню применяются к БД только в btn_Save.
             def do_export():
                 with self.get_session() as session:
+                    from app.utils.gui_table_actions import apply_pending_table_deletes_to_db
+                    apply_pending_table_deletes_to_db(session, self)
                     service = TargetPriceService(session)
                     exporter = TargetPriceExporter(session)
-                    service.run_calculation(batch_id, imported_by)
+                    service.run_calculation(batch_id, imported_by, manual_full_costs=manual_full_costs)
                     output = exporter.export_calculated(batch_id, imported_by, save_path)
                     session.commit()
                     return output
 
             def done(output_path):
                 self._showing_options = True
-                # Не перезагружаем таблицу после расчета, чтобы не сбрасывать
-                # визуально удаленные строки до финального сохранения.
+                self.load_table()
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_path)))
-                self.show_message("Расчет выполнен")
+                self.show_message("Файл сохранен")
 
             if not start_excel_export(self, do_export, on_finished=done, on_error=lambda text: self.show_error_message(str(text))):
                 self.show_message("Excel файл уже формируется. Можно продолжать работать в программе.")
@@ -750,8 +840,14 @@ class TargetPricesPage(QWidget):
     def save_all(self):
         self._commit_open_editors()
         try:
+            if not self._showing_options:
+                self.show_error_message("Сначала запустите расчет")
+                return
             supplier_id = self.ensure_supplier()
-            default = f"TargetPrice_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
+            supplier_name = clean_multi_spaces(self.ui.cbo_SupplName.currentText()) or clean_multi_spaces(self.ui.line_NewSupplier.text()) or "NoName"
+            safe_supplier_name = "".join(ch if ch not in r'<>:"/\|?*' else "_" for ch in supplier_name)
+            default = f"TargetPrice_{safe_supplier_name}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
+            manual_full_costs = self.collect_manual_full_costs_from_table()
             save_path, _ = QFileDialog.getSaveFileName(self, "Сохранить target price", str(BASE_DIR / default), "Excel files (*.xlsx)")
             if not save_path: return
             currency = clean_multi_spaces(self.ui.cbo_Currency.currentText()).upper()
@@ -764,18 +860,11 @@ class TargetPricesPage(QWidget):
             fx_markup = self.parse_percent_field(self.ui.line_FXMarkup, "FX markup")
             has_customs = self.ui.cbo_Customs.currentText() == "да"
             via_novo = self.ui.cbo_viaNovo.currentText() == "через Ново"
-            pending_deletes = set(getattr(self, "_pending_deletes", set()) or set())
 
             def do_export():
                 with self.get_session() as session:
-                    if pending_deletes:
-                        from app.db.models import TempTargetPriceImport, TempTargetPriceOption
-                        session.query(TempTargetPriceOption).filter(
-                            TempTargetPriceOption.temp_import_id.in_(pending_deletes)
-                        ).delete(synchronize_session=False)
-                        session.query(TempTargetPriceImport).filter(
-                            TempTargetPriceImport.id.in_(pending_deletes)
-                        ).delete(synchronize_session=False)
+                    from app.utils.gui_table_actions import apply_pending_table_deletes_to_db
+                    apply_pending_table_deletes_to_db(session, self)
                     service = TargetPriceService(session)
                     exporter = TargetPriceExporter(session)
                     service.save_target_calculations(
@@ -789,15 +878,15 @@ class TargetPricesPage(QWidget):
                         fx_markup=fx_markup,
                         has_customs=has_customs,
                         via_novo=via_novo,
+                        manual_full_costs=manual_full_costs,
                     )
                     output = exporter.export_final(batch_id, imported_by, save_path)
-                    service.delete_temp_rows(batch_id, imported_by)
                     session.commit()
                     return output
 
             def done(output_path):
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_path)))
-                self.show_message("Target price сохранен")
+                self.show_message("Файл сохранен")
 
             if not start_excel_export(self, do_export, on_finished=done, on_error=lambda text: self.show_error_message(str(text))):
                 self.show_message("Excel файл уже формируется. Можно продолжать работать в программе.")
@@ -822,7 +911,7 @@ class TargetPricesPage(QWidget):
             with self.get_session() as session:
                 output = TargetPriceExporter(session).export_template(save_path)
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(output)))
-            self.show_message("Шаблон сформирован")
+            self.show_message("Файл сохранен")
         except Exception as e:
             self.show_error_message(str(e))
 

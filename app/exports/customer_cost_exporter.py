@@ -200,20 +200,11 @@ class CustomerCostExporter:
 
         ws.Range("A1:O1").AutoFilter(1)
 
-    def _collect_export_rows(
-        self,
-        batch_id: str,
-        imported_by: str,
-        excluded_temp_import_ids: set[int] | None = None,
-    ) -> tuple[list[dict], int]:
-        query = self.session.query(TempCustomerCostImport).filter(
+    def _collect_export_rows(self, batch_id: str, imported_by: str) -> tuple[list[dict], int]:
+        rows = self.session.query(TempCustomerCostImport).filter(
             TempCustomerCostImport.batch_id == batch_id,
             TempCustomerCostImport.imported_by == imported_by,
-        )
-        if excluded_temp_import_ids:
-            query = query.filter(~TempCustomerCostImport.id.in_(excluded_temp_import_ids))
-
-        rows = query.order_by(
+        ).order_by(
             TempCustomerCostImport.import_row_no.asc(),
             TempCustomerCostImport.id.asc(),
         ).all()
@@ -249,7 +240,7 @@ class CustomerCostExporter:
             }
 
             for i, opt in enumerate(options, start=1):
-                data[f"Cost Novo withVAT_{i}"] = opt.cost_novo_wvat
+                data[f"Cost Novo with VAT_{i}"] = opt.cost_novo_wvat
                 data[f"Full Cost Msk_{i}"] = opt.full_cost_msk
                 data[f"Supplier_{i}"] = opt.supplier_name
                 data[f"last update_{i}"] = opt.price_date_used
@@ -260,7 +251,7 @@ class CustomerCostExporter:
 
         for row in out_rows:
             for i in range(1, max_opt + 1):
-                row.setdefault(f"Cost Novo withVAT_{i}", None)
+                row.setdefault(f"Cost Novo with VAT_{i}", None)
                 row.setdefault(f"Full Cost Msk_{i}", None)
                 row.setdefault(f"Supplier_{i}", None)
                 row.setdefault(f"last update_{i}", None)
@@ -269,23 +260,13 @@ class CustomerCostExporter:
 
         return out_rows, max_opt
 
-    def export_calculated(
-        self,
-        batch_id: str,
-        imported_by: str,
-        file_path: str | Path,
-        excluded_temp_import_ids: set[int] | None = None,
-    ) -> Path:
+    def export_calculated(self, batch_id: str, imported_by: str, file_path: str | Path) -> Path:
         file_path = Path(file_path)
         if file_path.suffix.lower() != ".xlsx":
             file_path = file_path.with_suffix(".xlsx")
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
-        rows, max_opt = self._collect_export_rows(
-            batch_id=batch_id,
-            imported_by=imported_by,
-            excluded_temp_import_ids=excluded_temp_import_ids,
-        )
+        rows, max_opt = self._collect_export_rows(batch_id=batch_id, imported_by=imported_by)
 
         base_headers = [
             "Дата",
@@ -304,7 +285,7 @@ class CustomerCostExporter:
         dynamic_headers: list[str] = []
         for i in range(1, max_opt + 1):
             dynamic_headers.extend([
-                f"Cost Novo withVAT_{i}",
+                f"Cost Novo with VAT_{i}",
                 f"Full Cost Msk_{i}",
                 f"Supplier_{i}",
                 f"last update_{i}",

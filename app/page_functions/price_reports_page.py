@@ -204,7 +204,7 @@ class PriceReportsPage(QWidget):
     def fill_suppliers(self):
         try:
             with self.get_session() as session:
-                suppliers = session.query(Supplier).order_by(Supplier.name).all()
+                suppliers = session.query(Supplier).filter(Supplier.name != "Manual").order_by(Supplier.name).all()
 
             self.ui.cbo_Supplier.blockSignals(True)
             self.ui.cbo_Supplier.clear()
@@ -518,7 +518,7 @@ class PriceReportsPage(QWidget):
             "Pack",
             "last update",
             "Price, L",
-            "Price (Pack)",
+            "Price, pack",
             "Currency",
             "FX rate",
             "Cost Novo with VAT",

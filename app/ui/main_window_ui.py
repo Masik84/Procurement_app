@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 ################################################################################
-## Form generated from reading UI file 'main_windowAvCZTZ.ui'
+## Form generated from reading UI file 'main_windowQfUuDO.ui'
 ##
 ## Created by: Qt User Interface Compiler version 6.11.0
 ##
@@ -406,6 +406,12 @@ class Ui_MainWindow(object):
 
         self.verticalLayout_4.addWidget(self.btn_CustCostReport)
 
+        self.btn_TargetPriceReport = QPushButton(self.bonus_page)
+        self.btn_TargetPriceReport.setObjectName(u"btn_TargetPriceReport")
+        self.btn_TargetPriceReport.setMinimumSize(QSize(0, 30))
+
+        self.verticalLayout_4.addWidget(self.btn_TargetPriceReport)
+
         self.verticalSpacer_4 = QSpacerItem(20, 412, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
 
         self.verticalLayout_4.addItem(self.verticalSpacer_4)
@@ -615,6 +621,7 @@ class Ui_MainWindow(object):
         self.toolBox.setItemText(self.toolBox.indexOf(self.docs_page), QCoreApplication.translate("MainWindow", u"\u0420\u0430\u0441\u0447\u0435\u0442\u044b/\u041e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435", None))
         self.btn_PriceReports.setText(QCoreApplication.translate("MainWindow", u"\u041e\u0442\u0447\u0435\u0442 \u043f\u043e \u0426\u0435\u043d\u0430\u043c \u041f\u043e\u0441\u0442\u0430\u0432\u0449\u0438\u043a\u043e\u0432", None))
         self.btn_CustCostReport.setText(QCoreApplication.translate("MainWindow", u"\u041e\u0442\u0447\u0435\u0442 \u043f\u043e \u043a\u043e\u0441\u0442\u0430\u043c \u0434\u043b\u044f \u041a\u043b\u0438\u0435\u043d\u0442\u043e\u0432", None))
+        self.btn_TargetPriceReport.setText(QCoreApplication.translate("MainWindow", u"\u041e\u0442\u0447\u0435\u0442 \u043f\u043e \u0422\u0430\u0440\u0433\u0435\u0442 \u0446\u0435\u043d\u0430\u043c", None))
         self.toolBox.setItemText(self.toolBox.indexOf(self.bonus_page), QCoreApplication.translate("MainWindow", u"\u041e\u0442\u0447\u0435\u0442\u044b", None))
         self.toggleButton.setText("")
         self.label.setText("")

@@ -112,7 +112,9 @@ class SupplierPriceExporter:
         dst = self._excel_column_letter(headers.index(to_header) + 1)
         try:
             ws.Range(f"{dst}1").Interior.Color = ws.Range(f"{src}1").Interior.Color
-            ws.Range(f"{dst}1").Font.Color = ws.Range(f"{src}1").Font.Color
+            # В CostCalc_ цвет шрифта должен оставаться Automatic, если он не задан явно
+            # для конкретного блока. Нельзя копировать белый шрифт со старых диапазонов.
+            ws.Range(f"{dst}1").Font.ColorIndex = -4105
         except Exception:
             pass
 
@@ -294,11 +296,11 @@ class SupplierPriceExporter:
         header_map = self._header_map(headers)
 
         text_headers = ["Supplier Article"]
-        price_decimal_headers = ["Price, L", "Price (Pack)", "Price, L (prev)"]
+        price_decimal_headers = ["Price, L", "Price, pack", "Price, L (prev)"]
         rub_headers = [
-            "Cost Novo withVAT",
+            "Cost Novo with VAT",
             "Full Cost Msk",
-            "Cost Novo withVAT (prev)",
+            "Cost Novo with VAT (prev)",
             "Full Cost Msk (prev)",
             "Дистр цена",
             "Промо цена",
@@ -683,14 +685,14 @@ class SupplierPriceExporter:
                     "Qty, pcs": self._excel_value(temp_row.qty_pcs),
                     "Volume, L": self._excel_value(temp_row.volume_l),
                     "Price, L": self._excel_value(price_per_l),
-                    "Price (Pack)": self._excel_value(price_pack_export),
+                    "Price, pack": self._excel_value(price_pack_export),
                     "Currency": calc_row.currency_code if calc_row else (supplier.base_currency if supplier else ""),
                     "FX rate": self._round_fx_rate(calc_row.fx_rate_used if calc_row else None),
-                    "Cost Novo withVAT": self._excel_value(calc_row.cost_novo_wvat if calc_row else None),
+                    "Cost Novo with VAT": self._excel_value(calc_row.cost_novo_wvat if calc_row else None),
                     "Full Cost Msk": self._excel_value(calc_row.full_cost_msk if calc_row else None),
                     "last update (prev)": prev_price_date,
                     "Price, L (prev)": self._excel_value(prev_price),
-                    "Cost Novo withVAT (prev)": self._excel_value(prev_cost_novo),
+                    "Cost Novo with VAT (prev)": self._excel_value(prev_cost_novo),
                     "Full Cost Msk (prev)": self._excel_value(prev_full_cost),
                     "Дистр цена": self._excel_value(stock.distr_price if stock else None),
                     "Промо цена": self._excel_value(stock.promo_price if stock else None),
@@ -749,7 +751,7 @@ class SupplierPriceExporter:
             ws = wb.Worksheets(1)
             ws.Name = "Sheet1"
 
-            headers = ["Material number", "Material", "Price, L", "Price, Pack", "Qty, pcs", "Volume, L"]
+            headers = ["Material number", "Material", "Price, L", "Price, pack", "Qty, pcs", "Volume, L"]
             for col_index, header in enumerate(headers, start=1):
                 ws.Cells(1, col_index).Value = header
 
@@ -820,14 +822,14 @@ class SupplierPriceExporter:
                 "Qty, pcs",
                 "Volume, L",
                 "Price, L",
-                "Price (Pack)",
+                "Price, pack",
                 "Currency",
                 "FX rate",
-                "Cost Novo withVAT",
+                "Cost Novo with VAT",
                 "Full Cost Msk",
                 "last update (prev)",
                 "Price, L (prev)",
-                "Cost Novo withVAT (prev)",
+                "Cost Novo with VAT (prev)",
                 "Full Cost Msk (prev)",
                 "Дистр цена",
                 "Промо цена",
@@ -927,6 +929,11 @@ class SupplierPriceExporter:
                     rng.Interior.Color = color
                     if font_color is not None:
                         rng.Font.Color = font_color
+                    else:
+                        # Automatic font color. Старые фиксированные диапазоны могли
+                        # поставить белый шрифт на сдвинутые колонки, поэтому всегда
+                        # сбрасываем цвет для блоков, где белый не нужен.
+                        rng.Font.ColorIndex = -4105
 
             _paint_header_block("Supplier Article", "Full Cost Msk", self._rgb(205, 205, 205))
             _paint_header_block("last update (prev)", "Full Cost Msk (prev)", self._rgb(166, 166, 166))

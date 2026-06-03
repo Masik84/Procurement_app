@@ -95,7 +95,7 @@ class ProductSearchPage(QWidget):
         self.headers = [
             "Product name",
             "Article",
-            "Supplier Product name",
+            "Supplier Product Name",
             "Product name (for new)",
             "Brand (for new)",
             "Pack (for new)",

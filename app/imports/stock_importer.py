@@ -7,7 +7,7 @@ from app.utils.text import clean_multi_spaces, normalize_product_name
 
 
 EXCLUDED_BRANDS = {
-    "-", "phoenixoil", "gazpromneft", "нефтемастер", "teboil", "glc", "cnrg",
+    "-", "phoenixoil", "gazpromneft", "нефтемастер", "glc", "cnrg",
     "coolstream", "kansler", "mannol", "synthetium", "siberia", "foxy",
     "oilright", "лавр", "lavr", "eltrans", "astrohim", "лукойл",
 }

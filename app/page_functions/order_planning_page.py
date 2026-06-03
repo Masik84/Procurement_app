@@ -30,6 +30,7 @@ from app.services.order_planning_service import OrderPlanningService
 from app.ui.table_style import *
 from app.utils.text import clean_multi_spaces
 from app.workers.excel_export_worker import start_excel_export
+from app.utils.output_headers import display_headers
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -310,7 +311,7 @@ class OrderPlanningPage(QWidget):
         self.table.clear()
         self.table.setColumnCount(len(headers))
         self.table.setRowCount(len(rows))
-        self.table.setHorizontalHeaderLabels(headers)
+        self.table.setHorizontalHeaderLabels(display_headers(headers))
 
         for row_index, row in enumerate(rows):
             for col_index, key in enumerate(columns):

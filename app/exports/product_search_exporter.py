@@ -109,7 +109,7 @@ class ProductSearchExporter:
 
             headers = [
                 "Article",
-                "Supplier Product name",
+                "Supplier Product Name",
                 "Product name",
                 "Brand",
                 "Pack",

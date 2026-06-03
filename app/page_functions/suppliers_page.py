@@ -403,7 +403,7 @@ class SuppliersPage(QWidget):
             with self.get_session() as session:
                 suppliers = (
                     session.query(Supplier.name)
-                    .filter(Supplier.name.isnot(None), Supplier.name != "")
+                    .filter(Supplier.name.isnot(None), Supplier.name != "", Supplier.name != "Manual")
                     .distinct()
                     .order_by(Supplier.name)
                     .all()
@@ -429,7 +429,7 @@ class SuppliersPage(QWidget):
 
     def get_suppliers_from_db(self):
         with self.get_session() as session:
-            rows = session.query(Supplier).order_by(Supplier.name).all()
+            rows = session.query(Supplier).filter(Supplier.name != "Manual").order_by(Supplier.name).all()
 
             data = []
             for row in rows:

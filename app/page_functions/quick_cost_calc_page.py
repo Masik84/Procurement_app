@@ -150,6 +150,7 @@ class QuickCostCalcPage(QWidget):
         with self.get_session() as session:
             rows = (
                 session.query(Supplier)
+                .filter(Supplier.name != "Manual")
                 .order_by(Supplier.name.asc())
                 .all()
             )

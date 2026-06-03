@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.db.models import CurrentSupplierPrice, PriceHistory, Supplier
+from app.services.supplier_service import MANUAL_SUPPLIER_NAME
 
 
 @dataclass(slots=True)
@@ -109,6 +110,7 @@ class PriceRepository:
         ).filter(
             CurrentSupplierPrice.product_id == product_id,
             CurrentSupplierPrice.price.isnot(None),
+            Supplier.name != MANUAL_SUPPLIER_NAME,
         )
 
         if only_rating_calc:

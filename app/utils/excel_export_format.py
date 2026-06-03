@@ -5,6 +5,8 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping, Sequence
 
+from app.utils.excel_headers import display_header
+
 XL_CENTER = -4108
 XL_LEFT = -4131
 XL_RIGHT = -4152
@@ -51,13 +53,27 @@ def col_letter(header_to_index: Mapping[str, int], header: str) -> str | None:
 
 
 def set_number_format_safe(target, format_en: str = GENERAL_FORMAT, format_local: str | None = None) -> None:
+    """Set Excel number format without failing the whole export.
+
+    COM Excel is locale-sensitive: some Russian NumberFormatLocal masks are rejected
+    by NumberFormat and vice versa. If Excel rejects both, leave the column as General
+    instead of producing an empty/failed export.
+    """
+    if format_local and format_local != GENERAL_FORMAT:
+        try:
+            target.NumberFormatLocal = format_local
+            return
+        except Exception:
+            pass
     try:
         target.NumberFormat = format_en
+        return
     except Exception:
-        if format_local:
-            target.NumberFormatLocal = format_local
-        else:
-            raise
+        pass
+    try:
+        target.NumberFormat = GENERAL_FORMAT
+    except Exception:
+        pass
 
 
 def apply_base_table_style(ws, headers_count: int) -> None:
@@ -76,69 +92,86 @@ def apply_base_table_style(ws, headers_count: int) -> None:
 
 def normalize_header(header: str) -> str:
     text = " ".join(str(header or "").strip().lower().replace("\n", " ").split())
+    # Dynamic exports often add suffixes: Cost Novo_1, Full Cost Msk_2, etc.
+    if "_" in text:
+        base, suffix = text.rsplit("_", 1)
+        if suffix.isdigit():
+            text = base
     return text
 
 
-def normalize_header_base(header: str) -> str:
-    h = normalize_header(header)
-    # Для динамических колонок вида Supplier_1 / Full Cost Msk_2 / ...
-    # формат должен определяться по базовому названию колонки.
-    if "_" in h and h.rsplit("_", 1)[1].isdigit():
-        h = h.rsplit("_", 1)[0].strip()
-    # Для колонок сравнения с предыдущими значениями формат такой же, как у базовой колонки.
-    for suffix in (" (prev)", " prev"):
-        if h.endswith(suffix):
-            h = h[: -len(suffix)].strip()
-    return h
-
-
 def is_date_header(header: str) -> bool:
-    h = normalize_header_base(header)
+    h = normalize_header(header)
     return h in {"дата", "price date", "date"} or h.endswith(" date")
 
 
 def is_text_header(header: str) -> bool:
-    h = normalize_header_base(header)
+    h = normalize_header(header)
     return h in {
         "id", "менеджер", "клиент", "customer product name", "our product name",
-        "supplier", "supplier article", "currency", "comments", "has customs", "via novo",
+        "supplier", "supplier article", "supplier product name", "currency", "comments", "has customs", "via novo",
         "excise duty", "final supplier", "product name", "manager name", "customer name",
         "article", "brand", "family",
     }
 
 
+INTEGER_HEADERS = {
+    "qty, pcs",
+    "volume, l",
+    "pack",
+    "stockqty",
+    "transitqty",
+    "markdownqty",
+    "reserveqty",
+    "reserveecommqty",
+    "orderqty",
+    "confirmedqty",
+    "remainsqty",
+    "lpc",
+    # Existing exported quantity-like headers kept as integer format.
+    "qty",
+    "quantity",
+    "importrowno",
+    "stock",
+    "transit",
+    "purchase order",
+    "order is",
+    "stock is",
+    "reserve cust",
+    "reserve e-comm",
+    "damaged",
+    "к быстрому заказу, шт",
+    "к заказу, шт",
+}
+
+
 def is_integer_header(header: str) -> bool:
-    h = normalize_header_base(header)
-    return h in {"qty, pcs", "qty pcs", "qty", "quantity", "pack", "volume, l", "volume l"}
+    return normalize_header(header) in INTEGER_HEADERS
 
 
 def is_money_header(header: str) -> bool:
-    h = normalize_header_base(header)
-    return h in {
-        "final price",
-        "price rub",
-        "cost novo withvat",
-        "cost novo with vat",
-        "full cost msk",
-    }
+    h = normalize_header(header)
+    return h in {"final price", "price rub", "cost novo withvat", "cost novo with vat", "full cost msk"}
 
 
 def is_decimal4_header(header: str) -> bool:
-    h = normalize_header_base(header)
+    h = normalize_header(header)
     return h in {
-        "supplier price, l", "supplier price", "price, l", "cost per l", "price per l",
-        "cost novo",
+        "supplier price, l", "supplier price", "price, l", "price, pack", "cost per l", "price per l",
+        "cost novo", "cost novo wvat", "fx rate",
     }
 
 
 def is_decimal_header(header: str) -> bool:
-    h = normalize_header_base(header)
+    h = normalize_header(header)
     return (
         is_decimal4_header(header)
         or is_money_header(header)
         or h in {
             "fx markup", "transport", "re-export", "agent fee", "bank fee", "customs fee",
-            "additional customs", "storage", "move novo", "move msk", "marking", "volume, l",
+            "additional customs", "storage", "move novo", "move msk", "marking",
+            "ср.продажи мес", "safe stock (st), mnth", "safe stock (st+tr), mnth", "safe stock (+ord), mnth",
+            "дистр цена", "промо цена", "к быстрому заказу, л", "к заказу, л",
         }
     )
 
@@ -223,25 +256,18 @@ def column_format_local(header: str) -> str:
 def apply_column_formats(ws, headers: Sequence[str]) -> None:
     for idx, header in enumerate(headers, start=1):
         letter = excel_column_letter(idx)
-        fmt = column_format_local(header)
-        column = ws.Columns(f"{letter}:{letter}")
+        fmt = column_format_local(display_header(header))
         if fmt == TEXT_FORMAT:
-            set_number_format_safe(column, TEXT_FORMAT, TEXT_FORMAT)
+            set_number_format_safe(ws.Columns(f"{letter}:{letter}"), TEXT_FORMAT, TEXT_FORMAT)
         elif fmt == GENERAL_FORMAT:
-            set_number_format_safe(column, GENERAL_FORMAT, GENERAL_FORMAT)
+            set_number_format_safe(ws.Columns(f"{letter}:{letter}"), GENERAL_FORMAT, GENERAL_FORMAT)
         else:
-            # Все форматы ниже заданы в русской локали Excel: пробел как разделитель тысяч,
-            # запятая как десятичный разделитель, знак ₽. Нельзя сначала ставить General:
-            # Excel примет его успешно и локальный формат так и не применится.
-            try:
-                column.NumberFormatLocal = fmt
-            except Exception:
-                column.NumberFormat = fmt
+            set_number_format_safe(ws.Columns(f"{letter}:{letter}"), GENERAL_FORMAT, fmt)
 
 
 def write_table(ws, headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
     for col_index, header in enumerate(headers, start=1):
-        ws.Cells(1, col_index).Value = header
+        ws.Cells(1, col_index).Value = display_header(header)
     for row_index, row in enumerate(rows, start=2):
         for col_index, header in enumerate(headers, start=1):
             value = row[col_index - 1] if col_index - 1 < len(row) else ""
@@ -265,3 +291,118 @@ def color_headers(ws, headers: Sequence[str], color_map: Mapping[str, tuple[int,
         letter = col_letter(hm, header)
         if letter:
             ws.Range(f"{letter}1").Interior.Color = rgb(*color)
+
+
+# ---------- High-level Excel export helpers used by all project exporters ----------
+
+def write_dict_table(ws, headers: Sequence[str], rows: Sequence[Mapping[str, Any]]) -> None:
+    """Write headers and dict rows with column-name based value conversion."""
+    for col_index, header in enumerate(headers, start=1):
+        ws.Cells(1, col_index).Value = display_header(header)
+    for row_index, row in enumerate(rows, start=2):
+        for col_index, header in enumerate(headers, start=1):
+            ws.Cells(row_index, col_index).Value = excel_cell_value(header, row.get(header, ""))
+
+
+def apply_standard_table_format(
+    ws,
+    headers: Sequence[str],
+    *,
+    widths: Mapping[str, float] | None = None,
+    color_map: Mapping[str, tuple[int, int, int]] | None = None,
+    apply_filter: bool = True,
+    default_width: float = 12.0,
+) -> None:
+    """Apply one shared style/format policy to COM Excel worksheets."""
+    if not headers:
+        return
+    apply_base_table_style(ws, len(headers))
+    color_headers(ws, headers, color_map or {})
+    apply_column_formats(ws, headers)
+    if widths:
+        set_widths_by_headers(ws, headers, widths, default_width=default_width)
+    else:
+        for idx in range(1, len(headers) + 1):
+            letter = excel_column_letter(idx)
+            ws.Columns(f"{letter}:{letter}").ColumnWidth = default_width
+    if apply_filter:
+        try:
+            last_col = excel_column_letter(len(headers))
+            ws.Range(f"A1:{last_col}1").AutoFilter(1)
+        except Exception:
+            pass
+
+
+def write_and_format_table(
+    ws,
+    headers: Sequence[str],
+    rows: Sequence[Sequence[Any]] | Sequence[Mapping[str, Any]],
+    *,
+    widths: Mapping[str, float] | None = None,
+    color_map: Mapping[str, tuple[int, int, int]] | None = None,
+    apply_filter: bool = True,
+) -> None:
+    """Write a complete table and apply shared Excel formatting."""
+    if rows and isinstance(rows[0], Mapping):
+        write_dict_table(ws, headers, rows)  # type: ignore[arg-type]
+    else:
+        write_table(ws, headers, rows)  # type: ignore[arg-type]
+    apply_standard_table_format(ws, headers, widths=widths, color_map=color_map, apply_filter=apply_filter)
+
+
+def openpyxl_cell_value(header: str, value: Any) -> Any:
+    """Same conversion policy for openpyxl-based exports."""
+    return excel_cell_value(header, value)
+
+
+def openpyxl_number_format(header: str) -> str:
+    h = normalize_header(header)
+    if is_date_header(header):
+        return "DD.MM.YY"
+    if is_text_header(header):
+        return "@"
+    if is_integer_header(header):
+        return '# ##0;[Red]-# ##0;"-"'
+    if is_money_header(header):
+        return '# ##0 ₽;[Red]-# ##0 ₽;"-"'
+    if is_decimal4_header(header):
+        return '# ##0.0000;[Red]-# ##0.0000;"-"'
+    if is_decimal_header(header):
+        return '# ##0.00;[Red]-# ##0.00;"-"'
+    return "General"
+
+
+def write_openpyxl_dict_sheet(ws, rows: Sequence[Mapping[str, Any]], *, widths: Mapping[str, float] | None = None) -> None:
+    """Write an openpyxl sheet using the same project-wide column policy."""
+    if not rows:
+        return
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    headers = list(rows[0].keys())
+    ws.append([display_header(h) for h in headers])
+    for row in rows:
+        ws.append([openpyxl_cell_value(h, row.get(h, "")) for h in headers])
+
+    header_fill = PatternFill("solid", fgColor="CDCDCD")
+    for cell in ws[1]:
+        cell.font = Font(name=FONT_NAME, size=FONT_SIZE, bold=True)
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[1].height = HEADER_ROW_HEIGHT
+
+    for col_index, header in enumerate(headers, start=1):
+        col_letter = get_column_letter(col_index)
+        fmt = openpyxl_number_format(header)
+        for cell in ws[col_letter]:
+            cell.font = Font(name=FONT_NAME, size=FONT_SIZE, bold=(cell.row == 1))
+            if cell.row > 1:
+                cell.number_format = fmt
+        if widths and header in widths:
+            ws.column_dimensions[col_letter].width = widths[header]
+        else:
+            max_len = max(len(str(c.value or "")) for c in ws[col_letter])
+            ws.column_dimensions[col_letter].width = min(max(max_len + 2, 12), 40)
+
+    ws.auto_filter.ref = ws.dimensions
+    ws.freeze_panes = "A2"

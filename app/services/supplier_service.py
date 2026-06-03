@@ -9,6 +9,11 @@ from sqlalchemy.orm import Session
 from app.db.models import ExchangeRate, Supplier
 from app.utils.text import clean_multi_spaces
 
+MANUAL_SUPPLIER_NAME = "Manual"
+
+def is_manual_supplier_name(value: object) -> bool:
+    return clean_multi_spaces(value).casefold() == MANUAL_SUPPLIER_NAME.casefold()
+
 
 @dataclass(slots=True)
 class SupplierUpsertData:
@@ -47,12 +52,23 @@ class SupplierService:
             .first()
         )
 
-    def get_all_suppliers(self) -> list[Supplier]:
-        return (
-            self.session.query(Supplier)
-            .order_by(Supplier.name.asc())
-            .all()
-        )
+    def get_all_suppliers(self, *, include_manual: bool = False) -> list[Supplier]:
+        query = self.session.query(Supplier)
+        if not include_manual:
+            query = query.filter(Supplier.name != MANUAL_SUPPLIER_NAME)
+        return query.order_by(Supplier.name.asc()).all()
+
+    def get_manual_supplier(self) -> Optional[Supplier]:
+        return self.get_supplier_by_name(MANUAL_SUPPLIER_NAME)
+
+    def get_manual_supplier_id(self) -> int:
+        supplier = self.get_manual_supplier()
+        if supplier is None:
+            raise ValueError(
+                "Для ручного расчета Target Price создайте технического поставщика Manual "
+                "в справочнике поставщиков."
+            )
+        return int(supplier.id)
 
     def get_exchange_rate(self, currency_code: object) -> Optional[ExchangeRate]:
         code = clean_multi_spaces(currency_code).upper()

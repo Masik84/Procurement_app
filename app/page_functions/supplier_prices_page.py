@@ -101,8 +101,8 @@ class SupplierPricesPage(QWidget):
         self.headers = [
             "Product name",
             "Article",
-            "Supplier Product name",
-            "Price, Lt",
+            "Supplier Product Name",
+            "Price, L",
             "Price, pack",
             "Qty, pcs",
             "Volume, L",
@@ -316,7 +316,8 @@ class SupplierPricesPage(QWidget):
         supplier_id: int,
         quick_order_months: int | None = None,
         safe_stock_months: int | None = None,
-    ):
+        cleanup_after_success: bool = False,
+    ) -> bool:
         supplier_name = (
             clean_multi_spaces(self.ui.line_NewSupplier.text())
             or clean_multi_spaces(self.ui.cbo_SupplName.currentText())
@@ -334,7 +335,7 @@ class SupplierPricesPage(QWidget):
             "Excel files (*.xlsx)",
         )
         if not file_path:
-            return
+            return False
         if not file_path.lower().endswith('.xlsx'):
             file_path += '.xlsx'
 
@@ -355,19 +356,27 @@ class SupplierPricesPage(QWidget):
                     safe_stock_months=safe_stock_months,
                 )
 
-        if not start_excel_export(
+        started = start_excel_export(
             self,
             do_export,
-            on_finished=self._on_excel_export_finished,
+            on_finished=lambda output_path: self._on_excel_export_finished(output_path, cleanup_after_success=cleanup_after_success),
             on_error=lambda text: self.show_error_message(f"Ошибка экспорта в Excel: {text}"),
-        ):
+        )
+        if not started:
             self.show_message("Excel файл уже формируется. Можно продолжать работать в программе.")
-        else:
-            self.show_message("Excel файл формируется в фоновом режиме. Можно продолжать работать в программе.")
+            return False
 
-    def _on_excel_export_finished(self, output_path):
+        self.show_message("Excel файл формируется в фоновом режиме. Можно продолжать работать в программе.")
+        return True
+
+    def _on_excel_export_finished(self, output_path, cleanup_after_success: bool = False):
         QDesktopServices.openUrl(Path(output_path).as_uri())
-        self.show_message("Excel файл сохранен")
+        if cleanup_after_success:
+            self.cleanup_current_batch(start_new_batch_after=True)
+            self.reset_form_fields_after_successful_save()
+            self.show_message("Данные сохранены, Excel файл сохранен")
+        else:
+            self.show_message("Excel файл сохранен")
 
     def load_suppliers(self):
         current_text = self.ui.cbo_SupplName.currentText().strip()
@@ -1307,11 +1316,15 @@ class SupplierPricesPage(QWidget):
             if self.ask_export_calculated_excel():
                 quick_order_months, safe_stock_months = self.ask_order_planning_months_for_export()
                 try:
-                    self.export_calculated_excel(
+                    export_started = self.export_calculated_excel(
                         supplier_id,
                         quick_order_months=quick_order_months,
                         safe_stock_months=safe_stock_months,
+                        cleanup_after_success=True,
                     )
+                    if export_started:
+                        self.show_message("Данные сохранены, Excel файл формируется в фоновом режиме")
+                        return
                 except Exception as export_error:
                     export_error_text = str(export_error)
 

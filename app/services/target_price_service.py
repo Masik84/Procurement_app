@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.models import (
     FixedCosts,
     Product,
+    ProductStock,
     Supplier,
     TargetPriceCalculation,
     TempTargetPriceImport,
@@ -297,15 +298,102 @@ class TargetPriceService:
             row.selected_option_id = options[0].id if len(options) == 1 else None
         self.session.flush()
 
-    def run_calculation(self, batch_id: str, imported_by: str) -> dict:
+    def _get_manual_supplier(self) -> Supplier:
+        supplier = self.session.query(Supplier).filter(Supplier.name == "Manual").first()
+        if supplier is None:
+            raise ValueError("В справочнике поставщиков должен быть технический поставщик Manual.")
+        return supplier
+
+    def apply_manual_full_costs(self, batch_id: str, imported_by: str, manual_full_costs: dict[int, Decimal] | None) -> int:
+        if not manual_full_costs:
+            return 0
+        manual_supplier = self._get_manual_supplier()
+        fixed = self.session.query(FixedCosts).order_by(FixedCosts.id.asc()).first()
+        created_or_updated = 0
+        for row_id, value in manual_full_costs.items():
+            full_cost = self._to_decimal(value)
+            if full_cost == 0:
+                continue
+            row = self.session.query(TempTargetPriceImport).filter(
+                TempTargetPriceImport.id == int(row_id),
+                TempTargetPriceImport.batch_id == batch_id,
+                TempTargetPriceImport.imported_by == imported_by,
+            ).first()
+            if row is None or row.selected_product_id is None:
+                continue
+            # Manual overrides all ordinary supplier options for this row.
+            self.session.query(TempTargetPriceOption).filter(
+                TempTargetPriceOption.batch_id == batch_id,
+                TempTargetPriceOption.imported_by == imported_by,
+                TempTargetPriceOption.temp_import_id == row.id,
+            ).delete(synchronize_session=False)
+            option = TempTargetPriceOption(
+                temp_import_id=row.id,
+                batch_id=batch_id,
+                imported_by=imported_by,
+                calc_date=datetime.utcnow(),
+                supplier_id=manual_supplier.id,
+                product_id=row.selected_product_id,
+                supplier_name="Manual",
+                supplier_article=row.supplier_article,
+                supplier_product_name=row.product_name,
+                supplier_price=Decimal("0"),
+                price_date_used=None,
+                cost_novo_wvat=Decimal("0"),
+                full_cost_msk=full_cost,
+                currency_code=manual_supplier.base_currency or "USD",
+                fx_rate_used=Decimal("0"),
+                fx_markup_used=Decimal("0"),
+                transport_used=Decimal("0"),
+                reexport_used=Decimal("0"),
+                agent_fee_used=Decimal("0"),
+                has_customs_used=False,
+                via_novo_used=False,
+                bank_fee_used=self._to_decimal(getattr(fixed, "bank_fee", 0) if fixed else 0),
+                customs_fee_used=self._to_decimal(getattr(fixed, "customs_fee", 0) if fixed else 0),
+                move_novo_used=self._to_decimal(getattr(fixed, "move_novo_tamozh", 0) if fixed else 0),
+                move_msk_used=self._to_decimal(getattr(fixed, "move_tamozh_chekhov", 0) if fixed else 0),
+                is_excise_used=False,
+                additional_customs_used=self._to_decimal(getattr(fixed, "additional_customs", 0) if fixed else 0),
+                storage_used=self._to_decimal(getattr(fixed, "storage", 0) if fixed else 0),
+                marking_used=Decimal("0"),
+                opt_rank=1,
+            )
+            self.session.add(option)
+            self.session.flush()
+            row.selected_option_id = option.id
+            created_or_updated += 1
+        self.session.flush()
+        return created_or_updated
+
+    def ensure_single_options_selected(self, batch_id: str, imported_by: str) -> None:
+        rows = self.session.query(TempTargetPriceImport).filter(
+            TempTargetPriceImport.batch_id == batch_id,
+            TempTargetPriceImport.imported_by == imported_by,
+        ).all()
+        for row in rows:
+            if row.selected_option_id is not None:
+                continue
+            options = self.session.query(TempTargetPriceOption).filter(
+                TempTargetPriceOption.batch_id == batch_id,
+                TempTargetPriceOption.imported_by == imported_by,
+                TempTargetPriceOption.temp_import_id == row.id,
+            ).order_by(TempTargetPriceOption.opt_rank.asc(), TempTargetPriceOption.id.asc()).all()
+            if len(options) == 1:
+                row.selected_option_id = options[0].id
+        self.session.flush()
+
+    def run_calculation(self, batch_id: str, imported_by: str, manual_full_costs: dict[int, Decimal] | None = None) -> dict:
         self.validate_new_products_before_save(batch_id, imported_by)
         created_products = self.create_products_from_temp(batch_id, imported_by)
         product_articles = self.create_or_update_product_articles(batch_id, imported_by)
         options = self.build_supplier_options(batch_id, imported_by)
+        manual_options = self.apply_manual_full_costs(batch_id, imported_by, manual_full_costs or {})
+        self.select_best_options(batch_id, imported_by)
         return {
             "created_products_count": created_products,
             "product_articles_count": product_articles,
-            "options_count": options,
+            "options_count": options + manual_options,
         }
 
     def reverse_calculate_target_price(
@@ -404,11 +492,15 @@ class TargetPriceService:
         fx_markup: Decimal,
         has_customs: bool,
         via_novo: bool,
+        manual_full_costs: dict[int, Decimal] | None = None,
     ) -> int:
         self.session.query(TargetPriceCalculation).filter(
             TargetPriceCalculation.batch_id == batch_id,
             TargetPriceCalculation.imported_by == imported_by,
         ).delete(synchronize_session=False)
+
+        self.apply_manual_full_costs(batch_id, imported_by, manual_full_costs or {})
+        self.ensure_single_options_selected(batch_id, imported_by)
 
         rows = self.session.query(TempTargetPriceImport).filter(
             TempTargetPriceImport.batch_id == batch_id,
@@ -449,10 +541,15 @@ class TargetPriceService:
                 supplier_product_name=row.product_name,
                 target_price_l=target_price_l,
                 target_price_pack=target_price_pack,
+                # Target supplier currency/rate.
                 currency_code=currency_code,
                 fx_rate_used=fx_rate,
+                # Donor supplier source price and currency/rate used in donor cost calculation.
+                donor_supplier_price=option.supplier_price,
+                donor_currency_code=option.currency_code,
+                donor_fx_rate_used=option.fx_rate_used,
                 full_cost_msk_source=option.full_cost_msk,
-                cost_novo_wvat_recalculated=cost_novo_wvat,
+                cost_novo_wvat=cost_novo_wvat,
                 fx_markup_used=fx_markup,
                 transport_used=transport,
                 reexport_used=reexport,

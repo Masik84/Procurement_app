@@ -8,19 +8,6 @@ from typing import Any, Sequence
 import pythoncom
 import win32com.client as win32
 
-from app.exports.excel_column_format import (
-    DEFAULT_FONT_NAME,
-    DEFAULT_FONT_SIZE,
-    DEFAULT_HEADER_FILL,
-    DEFAULT_HEADER_FONT,
-    HEADER_FILL_COLORS,
-    TEXT_LEFT_HEADERS,
-    excel_value_by_header,
-    normalize_header,
-    number_format_for_header,
-    width_for_header,
-)
-
 
 class CustomerCostReportExporter:
     """Excel export for CustomerCostsReportsPage."""
@@ -48,11 +35,15 @@ class CustomerCostReportExporter:
         if value is None:
             return ""
         if isinstance(value, Decimal):
+            if value == 0:
+                return ""
             return float(value)
         if isinstance(value, (datetime, date)):
             return value
         if isinstance(value, bool):
             return "Да" if value else "Нет"
+        if isinstance(value, (int, float)) and value == 0:
+            return ""
         return value
 
     @staticmethod
@@ -79,12 +70,12 @@ class CustomerCostReportExporter:
                 raise
 
     def _apply_header_common(self, ws, headers_count: int) -> None:
-        ws.Cells.Font.Name = DEFAULT_FONT_NAME
-        ws.Cells.Font.Size = DEFAULT_FONT_SIZE
+        ws.Cells.Font.Name = "Aptos Narrow"
+        ws.Cells.Font.Size = 11
         last_col = self._excel_column_letter(headers_count)
         header_range = ws.Range(f"A1:{last_col}1")
-        header_range.Font.Name = DEFAULT_FONT_NAME
-        header_range.Font.Size = DEFAULT_FONT_SIZE
+        header_range.Font.Name = "Aptos Narrow"
+        header_range.Font.Size = 11
         header_range.Font.Bold = True
         header_range.WrapText = True
         header_range.HorizontalAlignment = self._xl_center
@@ -97,7 +88,7 @@ class CustomerCostReportExporter:
         for row_index, row in enumerate(rows, start=2):
             for col_index, _ in enumerate(headers, start=1):
                 value = row[col_index - 1] if col_index - 1 < len(row) else ""
-                ws.Cells(row_index, col_index).Value = excel_value_by_header(headers[col_index - 1], value)
+                ws.Cells(row_index, col_index).Value = self._excel_value(value)
 
     @staticmethod
     def _header_map(headers: Sequence[str]) -> dict[str, int]:
@@ -118,44 +109,61 @@ class CustomerCostReportExporter:
         for header in headers:
             letter = self._col(header_map, header)
             if letter:
-                try:
-                    ws.Columns(f"{letter}:{letter}").NumberFormatLocal = format_local
-                except Exception:
-                    self._set_number_format_safe(ws.Columns(f"{letter}:{letter}"), "General", format_local)
+                self._set_number_format_safe(ws.Columns(f"{letter}:{letter}"), "General", format_local)
 
     def _format_report(self, ws, headers: Sequence[str], rows_count: int) -> None:
         header_map = self._header_map(headers)
         last_col = self._excel_column_letter(len(headers))
-        header_range = ws.Range(f"A1:{last_col}1")
-        header_range.Interior.Color = DEFAULT_HEADER_FILL
-        header_range.Font.Color = DEFAULT_HEADER_FONT
+        ws.Range(f"A1:{last_col}1").Interior.Color = self._rgb(205, 205, 205)
+        ws.Range(f"A1:{last_col}1").Font.Color = self._rgb(0, 0, 0)
 
-        for header in headers:
-            base = normalize_header(header)
+        for header in ("Supplier", "Supplier Price, L", "Currency", "FX rate"):
             letter = self._col(header_map, header)
-            if not letter:
-                continue
+            if letter:
+                ws.Range(f"{letter}1").Interior.Color = self._rgb(146, 208, 80)
 
-            if base in HEADER_FILL_COLORS:
-                ws.Range(f"{letter}1").Interior.Color = HEADER_FILL_COLORS[base]
+        for header in ("Cost Novo with VAT", "Full Cost Msk"):
+            letter = self._col(header_map, header)
+            if letter:
+                ws.Range(f"{letter}1").Interior.Color = self._rgb(0, 176, 240)
 
-            fmt = number_format_for_header(header)
-            if fmt:
-                try:
-                    ws.Columns(f"{letter}:{letter}").NumberFormatLocal = fmt
-                except Exception:
-                    self._set_number_format_safe(ws.Columns(f"{letter}:{letter}"), "General", fmt)
+        cost_headers = [
+            "Supplier Price, L", "Cost Novo with VAT", "Full Cost Msk", "FX markup", "Transport",
+            "Re-export", "Agent fee", "Bank fee", "Customs fee", "Additional customs",
+            "Storage", "Move Novo", "Move Msk", "Marking",
+        ]
+        self._format_columns_by_headers(ws, header_map, cost_headers, '# ##0,00;[Red]-# ##0,00;"-"')
+        self._format_columns_by_headers(ws, header_map, ["FX rate"], "# ##0")
+        self._format_columns_by_headers(ws, header_map, ["Qty, pcs", "Volume, L"], '# ##0,00;[Red]-# ##0,00;"-"')
+        self._format_columns_by_headers(ws, header_map, ["Дата", "Price date"], "ДД.ММ.ГГ;@")
 
-            ws.Columns(f"{letter}:{letter}").ColumnWidth = width_for_header(header, 10.0)
-            if base in TEXT_LEFT_HEADERS:
-                ws.Columns(f"{letter}:{letter}").HorizontalAlignment = self._xl_left
-            else:
-                ws.Columns(f"{letter}:{letter}").HorizontalAlignment = self._xl_center
+        widths = {
+            "Дата": 11.0,
+            "Менеджер": 18.0,
+            "Клиент": 22.0,
+            "Customer Product Name": 31.14,
+            "Our Product Name": 31.14,
+            "Pack": 8.43,
+            "Qty, pcs": 10.0,
+            "Volume, L": 10.0,
+            "Supplier": 16.14,
+            "Supplier Article": 14.0,
+            "Supplier Price, L": 10.0,
+            "Currency": 8.14,
+            "FX rate": 7.29,
+            "Cost Novo with VAT": 10.0,
+            "Full Cost Msk": 10.0,
+            "Comments": 30.0,
+        }
+        for header, width in widths.items():
+            self._set_width_by_header(ws, header_map, header, width)
+        for header in headers:
+            if header not in widths:
+                self._set_width_by_header(ws, header_map, header, 10.0)
 
         if rows_count > 0:
             data_range = ws.Range(f"A2:{last_col}{rows_count + 1}")
             data_range.VerticalAlignment = self._xl_vcenter
-
         ws.Range(f"A1:{last_col}1").AutoFilter(1)
         ws.Application.ActiveWindow.SplitRow = 1
         ws.Application.ActiveWindow.SplitColumn = 5

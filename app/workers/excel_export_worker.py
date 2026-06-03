@@ -9,10 +9,8 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot, Qt
 class ExcelExportWorker(QObject):
     """Run a long Excel export in a background QThread.
 
-    The worker must never touch Qt widgets. It emits only plain Python objects.
-    UI callbacks are routed through ExcelExportCallbackBridge, which lives in
-    the owner's GUI thread. This prevents QMessageBox / QLabel / QPushButton
-    updates from being executed in the worker thread.
+    The worker never touches Qt widgets. UI callbacks are executed through a
+    QObject proxy that lives in the owner's/main thread.
     """
 
     finished = Signal(object)
@@ -36,49 +34,31 @@ class ExcelExportWorker(QObject):
             self.error.emit(message)
 
 
-class ExcelExportCallbackBridge(QObject):
-    """Execute UI callbacks in the GUI thread."""
-
+class _ExcelExportCallbackProxy(QObject):
     def __init__(
         self,
         *,
-        on_finished: Callable[[Any], None] | None = None,
-        on_error: Callable[[str], None] | None = None,
-        finish_ui: Callable[[], None] | None = None,
+        on_finished: Callable[[Any], None] | None,
+        on_error: Callable[[str], None] | None,
+        finish_ui: Callable[[], None],
+        parent: QObject | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(parent)
         self._on_finished = on_finished
         self._on_error = on_error
         self._finish_ui = finish_ui
 
     @Slot(object)
     def handle_finished(self, result: Any) -> None:
-        if self._finish_ui is not None:
-            self._finish_ui()
+        self._finish_ui()
         if self._on_finished is not None:
             self._on_finished(result)
 
     @Slot(str)
     def handle_error(self, error_text: str) -> None:
-        if self._finish_ui is not None:
-            self._finish_ui()
+        self._finish_ui()
         if self._on_error is not None:
             self._on_error(error_text)
-
-
-class ExcelExportCleanupBridge(QObject):
-    """Clear owner references in the GUI thread after the QThread stops."""
-
-    def __init__(self, owner: QObject) -> None:
-        super().__init__()
-        self._owner = owner
-
-    @Slot()
-    def clear_refs(self) -> None:
-        setattr(self._owner, "_excel_export_thread", None)
-        setattr(self._owner, "_excel_export_worker", None)
-        setattr(self._owner, "_excel_export_callback_bridge", None)
-        setattr(self._owner, "_excel_export_cleanup_bridge", None)
 
 
 def start_excel_export(
@@ -93,11 +73,7 @@ def start_excel_export(
     args: tuple[Any, ...] = (),
     kwargs: dict[str, Any] | None = None,
 ) -> bool:
-    """Start ``export_func`` in a QThread and keep references on ``owner``.
-
-    Returns False when another background Excel export is already running for
-    the owner. The export function must not access Qt widgets; pass plain data.
-    """
+    """Start ``export_func`` in a QThread and keep references on ``owner``."""
 
     if getattr(owner, "_excel_export_thread", None) is not None:
         return False
@@ -118,33 +94,30 @@ def start_excel_export(
             button.setEnabled(True)
             button.setText(restore_text or "Export Excel")
 
-    callback_bridge = ExcelExportCallbackBridge(
+    proxy = _ExcelExportCallbackProxy(
         on_finished=on_finished,
         on_error=on_error,
         finish_ui=finish_ui,
+        parent=owner,
     )
-    callback_bridge.moveToThread(owner.thread())
 
-    cleanup_bridge = ExcelExportCleanupBridge(owner)
-    cleanup_bridge.moveToThread(owner.thread())
+    def clear_refs() -> None:
+        setattr(owner, "_excel_export_thread", None)
+        setattr(owner, "_excel_export_worker", None)
+        setattr(owner, "_excel_export_callback_proxy", None)
 
     setattr(owner, "_excel_export_thread", thread)
     setattr(owner, "_excel_export_worker", worker)
-    setattr(owner, "_excel_export_callback_bridge", callback_bridge)
-    setattr(owner, "_excel_export_cleanup_bridge", cleanup_bridge)
+    setattr(owner, "_excel_export_callback_proxy", proxy)
 
     thread.started.connect(worker.run)
-
-    # QueuedConnection is important here: QMessageBox, labels, buttons and
-    # table reloads must be handled only in the GUI thread, not in worker.run().
-    worker.finished.connect(callback_bridge.handle_finished, Qt.QueuedConnection)
-    worker.error.connect(callback_bridge.handle_error, Qt.QueuedConnection)
-
+    worker.finished.connect(proxy.handle_finished, Qt.QueuedConnection)
+    worker.error.connect(proxy.handle_error, Qt.QueuedConnection)
     worker.finished.connect(thread.quit)
     worker.error.connect(thread.quit)
     worker.finished.connect(worker.deleteLater)
     worker.error.connect(worker.deleteLater)
     thread.finished.connect(thread.deleteLater)
-    thread.finished.connect(cleanup_bridge.clear_refs, Qt.QueuedConnection)
+    thread.finished.connect(clear_refs)
     thread.start()
     return True

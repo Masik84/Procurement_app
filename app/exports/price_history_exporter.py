@@ -48,7 +48,7 @@ class PriceHistoryExporter:
             headers = [
                 "Supplier name",
                 "Article",
-                "Supplier Product name",
+                "Supplier Product Name",
                 "Our Product Name",
                 "Price date",
                 "Price",

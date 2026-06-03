@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.db.models import CurrentSupplierPrice, PriceHistory, Product, ProductStock, Supplier
 from app.services.cost_calculation_service import CostCalculationService
 from app.services.supplier_service import SupplierService
+from app.utils.output_headers import standardize_output_header, apply_header_style_and_formats
 
 
 class OrderPlanningExporter:
@@ -254,7 +255,7 @@ class OrderPlanningExporter:
             ws.Name = "Sheet1"
 
             for col_index, header in enumerate(headers, start=1):
-                ws.Cells(1, col_index).Value = header
+                ws.Cells(1, col_index).Value = standardize_output_header(header)
             for row_index, row in enumerate(rows, start=2):
                 for col_index, value in enumerate(row, start=1):
                     ws.Cells(row_index, col_index).Value = self._excel_value(value)

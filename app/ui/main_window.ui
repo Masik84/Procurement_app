@@ -770,6 +770,19 @@ QTabBar::tab:hover:!selected {
              </widget>
             </item>
             <item>
+             <widget class="QPushButton" name="btn_TargetPriceReport">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>Отчет по Таргет ценам</string>
+              </property>
+             </widget>
+            </item>
+            <item>
              <spacer name="verticalSpacer_4">
               <property name="orientation">
                <enum>Qt::Orientation::Vertical</enum>

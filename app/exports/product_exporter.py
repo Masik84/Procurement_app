@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pythoncom
 import win32com.client as win32
+from app.utils.output_headers import standardize_output_header, apply_header_style_and_formats
 
 
 class ProductExporter:
@@ -74,7 +75,7 @@ class ProductExporter:
 
             headers = ["ID", "Product name", "Brand", "Pack", "is_excise"]
             for col_index, header in enumerate(headers, start=1):
-                ws.Cells(1, col_index).Value = header
+                ws.Cells(1, col_index).Value = standardize_output_header(header)
 
             self._apply_base_style(ws, len(headers), apply_filter=False)
 

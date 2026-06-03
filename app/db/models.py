@@ -810,10 +810,18 @@ class TargetPriceCalculation(Base):
 
     target_price_l = Column(Numeric, nullable=False)
     target_price_pack = Column(Numeric, nullable=False)
+
+    # Currency/rate of the target supplier for whom target prices are calculated.
     currency_code = Column(String(10), nullable=False)
     fx_rate_used = Column(Numeric, nullable=False)
+
+    # Source data of the donor supplier selected during calculation.
+    donor_supplier_price = Column(Numeric, nullable=True)
+    donor_currency_code = Column(String(10), nullable=True)
+    donor_fx_rate_used = Column(Numeric, nullable=True)
+
     full_cost_msk_source = Column(Numeric, nullable=False)
-    cost_novo_wvat_recalculated = Column(Numeric, nullable=False)
+    cost_novo_wvat = Column(Numeric, nullable=False)
 
     fx_markup_used = Column(Numeric, nullable=False)
     transport_used = Column(Numeric, nullable=False)

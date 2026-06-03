@@ -20,6 +20,7 @@ from PySide6.QtUiTools import QUiLoader
 from app.db.models import MarkingRate
 from app.db.db import SessionLocal
 from app.ui.table_style import *
+from app.utils.output_headers import display_headers
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -312,7 +313,7 @@ class MarkingRatesPage(QWidget):
 
         self.table.setColumnCount(len(self.headers))
         self.table.setRowCount(len(data))
-        self.table.setHorizontalHeaderLabels(self.headers)
+        self.table.setHorizontalHeaderLabels(display_headers(self.headers))
 
         for row_index, row_data in enumerate(data):
             row_key = row_data["pack_type"]

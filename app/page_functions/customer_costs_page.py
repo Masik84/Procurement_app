@@ -268,7 +268,7 @@ class CustomerCostsPage(QWidget):
 
     def _get_supplier_values(self) -> list[tuple[int, str]]:
         with self.get_session() as session:
-            rows = session.query(Supplier).order_by(Supplier.name.asc()).all()
+            rows = session.query(Supplier).filter(Supplier.name != "Manual").order_by(Supplier.name.asc()).all()
         return [(int(s.id), s.name or "") for s in rows]
 
     def _manual_supplier_column(self, block_index: int) -> int:
@@ -991,28 +991,20 @@ class CustomerCostsPage(QWidget):
             batch_id = self._batch_id
             imported_by = self._imported_by
             manual_prices = self._collect_manual_prices()
-            pending_deletes = set(getattr(self, "_pending_deletes", set()) or set())
 
-            # ВАЖНО: btn_CalcCost не является финальным сохранением.
-            # Поэтому визуально удаленные через контекстное меню строки НЕ удаляем из БД здесь
-            # и не обращаемся к Qt-таблице из фонового потока.
             def do_export():
                 with self.get_session() as session:
+                    from app.utils.gui_table_actions import apply_pending_table_deletes_to_db
+                    apply_pending_table_deletes_to_db(session, self)
                     service = CustomerCostService(session)
                     exporter = CustomerCostExporter(session)
                     service.run_calculation(batch_id, imported_by, manual_prices=manual_prices)
-                    output = exporter.export_calculated(
-                        batch_id,
-                        imported_by,
-                        save_path,
-                        excluded_temp_import_ids=pending_deletes,
-                    )
+                    output = exporter.export_calculated(batch_id, imported_by, save_path)
                     session.commit()
                     return output
 
             def done(output_path):
-                # Не перезагружаем таблицу после расчета, чтобы не сбрасывать
-                # визуально удаленные строки до нажатия btn_Save.
+                self.load_table()
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_path)))
                 self.show_message("Расчет выполнен")
 
@@ -1034,35 +1026,23 @@ class CustomerCostsPage(QWidget):
             batch_id = self._batch_id
             imported_by = self._imported_by
             manual_prices = self._collect_manual_prices()
-            pending_deletes = set(getattr(self, "_pending_deletes", set()) or set())
 
             def do_export():
                 with self.get_session() as session:
-                    if pending_deletes:
-                        from app.db.models import TempCustomerCostImport, TempCustomerCostOption
-                        session.query(TempCustomerCostOption).filter(
-                            TempCustomerCostOption.batch_id == batch_id,
-                            TempCustomerCostOption.imported_by == imported_by,
-                            TempCustomerCostOption.temp_import_id.in_(pending_deletes),
-                        ).delete(synchronize_session=False)
-                        session.query(TempCustomerCostImport).filter(
-                            TempCustomerCostImport.batch_id == batch_id,
-                            TempCustomerCostImport.imported_by == imported_by,
-                            TempCustomerCostImport.id.in_(pending_deletes),
-                        ).delete(synchronize_session=False)
+                    from app.utils.gui_table_actions import apply_pending_table_deletes_to_db
+                    apply_pending_table_deletes_to_db(session, self)
                     service = CustomerCostService(session)
                     exporter = CustomerCostExporter(session)
                     service.run_calculation(batch_id, imported_by, manual_prices=manual_prices)
                     service.save_calculations(batch_id, imported_by)
                     output = exporter.export_kam_files(batch_id, imported_by, folder)
-                    service.delete_temp_rows(batch_id, imported_by)
                     session.commit()
                     return output
 
             if not start_excel_export(
                 self,
                 do_export,
-                on_finished=lambda _output: (getattr(self, "_pending_deletes", set()).clear(), getattr(self, "_deleted_row_snapshots", []).clear(), self.start_new_batch(), self.load_table(), self.show_message("Данные сохранены")),
+                on_finished=lambda _output: self.show_message("Данные сохранены"),
                 on_error=lambda text: self.show_error_message(str(text)),
             ):
                 self.show_message("Excel файл уже формируется. Можно продолжать работать в программе.")

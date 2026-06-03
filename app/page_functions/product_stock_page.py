@@ -39,6 +39,7 @@ from app.utils.batch import get_current_username
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
 from app.ui.table_style import *
+from app.utils.output_headers import display_headers
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 UI_PATH = BASE_DIR / "app" / "ui" / "windows" / "stock_supplier_orders.ui"

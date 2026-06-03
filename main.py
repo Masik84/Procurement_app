@@ -136,6 +136,7 @@ class MyWindow(QMainWindow):
         self.btn_supplier_price = self.ui.btn_SupplierPrice
         self.btn_customer_cost = self.ui.btn_CustomerCost
         self.btn_target_price = self.ui.btn_TargetPrice
+        self.btn_target_price_report = getattr(self.ui, "btn_TargetPriceReport", None)
         self.btn_customer_cost_report = self.ui.btn_CustCostReport
         self.btn_product_stock = self.ui.btn_Stock
         self.btn_quick_cost_calc = self.ui.btn_QuickCostCalc
@@ -162,6 +163,13 @@ class MyWindow(QMainWindow):
             self.btn_price_reports: lazy_page("app.page_functions.price_reports_page", "PriceReportsPage"),
             self.btn_order_planning: lazy_page("app.page_functions.order_planning_page", "OrderPlanningPage"),
         }
+
+
+        if self.btn_target_price_report is not None:
+            self.menu_btns_list[self.btn_target_price_report] = lazy_page(
+                "app.page_functions.target_price_history_page",
+                "TargetPriceHistoryPage",
+            )
 
         self.show_home_window()
 

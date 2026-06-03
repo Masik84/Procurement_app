@@ -18,6 +18,7 @@ from PySide6.QtUiTools import QUiLoader
 from app.db.models import FixedCosts
 from app.db.db import SessionLocal
 from app.ui.table_style import *
+from app.utils.output_headers import display_headers
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -240,7 +241,7 @@ class FixedCostsPage(QWidget):
 
         self.table.setColumnCount(len(self.headers))
         self.table.setRowCount(1)
-        self.table.setHorizontalHeaderLabels(self.headers)
+        self.table.setHorizontalHeaderLabels(display_headers(self.headers))
 
         for col_index, col_name in enumerate(self.columns):
             editable = col_name != "id"

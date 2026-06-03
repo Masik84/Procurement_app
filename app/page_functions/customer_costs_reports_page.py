@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QComboBox,
-    QHeaderView,
     QFileDialog,
     QMenu,
     QMessageBox,
@@ -85,7 +84,7 @@ class CustomerCostsReportsPage(QWidget):
         "Supplier Price, L",
         "Currency",
         "FX rate",
-        "Cost Novo withVAT",
+        "Cost Novo with VAT",
         "Full Cost Msk",
         "FX markup",
         "Transport",
@@ -133,7 +132,6 @@ class CustomerCostsReportsPage(QWidget):
 
     def setup_ui(self):
         setup_data_table(self.table, sorting=True)
-        self._setup_report_table_sizing()
         self._setup_date_edits()
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -141,16 +139,6 @@ class CustomerCostsReportsPage(QWidget):
         install_standard_table_context_menu(self, self.table)
         self._export_button_text = self.ui.btn_ExportExcel.text()
         self._hide_report_header()
-
-
-    def _setup_report_table_sizing(self):
-        """Use shared table style, but size report columns by content instead of fixed widths."""
-        header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeToContents)
-        header.setStretchLastSection(False)
-        header.setMinimumSectionSize(20)
-        self.table.setWordWrap(False)
-        self.table.setTextElideMode(Qt.TextElideMode.ElideRight)
 
     def _setup_date_edits(self):
         for date_edit in (self.ui.line_Start_date, self.ui.line_End_date):
@@ -354,6 +342,7 @@ class CustomerCostsReportsPage(QWidget):
     def build_report(self):
         try:
             start_dt, end_dt = self._date_period()
+            self._load_all_products()
             with self.get_session() as session:
                 query = self._base_query(session)
                 query = query.options(
@@ -445,8 +434,11 @@ class CustomerCostsReportsPage(QWidget):
             self._row_ids.append(row_id)
             for col_idx, value in enumerate(values):
                 header = self.HEADERS[col_idx]
+                if header == "Our Product Name":
+                    self._set_product_combo(row_idx, col_idx, row_id, calc.product_id)
+                    continue
                 editable = header in editable_headers
-                item = build_table_item(value, editable=editable, align_left=header in {"Менеджер", "Клиент", "Customer Product Name", "Our Product Name", "Supplier", "Comments"})
+                item = build_table_item(value, editable=editable, align_left=header in {"Менеджер", "Клиент", "Customer Product Name", "Supplier", "Comments"})
                 if header in {"Дата", "Price date"} and isinstance(value, datetime):
                     item.setText(value.strftime("%d.%m.%Y"))
                 if isinstance(value, bool):
@@ -532,6 +524,10 @@ class CustomerCostsReportsPage(QWidget):
         return ids
 
     def _cell_text(self, row: int, col: int) -> str:
+        if self.HEADERS[col] == "Our Product Name":
+            combo = self.table.cellWidget(row, col)
+            if combo:
+                return combo.currentText()
         item = self.table.item(row, col)
         return item.text() if item else ""
 
@@ -550,7 +546,12 @@ class CustomerCostsReportsPage(QWidget):
                     if not row:
                         continue
                     for field, value in changes.items():
-                        if field in {"manager_name", "customer_name"}:
+                        if field == "product_id":
+                            row.product_id = int(value)
+                            product = session.query(Product).filter(Product.id == int(value)).first()
+                            if product:
+                                row.pack = product.pack
+                        elif field in {"manager_name", "customer_name"}:
                             setattr(row, field, value)
                 session.commit()
             deleted = len(self._pending_deletes)
@@ -584,7 +585,7 @@ class CustomerCostsReportsPage(QWidget):
             self.show_error_message("Сначала сформируй отчет")
             return
         default_name = f"CustCostReport_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
-        path, _ = QFileDialog.getSaveFileName(self, "Сохранить отчет", str(BASE_DIR / default_name), "Excel files (*.xlsx)")
+        path, _ = QFileDialog.getSaveFileName(self, "Сохранить отчет", str(Path.home() / default_name), "Excel files (*.xlsx)")
         if not path:
             return
         try:

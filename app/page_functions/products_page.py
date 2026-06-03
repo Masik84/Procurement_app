@@ -32,6 +32,7 @@ from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
 from app.workers.excel_export_worker import start_excel_export
 from app.exports.product_exporter import ProductExporter
+from app.utils.output_headers import display_headers, standardize_output_header
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -749,7 +750,7 @@ class ProductsPage(QWidget):
         self.table.clear()
         self.table.setColumnCount(len(self.headers))
         self.table.setRowCount(len(rows))
-        self.table.setHorizontalHeaderLabels(self.headers)
+        self.table.setHorizontalHeaderLabels(display_headers(self.headers))
 
         with self.get_session() as session:
             for row_index, imported in enumerate(rows):
@@ -887,7 +888,7 @@ class ProductsPage(QWidget):
             ]
 
             for col_index, header in enumerate(headers, start=1):
-                ws.Cells(1, col_index).Value = header
+                ws.Cells(1, col_index).Value = standardize_output_header(header)
 
             ws.Cells.Font.Name = "Aptos Narrow"
             ws.Cells.Font.Size = 11
@@ -977,7 +978,7 @@ class ProductsPage(QWidget):
 
         self.table.setColumnCount(len(self.headers))
         self.table.setRowCount(len(data))
-        self.table.setHorizontalHeaderLabels(self.headers)
+        self.table.setHorizontalHeaderLabels(display_headers(self.headers))
 
         for row_index, row_data in enumerate(data):
             row_id = int(row_data["id"])
@@ -1128,7 +1129,7 @@ class ProductsPage(QWidget):
 
         if self.table.columnCount() == 0:
             self.table.setColumnCount(len(self.headers))
-            self.table.setHorizontalHeaderLabels(self.headers)
+            self.table.setHorizontalHeaderLabels(display_headers(self.headers))
 
         self.table.insertRow(0)
 

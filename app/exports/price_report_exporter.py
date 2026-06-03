@@ -274,7 +274,7 @@ class PriceReportExporter:
 
         self._format_columns_by_headers(ws, header_map, ["last update", "last update (prev)", "last update Best1", "last update Best2"], "ДД.ММ.ГГ;@")
         self._format_columns_by_headers(ws, header_map, ["FX rate", "FX rate Best1", "FX rate Best2"], "# ##0")
-        self._format_columns_by_headers(ws, header_map, ["Price, L", "Price (Pack)", "Price, L (prev)"], "# ##0,00_ ;[Red]-# ##0,00_ ;'-'")
+        self._format_columns_by_headers(ws, header_map, ["Price, L", "Price, pack", "Price, L (prev)"], "# ##0,00_ ;[Red]-# ##0,00_ ;'-'")
         self._format_columns_by_headers(ws, header_map, ["Дистр цена", "Промо цена", "Cost Novo with VAT", "Full Cost Msk", 
                                                                                             "Cost Novo with VAT (prev)", "Full Cost Msk (prev)", "curr LPC", 
                                                                                             "curr Landed cost", "Best full Price, L", "Best full Price, L 2"], "# ##0 ₽")
@@ -289,7 +289,7 @@ class PriceReportExporter:
 
         self._set_width_by_header(ws, header_map, "Our Product Name", 31.14)
         self._set_width_by_header(ws, header_map, "Pack", 8.43)
-        for header in ("Price, L", "Price (Pack)"):
+        for header in ("Price, L", "Price, pack"):
             self._set_width_by_header(ws, header_map, header, 9.14 if header == "Price, L" else 13.00)
         for header in ("Currency", "Cost Novo with VAT", "Full Cost Msk", "Price, L (prev)", "Cost Novo with VAT (prev)", "Full Cost Msk (prev)", "Currency Best1", "Currency Best2"):
             self._set_width_by_header(ws, header_map, header, 8.71)

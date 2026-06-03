@@ -372,7 +372,7 @@ class PriceHistoryPage(QWidget):
             with self.get_session() as session:
                 suppliers = (
                     session.query(Supplier.name)
-                    .filter(Supplier.name.isnot(None), Supplier.name != "")
+                    .filter(Supplier.name.isnot(None), Supplier.name != "", Supplier.name != "Manual")
                     .distinct()
                     .order_by(Supplier.name)
                     .all()
@@ -479,7 +479,7 @@ class PriceHistoryPage(QWidget):
         supplier_name = self.ui.line_SupplName.currentText()
 
         with self.get_session() as session:
-            query = session.query(Supplier).filter(Supplier.name.isnot(None), Supplier.name != "")
+            query = session.query(Supplier).filter(Supplier.name.isnot(None), Supplier.name != "", Supplier.name != "Manual")
 
             if supplier_name != "-":
                 query = query.filter(Supplier.name == supplier_name)
@@ -491,27 +491,44 @@ class PriceHistoryPage(QWidget):
         self.ui.line_Start_date.setDate(today)
         self.ui.line_End_date.setDate(today)
 
-    def _get_date_filters(self):
-        start_qdate = self.ui.line_Start_date.date()
-        end_qdate = self.ui.line_End_date.date()
-        today = QDate.currentDate()
+    def _is_calc_today_enabled(self):
+        """Возвращает True, если включен режим принудительного расчета за сегодня."""
+        return bool(
+            hasattr(self.ui, "chb_CalcToday")
+            and self.ui.chb_CalcToday.isChecked()
+        )
 
-        if start_qdate == today and end_qdate == today:
-            return None, None
-
+    def _qdate_to_day_range(self, qdate):
         start_date = datetime(
-            start_qdate.year(),
-            start_qdate.month(),
-            start_qdate.day(),
+            qdate.year(),
+            qdate.month(),
+            qdate.day(),
             0, 0, 0, 0,
         )
 
         end_date = datetime(
-            end_qdate.year(),
-            end_qdate.month(),
-            end_qdate.day(),
+            qdate.year(),
+            qdate.month(),
+            qdate.day(),
             23, 59, 59, 999999,
         )
+
+        return start_date, end_date
+
+    def _get_date_filters(self):
+        today = QDate.currentDate()
+
+        if self._is_calc_today_enabled():
+            return self._qdate_to_day_range(today)
+
+        start_qdate = self.ui.line_Start_date.date()
+        end_qdate = self.ui.line_End_date.date()
+
+        if start_qdate == today and end_qdate == today:
+            return None, None
+
+        start_date, _ = self._qdate_to_day_range(start_qdate)
+        _, end_date = self._qdate_to_day_range(end_qdate)
 
         return start_date, end_date
 
