@@ -81,6 +81,8 @@ class ProductArticlesPage(QWidget):
 
         self.ui.line_Brand.currentTextChanged.connect(self.fill_in_prod_fam_list)
         self.ui.line_Prod_Fam.currentTextChanged.connect(self.fill_in_prod_name_list)
+        if hasattr(self.ui, "cbo_FilterBrand"):
+            self.ui.cbo_FilterBrand.currentTextChanged.connect(self.fill_in_prod_name_list)
 
         self.ui.btn_Search.clicked.connect(self.find_product_articles)
         self.ui.btn_AddLine.clicked.connect(self.add_line)
@@ -214,8 +216,12 @@ class ProductArticlesPage(QWidget):
         self.table.resizeColumnsToContents()
 
     def _get_product_name_values(self):
+        filter_brand = self._get_product_name_filter_brand()
         with self.get_session() as session:
-            products = session.query(Product).filter(Product.name.isnot(None), Product.name != "").all()
+            query = session.query(Product).filter(Product.name.isnot(None), Product.name != "")
+            if filter_brand:
+                query = query.filter(Product.brand == filter_brand)
+            products = query.all()
 
         products.sort(
             key=lambda x: (
@@ -402,8 +408,42 @@ class ProductArticlesPage(QWidget):
 
     def refresh_all_comboboxes(self):
         self.fill_in_prod_brand_list()
+        self.fill_filter_brand_list()
         self.fill_in_prod_fam_list()
         self.fill_in_prod_name_list()
+
+    def fill_filter_brand_list(self):
+        widget = getattr(self.ui, "cbo_FilterBrand", None)
+        if widget is None:
+            return
+
+        try:
+            current_value = widget.currentText()
+            with self.get_session() as session:
+                brands = (
+                    session.query(Product.brand)
+                    .filter(Product.brand.isnot(None), Product.brand != "")
+                    .distinct()
+                    .order_by(Product.brand)
+                    .all()
+                )
+
+            values = [row[0] for row in brands if row[0]]
+            self._fill_combobox(widget, values)
+            if current_value in values:
+                widget.setCurrentText(current_value)
+            else:
+                widget.setCurrentText("-")
+
+        except Exception as e:
+            self.show_error_message(f"Ошибка при получении брендов для фильтра продуктов: {str(e)}")
+
+    def _get_product_name_filter_brand(self) -> str:
+        widget = getattr(self.ui, "cbo_FilterBrand", None)
+        if widget is None:
+            return ""
+        value = self.clean_multi_spaces(widget.currentText())
+        return value if value and value != "-" else ""
 
     def fill_in_prod_brand_list(self):
         try:
@@ -451,12 +491,15 @@ class ProductArticlesPage(QWidget):
     def fill_in_prod_name_list(self):
         brand = self.ui.line_Brand.currentText()
         family = self.ui.line_Prod_Fam.currentText()
+        filter_brand = self._get_product_name_filter_brand()
 
         try:
             with self.get_session() as session:
                 query = session.query(Product).filter(Product.name.isnot(None), Product.name != "")
 
-                if brand != "-":
+                if filter_brand:
+                    query = query.filter(Product.brand == filter_brand)
+                elif brand != "-":
                     query = query.filter(Product.brand == brand)
                 if family != "-":
                     query = query.filter(Product.family == family)
@@ -1050,6 +1093,9 @@ class ProductArticlesPage(QWidget):
 
             self._clear_search_fields()
             self.refresh_all_comboboxes()
+            if hasattr(self.ui, "cbo_FilterBrand"):
+                self.ui.cbo_FilterBrand.setCurrentText("-")
+                self.fill_in_prod_name_list()
             self.table.clearContents()
             self.table.setRowCount(0)
             self.show_message("Форма очищена")

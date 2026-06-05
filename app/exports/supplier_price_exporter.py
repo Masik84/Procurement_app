@@ -81,7 +81,7 @@ class SupplierPriceExporter:
     @classmethod
     def _is_order_plan_export_header(cls, header: object) -> bool:
         key = cls._base_order_header(header)
-        return key in {"Ср.Продажи мес", "к Быстрому заказу, л", "к Заказу, л"}
+        return key in {"к Быстрому заказу, л", "к Заказу, л"}
 
     @staticmethod
     def _round_fx_rate(value: object):
@@ -420,6 +420,7 @@ class SupplierPriceExporter:
         current_supplier_name: str,
         current_imported_full_cost,
         current_imported_date,
+        min_price_date=None,
     ):
         best1 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": ""}
         best2 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": ""}
@@ -444,6 +445,7 @@ class SupplierPriceExporter:
         current_rows = self.price_repository.get_suppliers_with_current_prices_for_product(
             product_id=product_id,
             only_rating_calc=True,
+            min_price_date=min_price_date,
         )
         for current_row in current_rows:
             if current_row.supplier_id == current_supplier_id or current_row.supplier_id in seen:
@@ -464,7 +466,7 @@ class SupplierPriceExporter:
             )
             seen.add(current_row.supplier_id)
 
-        history_rows = (
+        history_query = (
             self.session.query(PriceHistory, Supplier)
             .join(Supplier, Supplier.id == PriceHistory.supplier_id)
             .filter(
@@ -473,6 +475,12 @@ class SupplierPriceExporter:
                 PriceHistory.price.isnot(None),
                 Supplier.rating_calc.is_(True),
             )
+        )
+        if min_price_date is not None:
+            history_query = history_query.filter(PriceHistory.price_date >= min_price_date)
+
+        history_rows = (
+            history_query
             .order_by(PriceHistory.supplier_id.asc(), PriceHistory.price_date.desc(), PriceHistory.id.desc())
             .all()
         )
@@ -608,7 +616,15 @@ class SupplierPriceExporter:
         }
 
 
-    def build_export_rows(self, batch_id: str, imported_by: str, quick_months: int | None = None, order_months: int | None = None) -> list[dict]:
+    def build_export_rows(
+        self,
+        batch_id: str,
+        imported_by: str,
+        quick_months: int | None = None,
+        order_months: int | None = None,
+        supplier_price_age_months: int | None = None,
+    ) -> list[dict]:
+        min_price_date = self.price_repository.supplier_price_cutoff_from_months(supplier_price_age_months)
         rows = (
             self.session.query(TempPriceImport, SupplierPriceCalculation, Product, ProductStock, Supplier)
             .outerjoin(
@@ -645,6 +661,7 @@ class SupplierPriceExporter:
                     current_supplier_name=current_supplier_name,
                     current_imported_full_cost=calc_row.full_cost_msk if calc_row else None,
                     current_imported_date=calc_row.calc_date if calc_row else current_price_date,
+                    min_price_date=min_price_date,
                 )
 
             pack_value = product.pack if product is not None else temp_row.new_pack
@@ -790,6 +807,7 @@ class SupplierPriceExporter:
         source_file_path: str | Path | None = None,
         quick_order_months: int | None = None,
         safe_stock_months: int | None = None,
+        supplier_price_age_months: int | None = None,
     ) -> Path:
         supplier = self.session.query(Supplier).filter(Supplier.id == supplier_id).first()
         supplier_name = self._safe_filename(supplier.name if supplier else "Supplier")
@@ -804,7 +822,13 @@ class SupplierPriceExporter:
             output_path = output_path.with_suffix(".xlsx")
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        rows = self.build_export_rows(batch_id=batch_id, imported_by=imported_by, quick_months=quick_order_months, order_months=safe_stock_months)
+        rows = self.build_export_rows(
+            batch_id=batch_id,
+            imported_by=imported_by,
+            quick_months=quick_order_months,
+            order_months=safe_stock_months,
+            supplier_price_age_months=supplier_price_age_months,
+        )
 
         excel = None
         wb = None

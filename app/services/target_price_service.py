@@ -183,8 +183,14 @@ class TargetPriceService:
             raise ValueError(f"Для валюты '{currency_code}' не найден корректный курс rate_to_rub.")
         return self._to_decimal(rate)
 
-    def build_supplier_options(self, batch_id: str, imported_by: str) -> int:
+    def build_supplier_options(
+        self,
+        batch_id: str,
+        imported_by: str,
+        supplier_price_age_months: int | None = None,
+    ) -> int:
         self.delete_temp_options(batch_id, imported_by)
+        min_price_date = self.price_repository.supplier_price_cutoff_from_months(supplier_price_age_months)
         rows = self.session.query(TempTargetPriceImport).filter(
             TempTargetPriceImport.batch_id == batch_id,
             TempTargetPriceImport.imported_by == imported_by,
@@ -197,6 +203,7 @@ class TargetPriceService:
             current_prices = self.price_repository.get_suppliers_with_current_prices_for_product(
                 product_id=row.selected_product_id,
                 only_rating_calc=True,
+                min_price_date=min_price_date,
             )
             for supplier_price in current_prices:
                 self._create_option_from_snapshot(row, batch_id, imported_by, supplier_price)
@@ -205,6 +212,7 @@ class TargetPriceService:
             latest_history = self.price_repository.get_latest_history_prices_for_product(
                 product_id=row.selected_product_id,
                 only_rating_calc=True,
+                min_price_date=min_price_date,
             )
             for supplier_price in latest_history:
                 if supplier_price.supplier_id in seen:
@@ -383,11 +391,21 @@ class TargetPriceService:
                 row.selected_option_id = options[0].id
         self.session.flush()
 
-    def run_calculation(self, batch_id: str, imported_by: str, manual_full_costs: dict[int, Decimal] | None = None) -> dict:
+    def run_calculation(
+        self,
+        batch_id: str,
+        imported_by: str,
+        manual_full_costs: dict[int, Decimal] | None = None,
+        supplier_price_age_months: int | None = None,
+    ) -> dict:
         self.validate_new_products_before_save(batch_id, imported_by)
         created_products = self.create_products_from_temp(batch_id, imported_by)
         product_articles = self.create_or_update_product_articles(batch_id, imported_by)
-        options = self.build_supplier_options(batch_id, imported_by)
+        options = self.build_supplier_options(
+            batch_id,
+            imported_by,
+            supplier_price_age_months=supplier_price_age_months,
+        )
         manual_options = self.apply_manual_full_costs(batch_id, imported_by, manual_full_costs or {})
         self.select_best_options(batch_id, imported_by)
         return {
@@ -541,15 +559,10 @@ class TargetPriceService:
                 supplier_product_name=row.product_name,
                 target_price_l=target_price_l,
                 target_price_pack=target_price_pack,
-                # Target supplier currency/rate.
                 currency_code=currency_code,
                 fx_rate_used=fx_rate,
-                # Donor supplier source price and currency/rate used in donor cost calculation.
-                donor_supplier_price=option.supplier_price,
-                donor_currency_code=option.currency_code,
-                donor_fx_rate_used=option.fx_rate_used,
                 full_cost_msk_source=option.full_cost_msk,
-                cost_novo_wvat=cost_novo_wvat,
+                cost_novo_wvat_recalculated=cost_novo_wvat,
                 fx_markup_used=fx_markup,
                 transport_used=transport,
                 reexport_used=reexport,

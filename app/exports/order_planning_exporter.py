@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session
 from app.db.models import CurrentSupplierPrice, PriceHistory, Product, ProductStock, Supplier
 from app.services.cost_calculation_service import CostCalculationService
 from app.services.supplier_service import SupplierService
-from app.utils.output_headers import standardize_output_header, apply_header_style_and_formats
+from app.exports.excel_column_format import apply_standard_worksheet_format, excel_value_by_header
+from app.utils.output_headers import standardize_output_header
 
 
 class OrderPlanningExporter:
@@ -44,16 +45,11 @@ class OrderPlanningExporter:
         return Decimal(str(value))
 
     @staticmethod
-    def _excel_value(value: object) -> Any:
-        if value is None:
+    def _excel_value(header: str, value: object) -> Any:
+        excel_value = excel_value_by_header(header, value)
+        if isinstance(excel_value, (int, float)) and not isinstance(excel_value, bool) and excel_value == 0:
             return ""
-        if isinstance(value, Decimal):
-            if value == 0:
-                return ""
-            return float(value)
-        if isinstance(value, (int, float)) and value == 0:
-            return ""
-        return value
+        return excel_value
 
     def _create_excel_app(self):
         pythoncom.CoInitialize()
@@ -224,6 +220,7 @@ class OrderPlanningExporter:
                 row.get("order_is"),
                 row.get("stock_is"),
                 row.get("reserve"),
+                row.get("reserve_ecomm"),
                 row.get("markdown"),
             ]
             for option in options:
@@ -258,56 +255,9 @@ class OrderPlanningExporter:
                 ws.Cells(1, col_index).Value = standardize_output_header(header)
             for row_index, row in enumerate(rows, start=2):
                 for col_index, value in enumerate(row, start=1):
-                    ws.Cells(row_index, col_index).Value = self._excel_value(value)
+                    ws.Cells(row_index, col_index).Value = self._excel_value(headers[col_index - 1], value)
 
-            self._apply_header_common(ws, len(headers))
-            header_map = self._header_map(headers)
-
-            self._color_headers(ws, header_map, "Brand", "Safe Stock (+ord), mnth", self._rgb(205, 205, 205))
-            self._color_headers(ws, header_map, "к Быстрому Заказу, шт", "к Заказу, л", self._rgb(33, 92, 152), self._rgb(255, 255, 255))
-            self._color_headers(ws, header_map, "Дистр цена", "Промо цена", self._rgb(192, 0, 0), self._rgb(255, 255, 255))
-            self._color_headers(ws, header_map, "Stock", "Purchase Order", self._rgb(33, 92, 152), self._rgb(255, 255, 255))
-            self._color_headers(ws, header_map, "Order IS", "Stock IS", self._rgb(192, 0, 0), self._rgb(255, 255, 255))
-            self._color_headers(ws, header_map, "Reserve cust", "Damaged", self._rgb(33, 92, 152), self._rgb(255, 255, 255))
-
-            self._format_cols(ws, header_map, ["Ср.Продажи мес", "Safe Stock (st), mnth", "Safe Stock (st+tr), mnth", "Safe Stock (+ord), mnth"], "# ##0,00")
-            self._format_cols(ws, header_map, ["к Быстрому Заказу, шт", "к Быстрому Заказу, л", "к Заказу, шт", "к Заказу, л"], '# ##0;[Red]-# ##0;"-"')
-            self._format_cols(ws, header_map, ["Дистр цена", "Промо цена"], "# ##0 ₽")
-            self._format_cols(ws, header_map, ["Stock", "Transit", "Purchase Order", "Order IS", "Stock IS", "Reserve cust", "Reserve E-Comm", "Damaged"], '# ##0;[Red]-# ##0;"-"')
-
-            idx = 1
-            while f"Cost Novo with VAT_{idx}" in header_map:
-                self._format_cols(ws, header_map, [f"Cost Novo with VAT_{idx}", f"Full Cost Msk_{idx}"], "# ##0 ₽")
-                self._format_cols(ws, header_map, [f"last update_{idx}"], "ДД.ММ.ГГ;@")
-                self._set_width(ws, header_map, f"Cost Novo with VAT_{idx}", 9.00)
-                self._set_width(ws, header_map, f"Full Cost Msk_{idx}", 9.00)
-                self._set_width(ws, header_map, f"Supplier_{idx}", 16.14)
-                self._set_width(ws, header_map, f"last update_{idx}", 9.43)
-                self._set_width(ws, header_map, f"Currency_{idx}", 8.14)
-                idx += 1
-
-            self._set_width(ws, header_map, "Brand", 13.00)
-            self._set_width(ws, header_map, "Product Name", 31.14)
-            self._set_width(ws, header_map, "Pack", 8.43)
-            for header in ["Ср.Продажи мес", "Safe Stock (st), mnth", "Safe Stock (st+tr), mnth", "Safe Stock (+ord), mnth"]:
-                self._set_width(ws, header_map, header, 10.50)
-            for header in ["к Быстрому Заказу, шт", "к Быстрому Заказу, л", "к Заказу, шт", "к Заказу, л", "Дистр цена", "Промо цена", "Stock", "Transit", "Purchase Order", "Order IS", "Stock IS", "Reserve cust", "Reserve E-Comm", "Damaged"]:
-                self._set_width(ws, header_map, header, 8.43)
-
-            ws.Range(f"A1:{self._excel_column_letter(len(headers))}1").AutoFilter(1)
-            try:
-                ws.Activate()
-                window = excel.ActiveWindow
-                window.FreezePanes = False
-                window.SplitRow = 1
-                window.SplitColumn = max((header_map.get("Дистр цена") or 1) - 1, 1)
-                window.ScrollRow = 1
-                window.ScrollColumn = 1
-                window.Zoom = 85
-                window.FreezePanes = True
-                ws.Range("A1").Select()
-            except Exception:
-                pass
+            apply_standard_worksheet_format(ws, headers, freeze_cell="L2", zoom=85)
 
             wb.SaveAs(str(target_path))
             return target_path

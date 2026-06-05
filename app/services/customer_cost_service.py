@@ -255,8 +255,14 @@ class CustomerCostService:
 
         self.session.flush()
 
-    def build_supplier_options(self, batch_id: str, imported_by: str) -> int:
+    def build_supplier_options(
+        self,
+        batch_id: str,
+        imported_by: str,
+        supplier_price_age_months: int | None = None,
+    ) -> int:
         self.delete_temp_options(batch_id, imported_by)
+        min_price_date = self.price_repository.supplier_price_cutoff_from_months(supplier_price_age_months)
 
         rows = self.session.query(TempCustomerCostImport).filter(
             TempCustomerCostImport.batch_id == batch_id,
@@ -271,6 +277,7 @@ class CustomerCostService:
             current_prices = self.price_repository.get_suppliers_with_current_prices_for_product(
                 product_id=row.selected_product_id,
                 only_rating_calc=True,
+                min_price_date=min_price_date,
             )
             for supplier_price in current_prices:
                 self._create_option_from_snapshot(row, batch_id, imported_by, supplier_price)
@@ -280,6 +287,7 @@ class CustomerCostService:
             latest_history = self.price_repository.get_latest_history_prices_for_product(
                 product_id=row.selected_product_id,
                 only_rating_calc=True,
+                min_price_date=min_price_date,
             )
             for supplier_price in latest_history:
                 if supplier_price.supplier_id in seen_supplier_ids:
@@ -456,12 +464,22 @@ class CustomerCostService:
         self.session.flush()
         return saved_count
 
-    def run_calculation(self, batch_id: str, imported_by: str, manual_prices: list[dict] | None = None) -> dict:
+    def run_calculation(
+        self,
+        batch_id: str,
+        imported_by: str,
+        manual_prices: list[dict] | None = None,
+        supplier_price_age_months: int | None = None,
+    ) -> dict:
         self.validate_new_products_before_save(batch_id, imported_by)
         created_products_count = self.create_products_from_temp(batch_id, imported_by)
         product_articles_count = self.create_or_update_product_articles(batch_id, imported_by)
         manual_prices_count = self.save_manual_supplier_prices(manual_prices)
-        options_count = self.build_supplier_options(batch_id, imported_by)
+        options_count = self.build_supplier_options(
+            batch_id,
+            imported_by,
+            supplier_price_age_months=supplier_price_age_months,
+        )
         self.select_manual_options(batch_id, imported_by, manual_prices)
         return {
             "created_products_count": created_products_count,

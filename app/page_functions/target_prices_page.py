@@ -93,6 +93,10 @@ class TargetPricesPage(QWidget):
         from app.utils.gui_table_actions import install_standard_table_context_menu
         install_standard_table_context_menu(self, self.table)
         self.ui.label_msg.setText("Сообщений нет")
+        if hasattr(self.ui, "spb_SuppPriceAge"):
+            self.ui.spb_SuppPriceAge.setMinimum(0)
+            self.ui.spb_SuppPriceAge.setMaximum(120)
+            self.ui.spb_SuppPriceAge.setValue(6)
         self.ui.line_NewSupplier.setEnabled(False)
         self.ui.line_NewSupplier.setStyleSheet("background-color: #f2f2f2;")
         for widget, tip in [
@@ -129,6 +133,12 @@ class TargetPricesPage(QWidget):
 
     def get_session(self):
         return SessionLocal()
+
+    def get_supplier_price_age_months(self) -> int:
+        widget = getattr(self.ui, "spb_SuppPriceAge", None)
+        if widget is None:
+            return 6
+        return int(widget.value())
 
     def load_initial_state(self):
         self.start_new_batch()
@@ -808,6 +818,7 @@ class TargetPricesPage(QWidget):
             safe_supplier_name = "".join(ch if ch not in r'<>:"/\|?*' else "_" for ch in supplier_name)
             default = f"TargetPriceCalc_{safe_supplier_name}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
             manual_full_costs = self.collect_manual_full_costs_from_table()
+            supplier_price_age_months = self.get_supplier_price_age_months()
             save_path, _ = QFileDialog.getSaveFileName(self, "Сохранить расчет", str(BASE_DIR / default), "Excel files (*.xlsx)")
             if not save_path: return
             batch_id = self.batch_id
@@ -819,7 +830,12 @@ class TargetPricesPage(QWidget):
                     apply_pending_table_deletes_to_db(session, self)
                     service = TargetPriceService(session)
                     exporter = TargetPriceExporter(session)
-                    service.run_calculation(batch_id, imported_by, manual_full_costs=manual_full_costs)
+                    service.run_calculation(
+                        batch_id,
+                        imported_by,
+                        manual_full_costs=manual_full_costs,
+                        supplier_price_age_months=supplier_price_age_months,
+                    )
                     output = exporter.export_calculated(batch_id, imported_by, save_path)
                     session.commit()
                     return output
@@ -828,7 +844,7 @@ class TargetPricesPage(QWidget):
                 self._showing_options = True
                 self.load_table()
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_path)))
-                self.show_message("Файл сохранен")
+                self.show_message("Расчет выполнен")
 
             if not start_excel_export(self, do_export, on_finished=done, on_error=lambda text: self.show_error_message(str(text))):
                 self.show_message("Excel файл уже формируется. Можно продолжать работать в программе.")
@@ -886,7 +902,7 @@ class TargetPricesPage(QWidget):
 
             def done(output_path):
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_path)))
-                self.show_message("Файл сохранен")
+                self.show_message("Target price сохранен")
 
             if not start_excel_export(self, do_export, on_finished=done, on_error=lambda text: self.show_error_message(str(text))):
                 self.show_message("Excel файл уже формируется. Можно продолжать работать в программе.")
@@ -911,7 +927,7 @@ class TargetPricesPage(QWidget):
             with self.get_session() as session:
                 output = TargetPriceExporter(session).export_template(save_path)
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(output)))
-            self.show_message("Файл сохранен")
+            self.show_message("Шаблон сформирован")
         except Exception as e:
             self.show_error_message(str(e))
 

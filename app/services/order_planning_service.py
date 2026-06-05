@@ -18,6 +18,8 @@ from app.utils.text import clean_multi_spaces
 
 
 SALES_DB_URI = "postgresql+psycopg2://postgres:qwerty@localhost:5432/report_db?client_encoding=utf8"
+SALES_BRAND_GROUPS_FOR_ORDER_PLANNING = ("Import", "CNRG", "TEBOIL")
+EXCLUDED_SALES_BRANDS_FOR_ORDER_PLANNING = ("-", "Phoenix Oil", "MEVAG")
 
 
 @dataclass(slots=True)
@@ -90,10 +92,13 @@ class OrderPlanningService:
         cols = ['"Код"', '"Артикул"', '"Продукт_упаковка"', '"Упаковка"', '"Brand"', '"Акциз_да_нет"', '"Группа_бренда"']
         query = (
             f"SELECT {', '.join(cols)} FROM products "
-            "WHERE \"Группа_бренда\" = 'Import' "
-            "AND COALESCE(\"Brand\", '') NOT IN ('-', 'Phoenix Oil', 'MEVAG')"
+            "WHERE \"Группа_бренда\" = ANY(:brand_groups) "
+            "AND COALESCE(\"Brand\", '') <> ALL(:excluded_brands)"
         )
-        params: dict[str, object] = {}
+        params: dict[str, object] = {
+            "brand_groups": list(SALES_BRAND_GROUPS_FOR_ORDER_PLANNING),
+            "excluded_brands": list(EXCLUDED_SALES_BRANDS_FOR_ORDER_PLANNING),
+        }
         if sales_codes:
             query += ' AND "Код" = ANY(:codes)'
             params["codes"] = sales_codes
@@ -317,13 +322,15 @@ class OrderPlanningService:
         sales_df = self._read_sales_data(period_from, period_to)
         product_df = self._read_sales_products()
         if sales_df.empty or product_df.empty:
-            return CalculationResult([], period_from, period_to, 0, 0)
+            # Even when there are no sales rows for the period, keep showing
+            # products with non-zero Free Stock (+ord).
+            return CalculationResult(self.build_display_rows([]), period_from, period_to, 0, 0)
 
         sales_df["Кол_во_л"] = pd.to_numeric(sales_df["Кол_во_л"], errors="coerce").fillna(0)
         merged = sales_df.merge(product_df, on="Код", how="left")
-        merged = merged[merged["Группа_бренда"].fillna("").eq("Import")].copy()
+        merged = merged[merged["Группа_бренда"].fillna("").isin(SALES_BRAND_GROUPS_FOR_ORDER_PLANNING)].copy()
         if merged.empty:
-            return CalculationResult([], period_from, period_to, 0, 0)
+            return CalculationResult(self.build_display_rows([]), period_from, period_to, 0, 0)
 
         grouped = (
             merged.groupby(["Код", "Артикул", "Продукт_упаковка", "Упаковка", "Brand", "Акциз_да_нет"], dropna=False)["Кол_во_л"]
@@ -395,6 +402,37 @@ class OrderPlanningService:
                 grouped[key]["sales_code"] = f"{grouped[key].get('sales_code')}; {row.get('sales_code')}"
 
         product_map = self._product_map()
+
+        # In calculation mode the base rows come from sales. Additionally show
+        # products that currently have any available stock/order balance in
+        # Free Stock (+ord), even if there were no sales during the selected
+        # period. Products that had sales are already present in grouped above
+        # and remain visible even when Free Stock (+ord) is zero.
+        for product_id, product in product_map.items():
+            key = ("product", int(product_id))
+            if key in grouped:
+                continue
+            stock = product.stock if product and product.stock else None
+            stock_qty = self._to_decimal(getattr(stock, "stock_qty", None))
+            transit_qty = self._to_decimal(getattr(stock, "transit_qty", None))
+            order_qty = self._to_decimal(getattr(stock, "order_qty", None))
+            is_order_qty = self._to_decimal(getattr(stock, "is_order_qty", None))
+            free_ord = stock_qty + transit_qty + order_qty + is_order_qty
+            if free_ord == 0:
+                continue
+            grouped[key] = {
+                "sales_code": "",
+                "sales_article": "",
+                "sales_product_name": "",
+                "sales_pack": product.pack,
+                "sales_brand": product.brand or "",
+                "sales_is_excise": getattr(product, "is_excise", None),
+                "product_id": product.id,
+                "product_name": product.name or "",
+                "is_auto_matched": False,
+                "avg_sales_month": Decimal("0"),
+            }
+
         quick_m = self._to_decimal(quick_months)
         safe_m = self._to_decimal(safe_months)
         result: list[dict] = []

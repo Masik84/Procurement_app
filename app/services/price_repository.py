@@ -43,18 +43,44 @@ class PriceRepository:
             return value
         return Decimal(str(value))
 
+    @staticmethod
+    def supplier_price_cutoff_from_months(months: int | None) -> datetime | None:
+        try:
+            months_value = int(months or 0)
+        except (TypeError, ValueError):
+            return None
+
+        if months_value <= 0:
+            return None
+
+        today = datetime.now()
+        year = today.year
+        month = today.month - months_value
+        while month <= 0:
+            month += 12
+            year -= 1
+        return datetime(year, month, 1)
+
     def get_current_supplier_price(self, supplier_id: int, product_id: int) -> Optional[CurrentSupplierPrice]:
         return self.session.query(CurrentSupplierPrice).filter(
             CurrentSupplierPrice.supplier_id == supplier_id,
             CurrentSupplierPrice.product_id == product_id,
         ).first()
 
-    def get_last_price_history_row(self, supplier_id: int, product_id: int) -> Optional[PriceHistory]:
-        return self.session.query(PriceHistory).filter(
+    def get_last_price_history_row(
+        self,
+        supplier_id: int,
+        product_id: int,
+        min_price_date: datetime | None = None,
+    ) -> Optional[PriceHistory]:
+        query = self.session.query(PriceHistory).filter(
             PriceHistory.supplier_id == supplier_id,
             PriceHistory.product_id == product_id,
             PriceHistory.price.isnot(None),
-        ).order_by(PriceHistory.price_date.desc(), PriceHistory.id.desc()).first()
+        )
+        if min_price_date is not None:
+            query = query.filter(PriceHistory.price_date >= min_price_date)
+        return query.order_by(PriceHistory.price_date.desc(), PriceHistory.id.desc()).first()
 
     def get_previous_price_history_row(self, supplier_id: int, product_id: int, last_price_date: datetime) -> Optional[PriceHistory]:
         return self.session.query(PriceHistory).filter(
@@ -64,9 +90,17 @@ class PriceRepository:
             PriceHistory.price_date < last_price_date,
         ).order_by(PriceHistory.price_date.desc(), PriceHistory.id.desc()).first()
 
-    def get_last_supplier_price_snapshot(self, supplier_id: int, product_id: int) -> Optional[SupplierPriceSnapshot]:
+    def get_last_supplier_price_snapshot(
+        self,
+        supplier_id: int,
+        product_id: int,
+        min_price_date: datetime | None = None,
+    ) -> Optional[SupplierPriceSnapshot]:
         current_row = self.get_current_supplier_price(supplier_id=supplier_id, product_id=product_id)
-        if current_row is not None:
+        if current_row is not None and (
+            min_price_date is None
+            or (current_row.last_update is not None and current_row.last_update >= min_price_date)
+        ):
             return SupplierPriceSnapshot(
                 supplier_id=supplier_id,
                 product_id=product_id,
@@ -75,7 +109,11 @@ class PriceRepository:
                 price_date=current_row.last_update,
             )
 
-        history_row = self.get_last_price_history_row(supplier_id=supplier_id, product_id=product_id)
+        history_row = self.get_last_price_history_row(
+            supplier_id=supplier_id,
+            product_id=product_id,
+            min_price_date=min_price_date,
+        )
         if history_row is None:
             return None
 
@@ -104,7 +142,12 @@ class PriceRepository:
             price_date=history_row.price_date,
         )
 
-    def get_suppliers_with_current_prices_for_product(self, product_id: int, only_rating_calc: bool = True) -> list[SupplierPriceWithSupplier]:
+    def get_suppliers_with_current_prices_for_product(
+        self,
+        product_id: int,
+        only_rating_calc: bool = True,
+        min_price_date: datetime | None = None,
+    ) -> list[SupplierPriceWithSupplier]:
         query = self.session.query(CurrentSupplierPrice, Supplier).join(
             Supplier, Supplier.id == CurrentSupplierPrice.supplier_id
         ).filter(
@@ -112,6 +155,9 @@ class PriceRepository:
             CurrentSupplierPrice.price.isnot(None),
             Supplier.name != MANUAL_SUPPLIER_NAME,
         )
+
+        if min_price_date is not None:
+            query = query.filter(CurrentSupplierPrice.last_update >= min_price_date)
 
         if only_rating_calc:
             query = query.filter(Supplier.rating_calc.is_(True))
@@ -136,8 +182,9 @@ class PriceRepository:
         self,
         product_id: int,
         only_rating_calc: bool = True,
+        min_price_date: datetime | None = None,
     ) -> list[SupplierPriceWithSupplier]:
-        max_dates_subq = (
+        max_dates_query = (
             self.session.query(
                 PriceHistory.supplier_id.label("supplier_id"),
                 PriceHistory.product_id.label("product_id"),
@@ -147,6 +194,13 @@ class PriceRepository:
                 PriceHistory.product_id == product_id,
                 PriceHistory.price.isnot(None),
             )
+        )
+
+        if min_price_date is not None:
+            max_dates_query = max_dates_query.filter(PriceHistory.price_date >= min_price_date)
+
+        max_dates_subq = (
+            max_dates_query
             .group_by(
                 PriceHistory.supplier_id,
                 PriceHistory.product_id,
@@ -154,7 +208,7 @@ class PriceRepository:
             .subquery()
         )
 
-        rows = (
+        rows_query = (
             self.session.query(PriceHistory, Supplier)
             .join(
                 max_dates_subq,
@@ -167,6 +221,13 @@ class PriceRepository:
                 PriceHistory.product_id == product_id,
                 PriceHistory.price.isnot(None),
             )
+        )
+
+        if min_price_date is not None:
+            rows_query = rows_query.filter(PriceHistory.price_date >= min_price_date)
+
+        rows = (
+            rows_query
             .order_by(Supplier.name.asc(), PriceHistory.price_date.desc(), PriceHistory.id.desc())
             .all()
         )

@@ -101,7 +101,8 @@ class PriceReportsPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.ui)
 
-        self._product_name_combo = self.ui.cbo_ProductName
+        self._product_name_combo = getattr(self.ui, "cbo_ProductName", None)
+        self._name_search_widget = getattr(self.ui, "line_NameSearch", None)
         self._preview_headers: List[str] = []
         self._preview_rows: List[List[object]] = []
         self._export_headers: List[str] = []
@@ -154,6 +155,11 @@ class PriceReportsPage(QWidget):
 
         self.ui.lst_Brand.itemSelectionChanged.connect(self.on_brand_selection_changed)
         self.ui.lst_ProductFamily.itemSelectionChanged.connect(self.on_family_selection_changed)
+
+        if self._product_name_combo is not None and hasattr(self._product_name_combo, "currentIndexChanged"):
+            self._product_name_combo.currentIndexChanged.connect(self.clear_preview_table)
+        if self._name_search_widget is not None and hasattr(self._name_search_widget, "textChanged"):
+            self._name_search_widget.textChanged.connect(self.clear_preview_table)
 
     def load_initial_data(self):
         self.fill_suppliers()
@@ -237,9 +243,13 @@ class PriceReportsPage(QWidget):
             self.show_error_message(f"Ошибка при получении Product Family: {str(e)}")
 
     def fill_product_name_list(self):
+        combo = self._product_name_combo
+        if combo is None:
+            return
+
         selected_brands = self._get_selected_list_values(self.ui.lst_Brand)
         selected_families = self._get_selected_list_values(self.ui.lst_ProductFamily)
-        current_name = self._product_name_combo.currentText().strip()
+        current_name = combo.currentText().strip()
 
         try:
             with self.get_session() as session:
@@ -250,13 +260,15 @@ class PriceReportsPage(QWidget):
                     products = [p for p in products if (p.family or "") in selected_families]
                 names = sorted({(p.name or "").strip() for p in products if (p.name or "").strip()})
 
-            self._product_name_combo.blockSignals(True)
-            self._product_name_combo.clear()
-            self._product_name_combo.addItem("-")
-            self._product_name_combo.addItems(names)
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem("-")
+            combo.addItems(names)
             if current_name and current_name in names:
-                self._product_name_combo.setCurrentText(current_name)
-            self._product_name_combo.blockSignals(False)
+                combo.setCurrentText(current_name)
+            else:
+                combo.setCurrentText("-")
+            combo.blockSignals(False)
         except Exception as e:
             self.show_error_message(f"Ошибка при получении названий продуктов: {str(e)}")
 
@@ -380,17 +392,43 @@ class PriceReportsPage(QWidget):
         except Exception as e:
             self.show_error_message(f"Ошибка формирования отчета: {str(e)}")
 
+    def _get_name_search_text(self) -> str:
+        widget = self._name_search_widget
+        if widget is None:
+            return ""
+
+        if hasattr(widget, "text"):
+            value = widget.text()
+        elif hasattr(widget, "toPlainText"):
+            value = widget.toPlainText()
+        elif hasattr(widget, "currentText"):
+            value = widget.currentText()
+        else:
+            value = ""
+
+        return " ".join(str(value or "").split())
+
+    def _matches_product_name_search(self, product_name: str, search_text: str) -> bool:
+        normalized_name = " ".join(str(product_name or "").split()).casefold()
+        normalized_search = " ".join(str(search_text or "").split()).casefold()
+        return bool(normalized_search) and normalized_search in normalized_name
+
     def _get_filtered_products(self, session) -> List[Product]:
         products = self._get_available_products(session)
         selected_brands = self._get_selected_list_values(self.ui.lst_Brand)
         selected_families = self._get_selected_list_values(self.ui.lst_ProductFamily)
-        selected_product_name = self._product_name_combo.currentText().strip()
+        selected_product_name = ""
+        if self._product_name_combo is not None:
+            selected_product_name = self._product_name_combo.currentText().strip()
+        name_search = self._get_name_search_text()
 
         if selected_brands:
             products = [p for p in products if (p.brand or "") in selected_brands]
         if selected_families:
             products = [p for p in products if (p.family or "") in selected_families]
-        if selected_product_name and selected_product_name != "-":
+        if name_search:
+            products = [p for p in products if self._matches_product_name_search(p.name or "", name_search)]
+        elif selected_product_name and selected_product_name != "-":
             products = [p for p in products if (p.name or "") == selected_product_name]
 
         return sorted(products, key=lambda p: ((p.brand or ""), (p.family or ""), (p.name or ""), self._pack_sort_key(p.pack)))
@@ -1010,6 +1048,11 @@ class PriceReportsPage(QWidget):
         self.ui.radio_ByProduct.setChecked(True)
         self.ui.cbo_Supplier.setCurrentIndex(0)
         self.ui.cbx_ShowPrevPrice.setChecked(False)
+        if self._name_search_widget is not None:
+            if hasattr(self._name_search_widget, "clear"):
+                self._name_search_widget.clear()
+            elif hasattr(self._name_search_widget, "setText"):
+                self._name_search_widget.setText("")
         self.fill_brand_list()
         self.fill_product_family_list()
         self.fill_product_name_list()

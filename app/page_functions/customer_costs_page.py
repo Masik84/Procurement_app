@@ -136,6 +136,10 @@ class CustomerCostsPage(QWidget):
         install_standard_table_context_menu(self, self.table)
 
         self.ui.label_msg.setText("")
+        if hasattr(self.ui, "spb_SuppPriceAge"):
+            self.ui.spb_SuppPriceAge.setMinimum(0)
+            self.ui.spb_SuppPriceAge.setMaximum(120)
+            self.ui.spb_SuppPriceAge.setValue(6)
         self.ui.line_FindProduct.setToolTip("Часть названия продукта")
         self.ui.line_FindProduct.textChanged.connect(self.refresh_product_combos)
         self.ui.cbo_FindBrand.currentTextChanged.connect(self.refresh_product_combos)
@@ -154,6 +158,12 @@ class CustomerCostsPage(QWidget):
 
     def get_session(self):
         return SessionLocal()
+
+    def get_supplier_price_age_months(self) -> int:
+        widget = getattr(self.ui, "spb_SuppPriceAge", None)
+        if widget is None:
+            return 6
+        return int(widget.value())
 
     def show_message(self, text):
         self.ui.label_msg.setText(text)
@@ -991,6 +1001,7 @@ class CustomerCostsPage(QWidget):
             batch_id = self._batch_id
             imported_by = self._imported_by
             manual_prices = self._collect_manual_prices()
+            supplier_price_age_months = self.get_supplier_price_age_months()
 
             def do_export():
                 with self.get_session() as session:
@@ -998,7 +1009,12 @@ class CustomerCostsPage(QWidget):
                     apply_pending_table_deletes_to_db(session, self)
                     service = CustomerCostService(session)
                     exporter = CustomerCostExporter(session)
-                    service.run_calculation(batch_id, imported_by, manual_prices=manual_prices)
+                    service.run_calculation(
+                        batch_id,
+                        imported_by,
+                        manual_prices=manual_prices,
+                        supplier_price_age_months=supplier_price_age_months,
+                    )
                     output = exporter.export_calculated(batch_id, imported_by, save_path)
                     session.commit()
                     return output
@@ -1026,6 +1042,7 @@ class CustomerCostsPage(QWidget):
             batch_id = self._batch_id
             imported_by = self._imported_by
             manual_prices = self._collect_manual_prices()
+            supplier_price_age_months = self.get_supplier_price_age_months()
 
             def do_export():
                 with self.get_session() as session:
@@ -1033,7 +1050,12 @@ class CustomerCostsPage(QWidget):
                     apply_pending_table_deletes_to_db(session, self)
                     service = CustomerCostService(session)
                     exporter = CustomerCostExporter(session)
-                    service.run_calculation(batch_id, imported_by, manual_prices=manual_prices)
+                    service.run_calculation(
+                        batch_id,
+                        imported_by,
+                        manual_prices=manual_prices,
+                        supplier_price_age_months=supplier_price_age_months,
+                    )
                     service.save_calculations(batch_id, imported_by)
                     output = exporter.export_kam_files(batch_id, imported_by, folder)
                     session.commit()

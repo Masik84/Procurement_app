@@ -187,7 +187,7 @@ QScrollBar::handle:vertical {
             <enum>Qt::LayoutDirection::LeftToRight</enum>
            </property>
            <property name="text">
-            <string>Таргет цены для Поставщиков</string>
+            <string>История расчетов таргет цен для Поставщиков</string>
            </property>
           </widget>
          </item>

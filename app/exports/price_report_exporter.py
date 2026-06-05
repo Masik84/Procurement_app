@@ -65,7 +65,7 @@ class PriceReportExporter:
 
     @classmethod
     def _is_order_plan_export_header(cls, header: object) -> bool:
-        return cls._base_order_header(header) in {"Ср.Продажи мес", "к Быстрому заказу, л", "к Заказу, л"}
+        return cls._base_order_header(header) in {"к Быстрому заказу, л", "к Заказу, л"}
 
     @staticmethod
     def _safe_filename(value: str) -> str:

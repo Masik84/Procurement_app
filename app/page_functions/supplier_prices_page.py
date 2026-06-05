@@ -125,6 +125,10 @@ class SupplierPricesPage(QWidget):
         install_standard_table_context_menu(self, self.table)
 
         self.ui.label_msg.setText("Сообщений нет")
+        if hasattr(self.ui, "spb_SuppPriceAge"):
+            self.ui.spb_SuppPriceAge.setMinimum(0)
+            self.ui.spb_SuppPriceAge.setMaximum(120)
+            self.ui.spb_SuppPriceAge.setValue(6)
         self.ui.line_NewSupplier.setEnabled(False)
         self.ui.line_NewSupplier.setStyleSheet("background-color: #f2f2f2;")
 
@@ -165,6 +169,12 @@ class SupplierPricesPage(QWidget):
 
     def get_session(self):
         return SessionLocal()
+
+    def get_supplier_price_age_months(self) -> int:
+        widget = getattr(self.ui, "spb_SuppPriceAge", None)
+        if widget is None:
+            return 6
+        return int(widget.value())
 
     def load_initial_state(self):
         self.start_new_batch()
@@ -342,6 +352,7 @@ class SupplierPricesPage(QWidget):
         batch_id = self.batch_id
         imported_by = self.imported_by
         source_file_path = self.selected_file_path or None
+        supplier_price_age_months = self.get_supplier_price_age_months()
 
         def do_export():
             with self.get_session() as session:
@@ -354,6 +365,7 @@ class SupplierPricesPage(QWidget):
                     source_file_path=source_file_path,
                     quick_order_months=quick_order_months,
                     safe_stock_months=safe_stock_months,
+                    supplier_price_age_months=supplier_price_age_months,
                 )
 
         started = start_excel_export(

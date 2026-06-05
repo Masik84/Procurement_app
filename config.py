@@ -1,16 +1,35 @@
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 
-BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / ".env")
+def get_base_dir() -> Path:
+    """
+    Обычный запуск:
+        C:/работа/My_Work_Phoenix/Procurement_app
+
+    Запуск exe:
+        C:/работа/My_Work_Phoenix/Procurement_app/dist/ProcurementApp
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+
+    return Path(__file__).resolve().parent
+
+
+BASE_DIR = get_base_dir()
+ENV_PATH = BASE_DIR / ".env"
+
+load_dotenv(ENV_PATH, override=True)
 
 APP_NAME = os.getenv("APP_NAME", "Procurement_app")
 APP_ENV = os.getenv("APP_ENV", "development")
 
-SQLALCHEMY_DATABASE_URI = os.getenv(
-    "SQLALCHEMY_DATABASE_URI",
-    "postgresql+psycopg://postgres:postgres@localhost:5432/procurement_app"
-)
+SQLALCHEMY_DATABASE_URI = os.getenv("SQLALCHEMY_DATABASE_URI")
+
+if not SQLALCHEMY_DATABASE_URI:
+    raise RuntimeError(
+        f"SQLALCHEMY_DATABASE_URI не найден. Проверяемый файл: {ENV_PATH}"
+    )
