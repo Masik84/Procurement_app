@@ -175,6 +175,11 @@ def delete_selected_rows_visual(owner: Any, table: QTableWidget, rows: list[int]
 
     rows = [row for row in rows if 0 <= row < table.rowCount()]
     snapshots = [_snapshot_row(owner, table, row) for row in rows]
+
+    before_hook = getattr(owner, "before_standard_table_rows_deleted", None)
+    if callable(before_hook):
+        before_hook(table, rows, snapshots)
+
     owner._deleted_row_snapshots.extend(snapshots)
 
     new_rows = getattr(owner, "_new_rows", set())
@@ -195,7 +200,12 @@ def delete_selected_rows_visual(owner: Any, table: QTableWidget, rows: list[int]
         if isinstance(row_ids, list) and 0 <= row < len(row_ids):
             row_ids.pop(row)
         table.removeRow(row)
-    _message(owner, DELETE_MESSAGE)
+
+    after_hook = getattr(owner, "after_standard_table_rows_deleted", None)
+    if callable(after_hook):
+        after_hook(table, rows, snapshots)
+
+    _message(owner, getattr(owner, "TABLE_DELETE_MESSAGE", DELETE_MESSAGE))
 
 
 def undo_visual_delete(owner: Any, table: QTableWidget) -> None:
@@ -203,13 +213,20 @@ def undo_visual_delete(owner: Any, table: QTableWidget) -> None:
     if not snapshots:
         _message(owner, "Нет строк для восстановления")
         return
+    restored_snapshots = []
     while snapshots:
         snapshot = snapshots.pop()
+        restored_snapshots.append(snapshot)
         key = snapshot.get("key")
         pending_deletes = getattr(owner, "_pending_deletes", None)
         if isinstance(pending_deletes, set) and key in pending_deletes:
             pending_deletes.discard(key)
         _restore_snapshot(owner, table, snapshot)
+
+    after_hook = getattr(owner, "after_standard_table_rows_restored", None)
+    if callable(after_hook):
+        after_hook(table, restored_snapshots)
+
     _message(owner, "Удаление строк отменено")
 
 

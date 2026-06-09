@@ -182,17 +182,17 @@ class CustomerCostExporter:
         self._set_number_format_safe(ws.Columns("G:H"), '#,##0;[Red]-#,##0;"-"')
         self._set_number_format_safe(ws.Columns("L:L"), '# ##0 ₽')
 
-        ws.Columns("A:A").ColumnWidth = 9.14
+        ws.Columns("A:A").ColumnWidth = 8.00
         ws.Columns("B:B").ColumnWidth = 13.00
-        ws.Columns("C:C").ColumnWidth = 19.43
+        ws.Columns("C:C").ColumnWidth = 13.00
         ws.Columns("D:D").ColumnWidth = 12.57
         ws.Columns("E:E").ColumnWidth = 35.00
-        ws.Columns("F:F").ColumnWidth = 9.14
-        ws.Columns("G:G").ColumnWidth = 9.14
-        ws.Columns("H:H").ColumnWidth = 13.00
-        ws.Columns("I:I").ColumnWidth = 9.14
-        ws.Columns("J:J").ColumnWidth = 13.00
-        ws.Columns("K:K").ColumnWidth = 13.00
+        ws.Columns("F:F").ColumnWidth = 7.29
+        ws.Columns("G:G").ColumnWidth = 7.29
+        ws.Columns("H:H").ColumnWidth = 7.29
+        ws.Columns("I:I").ColumnWidth = 12.00
+        ws.Columns("J:J").ColumnWidth = 10.00
+        ws.Columns("K:K").ColumnWidth = 10.00
         ws.Columns("L:L").ColumnWidth = 10.86
         ws.Columns("M:M").ColumnWidth = 16.71
         ws.Columns("N:N").ColumnWidth = 7.86

@@ -53,6 +53,7 @@ def load_ui(ui_path: Path):
 
 class OrderPlanningPage(QWidget):
     COL_PRODUCT = 0
+    TABLE_DELETE_MESSAGE = "Строки удалены из текущей таблицы. Для фиксации результата нажми «Сохранить»."
 
     CALC_COLUMNS = [
         "product_name",
@@ -164,6 +165,9 @@ class OrderPlanningPage(QWidget):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectItems)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+
+        from app.utils.gui_table_actions import install_standard_table_context_menu
+        install_standard_table_context_menu(self, self.table)
 
         self.ui.date_SalesFrom.setCalendarPopup(True)
         self.ui.date_SalesTo.setCalendarPopup(True)
@@ -431,6 +435,64 @@ class OrderPlanningPage(QWidget):
         std_total = sum(self._to_decimal(row.get("std_order_l")) for row in self._rows)
         self.ui.lbl_QuickVolResult.setText(self._format_decimal(quick_total, 0))
         self.ui.lbl_StandVolResult.setText(self._format_decimal(std_total, 0))
+
+    # ------------------------------------------------------------------
+    # Standard table context menu integration
+    # ------------------------------------------------------------------
+    def before_standard_table_rows_deleted(self, table, table_rows: list[int], snapshots: list[dict]):
+        """Keep Order Planning source rows in sync with the generic visual delete.
+
+        The shared context-menu helper removes rows from QTableWidget only. This
+        page saves/exports data from self._rows, so deleted rows must be removed
+        from the backing list too. The original row dict is stored in the helper
+        snapshot to make Undo restore the data, not just the visual cells.
+        """
+        if table is not self.table:
+            return
+
+        source_rows: list[int] = []
+        for table_row, snapshot in zip(table_rows, snapshots):
+            source_row = self._row_index_from_table_row(table_row)
+            if source_row is None or source_row < 0 or source_row >= len(self._rows):
+                continue
+            snapshot["_order_source_row"] = source_row
+            snapshot["_order_row_data"] = dict(self._rows[source_row])
+            source_rows.append(source_row)
+
+        for source_row in sorted(set(source_rows), reverse=True):
+            if 0 <= source_row < len(self._rows):
+                self._rows.pop(source_row)
+
+    def after_standard_table_rows_deleted(self, table, table_rows: list[int], snapshots: list[dict]):
+        if table is not self.table:
+            return
+        self._refresh_after_context_rows_changed()
+
+    def after_standard_table_rows_restored(self, table, snapshots: list[dict]):
+        if table is not self.table:
+            return
+
+        rows_to_restore = []
+        for snapshot in snapshots:
+            row_data = snapshot.get("_order_row_data")
+            source_row = snapshot.get("_order_source_row")
+            if row_data is None or source_row is None:
+                continue
+            try:
+                source_row = int(source_row)
+            except (TypeError, ValueError):
+                source_row = len(self._rows)
+            rows_to_restore.append((source_row, dict(row_data)))
+
+        for source_row, row_data in sorted(rows_to_restore, key=lambda item: item[0]):
+            self._rows.insert(min(max(source_row, 0), len(self._rows)), row_data)
+
+        self._refresh_after_context_rows_changed()
+
+    def _refresh_after_context_rows_changed(self):
+        if self._mode in {"calc", "search"}:
+            self._base_rows = [dict(row) for row in self._rows]
+        self.display_rows(self._rows, self._mode)
 
     def recalculate_current_rows(self):
         if self._mode not in {"calc", "search"} or not self._base_rows:
