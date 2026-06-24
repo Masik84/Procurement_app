@@ -5,6 +5,8 @@ from pathlib import Path
 import pythoncom
 import win32com.client as win32
 
+from app.exports.excel_column_format import apply_standard_worksheet_format, excel_value_by_header
+
 
 class ProductSearchExporter:
     def __init__(self):
@@ -29,6 +31,24 @@ class ProductSearchExporter:
         excel.Visible = False
         excel.DisplayAlerts = False
         return excel
+
+    def _normalize_save_path(self, file_path: str) -> Path:
+        path = Path(file_path).expanduser()
+        if path.suffix.lower() != ".xlsx":
+            path = path.with_suffix(".xlsx")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        target_path = path.resolve()
+
+        if target_path.exists():
+            try:
+                target_path.unlink()
+            except PermissionError:
+                raise PermissionError(
+                    f"Не удается перезаписать файл:\n{target_path}\n\n"
+                    "Скорее всего, он открыт в Excel. Закрой файл и попробуй снова."
+                )
+
+        return target_path
 
     def _apply_base_style(self, ws, headers_count: int, apply_filter: bool = True):
         ws.Cells.Font.Name = "Aptos Narrow"
@@ -102,6 +122,8 @@ class ProductSearchExporter:
         wb = None
 
         try:
+            target_path = self._normalize_save_path(file_path)
+
             excel = self._create_excel_app()
             wb = excel.Workbooks.Add()
             ws = wb.Worksheets(1)
@@ -119,25 +141,25 @@ class ProductSearchExporter:
             for col_index, header in enumerate(headers, start=1):
                 ws.Cells(1, col_index).Value = header
 
-            row_num = 2
-            for row in rows:
-                ws.Cells(row_num, 1).Value = self._safe_value(row.get("source_article"))
-                ws.Cells(row_num, 2).Value = self._safe_value(row.get("source_product_name"))
-                ws.Cells(row_num, 3).Value = self._safe_value(row.get("product_name"))
-                ws.Cells(row_num, 4).Value = self._safe_value(row.get("brand"))
-                ws.Cells(row_num, 5).Value = self._safe_value(row.get("pack"))
-                ws.Cells(row_num, 6).Value = self._safe_value(row.get("is_excise"))
-                row_num += 1
+            for row_num, row in enumerate(rows, start=2):
+                values_by_header = {
+                    "Article": row.get("source_article"),
+                    "Supplier Product Name": row.get("source_product_name"),
+                    "Product name": row.get("product_name"),
+                    "Brand": row.get("brand"),
+                    "Pack": row.get("pack"),
+                    "Excise duty": row.get("is_excise"),
+                }
+                for col_index, header in enumerate(headers, start=1):
+                    ws.Cells(row_num, col_index).Value = excel_value_by_header(
+                        header,
+                        self._safe_value(values_by_header.get(header)),
+                    )
 
-            self._apply_base_style(ws, len(headers), apply_filter=True)
+            apply_standard_worksheet_format(ws, headers, freeze_cell="C2", zoom=85)
 
-            ws.Columns("A:A").NumberFormat = "@"
-            ws.Columns("A:A").ColumnWidth = 18
-            ws.Columns("B:D").ColumnWidth = 30
-            ws.Columns("E:E").ColumnWidth = 12
-            ws.Columns("F:F").ColumnWidth = 14
-
-            wb.SaveAs(str(Path(file_path).resolve()))
+            wb.SaveAs(str(target_path))
+            return target_path
 
         except PermissionError:
             raise

@@ -43,9 +43,17 @@ BOOL_HEADERS = {
     "Excise duty",
 }
 
+INTEGER_NUMERIC_HEADERS = {
+    "FX rate",
+    "FX rate (donor)",
+    "FX rate Best1",
+    "FX rate Best2",
+}
+
 NUMERIC_HEADERS = {
     "Qty, pcs",
     "Volume, L",
+    "Volume to take",
     "Supplier Price, L",
     "Price, L",
     "Price, pack",
@@ -58,6 +66,7 @@ NUMERIC_HEADERS = {
     "Supplier Price, L (donor)",
     "Cost Novo with VAT",
     "Full Cost Msk",
+    "uC3",
     "FX markup",
     "Transport",
     "Re-export",
@@ -73,6 +82,8 @@ NUMERIC_HEADERS = {
     "Money",
     "Дистр цена",
     "Промо цена",
+    "Best full Price, L 2",
+    "Best full Price, L",
     "curr LPC",
     "curr Landed cost",
     "Ср.Продажи мес",
@@ -94,14 +105,22 @@ NUMERIC_HEADERS = {
 }
 
 TEXT_LEFT_HEADERS = {
+    "Article",
+    "Product name",
+    "Product name (variant)",
     "Менеджер",
     "Клиент",
     "Customer Product Name",
     "Our Product Name",
+    "Supplier Product Name",
     "Supplier",
+    "Best Suppl 2",
+    "Best Suppl",
     "Supplier (donor)",
     "Supplier Article",
     "Currency",
+    "Currency Best2",
+    "Currency Best1",
     "Currency (donor)",
     "Comments",
     "Brand",
@@ -117,6 +136,7 @@ HEADER_WIDTHS = {
     "Pack": 8.43,
     "Qty, pcs": 10.0,
     "Volume, L": 10.0,
+    "Volume to take": 10.0,
     "Supplier": 16.14,
     "Supplier Article": 14.0,
     "Supplier Price, L": 10.0,
@@ -124,6 +144,7 @@ HEADER_WIDTHS = {
     "FX rate": 7.29,
     "Cost Novo with VAT": 12.0,
     "Full Cost Msk": 12.0,
+    "uC3": 12.0,
     "FX markup": 10.0,
     "Transport": 10.0,
     "Re-export": 10.0,
@@ -151,6 +172,9 @@ HEADER_WIDTHS = {
     "Money": 10.0,
     "Comments": 30.0,
     "Product Name": 31.14,
+    "Product name": 31.14,
+    "Product name (variant)": 31.14,
+    "Article": 18.0,
     "Ср.Продажи мес": 10.50,
     "Safe Stock (st), mnth": 10.50,
     "Safe Stock (st+tr), mnth": 10.50,
@@ -160,6 +184,14 @@ HEADER_WIDTHS = {
     "к Заказу, шт": 8.43,
     "к Заказу, л": 8.43,
     "Дистр цена": 8.43,
+    "Best Suppl": 16.14,
+    "Best Suppl 2": 16.14,
+    "Best full Price, L": 12.0,
+    "Best full Price, L 2": 12.0,
+    "FX rate Best1": 7.29,
+    "FX rate Best2": 7.29,
+    "Currency Best1": 8.14,
+    "Currency Best2": 8.14,
     "Промо цена": 8.43,
     "Stock": 8.43,
     "Transit": 8.43,
@@ -185,6 +217,7 @@ NUMBER_FORMATS_LOCAL = {
     "FX rate (donor)": "# ##0,0###",
     "Qty, pcs": "# ##0,00##;[Red]-# ##0,00##;0",
     "Volume, L": "# ##0,00##;[Red]-# ##0,00##;0",
+    "Volume to take": "# ##0,00##;[Red]-# ##0,00##;0",
     "Ср.Продажи мес": "# ##0,00",
     "Safe Stock (st), mnth": "# ##0,00",
     "Safe Stock (st+tr), mnth": "# ##0,00",
@@ -195,6 +228,15 @@ NUMBER_FORMATS_LOCAL = {
     "к Заказу, л": '# ##0;[Red]-# ##0;"-"',
     "Дистр цена": "# ##0 ₽",
     "Промо цена": "# ##0 ₽",
+    "Cost Novo with VAT": '# ##0 ₽;[Red]-# ##0 ₽;"-"',
+    "Full Cost Msk": '# ##0 ₽;[Red]-# ##0 ₽;"-"',
+    "uC3": '# ##0 ₽;[Red]-# ##0 ₽;"-"',
+    "curr LPC": '# ##0 ₽;[Red]-# ##0 ₽;"-"',
+    "curr Landed cost": '# ##0 ₽;[Red]-# ##0 ₽;"-"',
+    "Best full Price, L": '# ##0 ₽;[Red]-# ##0 ₽;"-"',
+    "Best full Price, L 2": '# ##0 ₽;[Red]-# ##0 ₽;"-"',
+    "FX rate Best1": "# ##0",
+    "FX rate Best2": "# ##0",
     "Stock": '# ##0;[Red]-# ##0;"-"',
     "Transit": '# ##0;[Red]-# ##0;"-"',
     "Purchase Order": '# ##0;[Red]-# ##0;"-"',
@@ -220,12 +262,26 @@ HEADER_FILL_COLORS = {
     "Target Price, pack": rgb(0, 176, 240),
     "Cost Novo with VAT": rgb(0, 176, 240),
     "Full Cost Msk": rgb(0, 176, 240),
+    "uC3": rgb(0, 176, 240),
+    "Volume to take": rgb(205, 205, 205),
     "к Быстрому Заказу, шт": rgb(33, 92, 152),
     "к Быстрому Заказу, л": rgb(33, 92, 152),
     "к Заказу, шт": rgb(33, 92, 152),
     "к Заказу, л": rgb(33, 92, 152),
     "Дистр цена": rgb(192, 0, 0),
     "Промо цена": rgb(192, 0, 0),
+    "curr LPC": rgb(192, 0, 0),
+    "curr Landed cost": rgb(192, 0, 0),
+    "Best Suppl": rgb(0, 176, 240),
+    "Best full Price, L": rgb(0, 176, 240),
+    "last update Best1": rgb(0, 176, 240),
+    "FX rate Best1": rgb(0, 176, 240),
+    "Currency Best1": rgb(0, 176, 240),
+    "Best Suppl 2": rgb(146, 208, 80),
+    "Best full Price, L 2": rgb(146, 208, 80),
+    "last update Best2": rgb(146, 208, 80),
+    "FX rate Best2": rgb(146, 208, 80),
+    "Currency Best2": rgb(146, 208, 80),
     "Stock": rgb(33, 92, 152),
     "Transit": rgb(33, 92, 152),
     "Purchase Order": rgb(33, 92, 152),
@@ -246,6 +302,8 @@ HEADER_FONT_COLORS = {
     "к Заказу, л": rgb(255, 255, 255),
     "Дистр цена": rgb(255, 255, 255),
     "Промо цена": rgb(255, 255, 255),
+    "curr LPC": rgb(255, 255, 255),
+    "curr Landed cost": rgb(255, 255, 255),
     "Stock": rgb(255, 255, 255),
     "Transit": rgb(255, 255, 255),
     "Purchase Order": rgb(255, 255, 255),
@@ -428,3 +486,84 @@ def apply_standard_worksheet_format(ws: Any, headers: list[str], *, freeze_cell:
         app.ActiveWindow.FreezePanes = True
     except Exception:
         pass
+
+
+
+def _paint_header_range(
+    ws: Any,
+    headers: list[str],
+    first_header: str,
+    last_header: str,
+    fill_color: int,
+    font_color: int | None = None,
+) -> None:
+    header_map = {str(header): idx + 1 for idx, header in enumerate(headers)}
+    first_col = header_map.get(first_header)
+    last_col = header_map.get(last_header)
+    if not first_col or not last_col:
+        return
+
+    c1 = excel_column_letter(first_col)
+    c2 = excel_column_letter(last_col)
+    rng = ws.Range(f"{c1}1:{c2}1")
+    rng.Interior.Color = fill_color
+    if font_color is None:
+        try:
+            rng.Font.ColorIndex = -4105  # Automatic
+        except Exception:
+            rng.Font.Color = DEFAULT_HEADER_FONT
+    else:
+        rng.Font.Color = font_color
+
+
+def _format_header_column(ws: Any, headers: list[str], header: str, *, number_format: str | None = None, width: float | None = None) -> None:
+    if header not in headers:
+        return
+    letter = excel_column_letter(headers.index(header) + 1)
+    if number_format:
+        set_number_format_safe(ws.Columns(f"{letter}:{letter}"), number_format)
+    if width is not None:
+        ws.Columns(f"{letter}:{letter}").ColumnWidth = width
+
+
+def apply_target_price_calculated_worksheet_format(ws: Any, headers: list[str], *, freeze_cell: str = "D2", zoom: int = 85) -> None:
+    """Apply shared visual rules for Target Prices / Calculated export.
+
+    Layout:
+    - base product columns are gray;
+    - current stock price columns are red with white font;
+    - each calculated supplier option has a blue cost block and a green supplier/date/currency block.
+    """
+    apply_standard_worksheet_format(ws, headers, freeze_cell=freeze_cell, zoom=zoom)
+
+    red = rgb(192, 0, 0)
+    white = rgb(255, 255, 255)
+    blue = rgb(0, 176, 240)
+    green = rgb(146, 208, 80)
+
+    _paint_header_range(ws, headers, "Supplier Article", "Our Product Name", DEFAULT_HEADER_FILL)
+    _paint_header_range(ws, headers, "Дистр цена", "curr Landed cost", red, white)
+
+    option_idx = 1
+    while f"Cost Novo with VAT_{option_idx}" in headers:
+        _paint_header_range(
+            ws,
+            headers,
+            f"Cost Novo with VAT_{option_idx}",
+            f"Full Cost Msk_{option_idx}",
+            blue,
+        )
+        _paint_header_range(
+            ws,
+            headers,
+            f"Supplier_{option_idx}",
+            f"Currency_{option_idx}",
+            green,
+        )
+
+        _format_header_column(ws, headers, f"Cost Novo with VAT_{option_idx}", number_format="# ##0 ₽;[Red]-# ##0 ₽;\"-\"", width=9.0)
+        _format_header_column(ws, headers, f"Full Cost Msk_{option_idx}", number_format="# ##0 ₽;[Red]-# ##0 ₽;\"-\"", width=9.0)
+        _format_header_column(ws, headers, f"Supplier_{option_idx}", number_format="@", width=16.14)
+        _format_header_column(ws, headers, f"last update_{option_idx}", number_format="ДД.ММ.ГГ;@", width=9.43)
+        _format_header_column(ws, headers, f"Currency_{option_idx}", number_format="@", width=8.14)
+        option_idx += 1

@@ -127,6 +127,8 @@ class ProductSearchPage(QWidget):
         self.ui.btn_AddLine.clicked.connect(self.add_line)
         self.ui.btn_Save.clicked.connect(self.apply_pending_changes)
         self.ui.btn_Reset.clicked.connect(self.reset_form)
+        if hasattr(self.ui, "btn_SaveExcel"):
+            self.ui.btn_SaveExcel.clicked.connect(self.save_excel)
 
         self.ui.cbo_FindBrand.currentTextChanged.connect(self.refresh_current_product_combo)
         self.ui.line_FindProduct.textChanged.connect(self.refresh_current_product_combo)
@@ -651,6 +653,116 @@ class ProductSearchPage(QWidget):
                     }
                 )
             return data
+
+
+    def _save_pending_temp_changes(self):
+        self._commit_open_editors()
+
+        if not self._pending_changes and not self._pending_deletes:
+            return
+
+        with self.get_session() as session:
+            for row_id, changes in self._pending_changes.items():
+                row = (
+                    session.query(TempProductSearchImport)
+                    .filter(TempProductSearchImport.id == row_id)
+                    .first()
+                )
+                if row is None:
+                    continue
+
+                for key, value in changes.items():
+                    if key == "new_pack":
+                        parsed = parse_loose_number(value)
+                        setattr(row, key, parsed if parsed is not None else None)
+                    else:
+                        setattr(row, key, value)
+
+                has_new_product_data = any([
+                    bool(clean_multi_spaces(row.new_product_name)),
+                    bool(clean_multi_spaces(row.new_brand)),
+                    row.new_pack is not None,
+                ])
+                if row.selected_product_id is None and has_new_product_data and row.new_is_excise is None:
+                    row.new_is_excise = False
+
+                if row.selected_product_id is not None:
+                    row.new_product_name = None
+                    row.new_brand = None
+                    row.new_pack = None
+                    row.new_is_excise = None
+
+            session.flush()
+
+            if self._pending_deletes:
+                session.query(TempProductSearchImport).filter(
+                    TempProductSearchImport.id.in_(self._pending_deletes)
+                ).delete(synchronize_session=False)
+
+            session.commit()
+
+        self._pending_changes.clear()
+        self._pending_deletes.clear()
+        self.load_table_rows()
+
+    def save_excel(self):
+        try:
+            if self.table.rowCount() == 0:
+                self.show_message("Нет данных для выгрузки")
+                return
+
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Сохранить Excel",
+                str(BASE_DIR / f"ProductSearch_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"),
+                "Excel files (*.xlsx)",
+            )
+            if not file_path:
+                return
+
+            if not file_path.lower().endswith(".xlsx"):
+                file_path += ".xlsx"
+
+            self._save_pending_temp_changes()
+            rows = self._build_export_rows()
+            if not rows:
+                self.show_message("Нет данных для выгрузки")
+                return
+
+            def do_export():
+                exporter = ProductSearchExporter()
+                return exporter.export_result(file_path, rows)
+
+            def done(output_path):
+                QDesktopServices.openUrl(Path(output_path).as_uri())
+                self.show_message("Excel файл сохранен")
+
+            def error(text):
+                if "Permission" in str(text) or "перезаписать файл" in str(text):
+                    self.show_popup_error(
+                        "Не удалось сохранить файл.\n\n"
+                        "Скорее всего, файл уже открыт в Excel.\n"
+                        "Закрой файл и попробуй снова."
+                    )
+                else:
+                    self.show_popup_error(f"Ошибка при сохранении файла: {text}")
+
+            button = getattr(self.ui, "btn_SaveExcel", None)
+            ok = start_excel_export(
+                self,
+                do_export,
+                on_finished=done,
+                on_error=error,
+                button=button,
+                busy_text="Формируется...",
+            )
+            if ok:
+                self.show_message("Excel файл формируется в фоновом режиме. Можно продолжать работать в программе.")
+            else:
+                self.show_message("Excel файл уже формируется. Можно продолжать работать в программе.")
+
+        except Exception as e:
+            self.show_error_message(str(e))
 
 
     def _commit_open_editors(self):

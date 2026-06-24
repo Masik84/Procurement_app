@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>1332</width>
-    <height>783</height>
+    <height>784</height>
    </rect>
   </property>
   <property name="minimumSize">
@@ -205,6 +205,45 @@ QScrollBar::handle:vertical {
           </spacer>
          </item>
          <item>
+          <widget class="QLabel" name="label_7">
+           <property name="text">
+            <string>Поиск</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLineEdit" name="line_FindProduct">
+           <property name="minimumSize">
+            <size>
+             <width>200</width>
+             <height>25</height>
+            </size>
+           </property>
+           <property name="maximumSize">
+            <size>
+             <width>200</width>
+             <height>25</height>
+            </size>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="horizontalSpacer_2">
+           <property name="orientation">
+            <enum>Qt::Orientation::Horizontal</enum>
+           </property>
+           <property name="sizeType">
+            <enum>QSizePolicy::Policy::Fixed</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+         <item>
           <widget class="QLabel" name="label_6">
            <property name="minimumSize">
             <size>
@@ -218,7 +257,7 @@ QScrollBar::handle:vertical {
           </widget>
          </item>
          <item>
-          <widget class="QComboBox" name="comboBox">
+          <widget class="QComboBox" name="cbo_FindBrand">
            <property name="minimumSize">
             <size>
              <width>180</width>

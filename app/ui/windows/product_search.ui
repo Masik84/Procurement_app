@@ -790,6 +790,65 @@ QScrollBar::handle:vertical {
                     </property>
                    </widget>
                   </item>
+                  <item>
+                   <widget class="QFrame" name="frame_5">
+                    <property name="minimumSize">
+                     <size>
+                      <width>180</width>
+                      <height>30</height>
+                     </size>
+                    </property>
+                    <property name="maximumSize">
+                     <size>
+                      <width>180</width>
+                      <height>30</height>
+                     </size>
+                    </property>
+                    <property name="frameShadow">
+                     <enum>QFrame::Shadow::Raised</enum>
+                    </property>
+                    <layout class="QHBoxLayout" name="horizontalLayout_6">
+                     <property name="spacing">
+                      <number>0</number>
+                     </property>
+                     <property name="leftMargin">
+                      <number>0</number>
+                     </property>
+                     <property name="topMargin">
+                      <number>0</number>
+                     </property>
+                     <property name="rightMargin">
+                      <number>0</number>
+                     </property>
+                     <property name="bottomMargin">
+                      <number>0</number>
+                     </property>
+                     <item>
+                      <widget class="QPushButton" name="btn_SaveExcel">
+                       <property name="minimumSize">
+                        <size>
+                         <width>160</width>
+                         <height>30</height>
+                        </size>
+                       </property>
+                       <property name="maximumSize">
+                        <size>
+                         <width>160</width>
+                         <height>30</height>
+                        </size>
+                       </property>
+                       <property name="text">
+                        <string>Сохранить в Excel</string>
+                       </property>
+                       <property name="icon">
+                        <iconset resource="../resource.qrc">
+                         <normaloff>:/icon/icon/download — копия — копия.svg</normaloff>:/icon/icon/download — копия — копия.svg</iconset>
+                       </property>
+                      </widget>
+                     </item>
+                    </layout>
+                   </widget>
+                  </item>
                  </layout>
                 </widget>
                </item>

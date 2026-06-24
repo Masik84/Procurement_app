@@ -81,8 +81,13 @@ class ProductArticlesPage(QWidget):
 
         self.ui.line_Brand.currentTextChanged.connect(self.fill_in_prod_fam_list)
         self.ui.line_Prod_Fam.currentTextChanged.connect(self.fill_in_prod_name_list)
-        if hasattr(self.ui, "cbo_FilterBrand"):
-            self.ui.cbo_FilterBrand.currentTextChanged.connect(self.fill_in_prod_name_list)
+        if hasattr(self.ui, "cbo_FindBrand"):
+            self.ui.cbo_FindBrand.currentTextChanged.connect(self.fill_in_prod_name_list)
+            self.ui.cbo_FindBrand.currentTextChanged.connect(self.refresh_current_product_combo)
+        if hasattr(self.ui, "line_FindProduct"):
+            self.ui.line_FindProduct.setToolTip("Фильтр по названию продукта из базы")
+            self.ui.line_FindProduct.textChanged.connect(self.fill_in_prod_name_list)
+            self.ui.line_FindProduct.textChanged.connect(self.refresh_current_product_combo)
 
         self.ui.btn_Search.clicked.connect(self.find_product_articles)
         self.ui.btn_AddLine.clicked.connect(self.add_line)
@@ -179,6 +184,7 @@ class ProductArticlesPage(QWidget):
 
         combo.setProperty("edit_row", row)
         combo.setProperty("edit_row_id", row_id)
+        combo.setProperty("combo_role", "product_combo")
 
         combo.activated.connect(lambda *_, c=combo: self.finish_product_edit_from_combo(c))
 
@@ -217,10 +223,14 @@ class ProductArticlesPage(QWidget):
 
     def _get_product_name_values(self):
         filter_brand = self._get_product_name_filter_brand()
+        filter_text = self._get_product_name_filter_text()
+
         with self.get_session() as session:
             query = session.query(Product).filter(Product.name.isnot(None), Product.name != "")
             if filter_brand:
                 query = query.filter(Product.brand == filter_brand)
+            if filter_text:
+                query = query.filter(Product.name.ilike(f"%{filter_text}%"))
             products = query.all()
 
         products.sort(
@@ -232,6 +242,45 @@ class ProductArticlesPage(QWidget):
         )
 
         return [row.name for row in products if row.name]
+
+    def _get_product_name_filter_text(self) -> str:
+        widget = getattr(self.ui, "line_FindProduct", None)
+        if widget is None:
+            return ""
+        return self.clean_multi_spaces(widget.text())
+
+    def refresh_current_product_combo(self):
+        row = self.table.currentRow()
+        if row < 0:
+            return
+
+        product_col = 1
+        combo = self.table.cellWidget(row, product_col)
+        if not isinstance(combo, QComboBox):
+            return
+
+        if combo.property("combo_role") != "product_combo":
+            return
+
+        current_text = self.clean_multi_spaces(combo.currentText())
+        product_names = self._get_product_name_values()
+
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItem("")
+        combo.addItems(product_names)
+
+        if current_text:
+            index = combo.findText(current_text)
+            if index >= 0:
+                combo.setCurrentIndex(index)
+            else:
+                combo.addItem(current_text)
+                combo.setCurrentIndex(combo.count() - 1)
+        else:
+            combo.setCurrentIndex(0)
+
+        combo.blockSignals(False)
 
     def clean_multi_spaces(self, text: str) -> str:
         return " ".join((text or "").split())
@@ -413,7 +462,7 @@ class ProductArticlesPage(QWidget):
         self.fill_in_prod_name_list()
 
     def fill_filter_brand_list(self):
-        widget = getattr(self.ui, "cbo_FilterBrand", None)
+        widget = getattr(self.ui, "cbo_FindBrand", None)
         if widget is None:
             return
 
@@ -439,7 +488,7 @@ class ProductArticlesPage(QWidget):
             self.show_error_message(f"Ошибка при получении брендов для фильтра продуктов: {str(e)}")
 
     def _get_product_name_filter_brand(self) -> str:
-        widget = getattr(self.ui, "cbo_FilterBrand", None)
+        widget = getattr(self.ui, "cbo_FindBrand", None)
         if widget is None:
             return ""
         value = self.clean_multi_spaces(widget.currentText())
@@ -492,6 +541,7 @@ class ProductArticlesPage(QWidget):
         brand = self.ui.line_Brand.currentText()
         family = self.ui.line_Prod_Fam.currentText()
         filter_brand = self._get_product_name_filter_brand()
+        filter_text = self._get_product_name_filter_text()
 
         try:
             with self.get_session() as session:
@@ -503,6 +553,8 @@ class ProductArticlesPage(QWidget):
                     query = query.filter(Product.brand == brand)
                 if family != "-":
                     query = query.filter(Product.family == family)
+                if filter_text:
+                    query = query.filter(Product.name.ilike(f"%{filter_text}%"))
 
                 products = query.all()
 
@@ -621,15 +673,27 @@ class ProductArticlesPage(QWidget):
         return None
 
     def _get_name_search_text(self) -> str:
-        widget = self._get_search_line_edit("name")
+        widget = getattr(self.ui, "line_NameSearch", None)
+        if widget is None:
+            widget = self._get_search_line_edit("name")
         return self.clean_multi_spaces(widget.text()) if widget is not None else ""
 
     def _get_article_search_text(self) -> str:
-        widget = self._get_search_line_edit("article")
+        widget = getattr(self.ui, "line_ArticleSearch", None)
+        if widget is None:
+            widget = self._get_search_line_edit("article")
         return self.clean_multi_spaces(widget.text()) if widget is not None else ""
 
     def _clear_search_fields(self):
-        for widget in (self._get_search_line_edit("name"), self._get_search_line_edit("article")):
+        widgets = [
+            getattr(self.ui, "line_NameSearch", None),
+            getattr(self.ui, "line_ArticleSearch", None),
+        ]
+        if widgets[0] is None:
+            widgets[0] = self._get_search_line_edit("name")
+        if widgets[1] is None:
+            widgets[1] = self._get_search_line_edit("article")
+        for widget in widgets:
             if widget is not None:
                 widget.clear()
 
@@ -1093,9 +1157,11 @@ class ProductArticlesPage(QWidget):
 
             self._clear_search_fields()
             self.refresh_all_comboboxes()
-            if hasattr(self.ui, "cbo_FilterBrand"):
-                self.ui.cbo_FilterBrand.setCurrentText("-")
-                self.fill_in_prod_name_list()
+            if hasattr(self.ui, "cbo_FindBrand"):
+                self.ui.cbo_FindBrand.setCurrentText("-")
+            if hasattr(self.ui, "line_FindProduct"):
+                self.ui.line_FindProduct.clear()
+            self.fill_in_prod_name_list()
             self.table.clearContents()
             self.table.setRowCount(0)
             self.show_message("Форма очищена")

@@ -125,6 +125,46 @@ class SupplierPriceExporter:
         ws.Columns(f"{col}:{col}").NumberFormatLocal = "# ##0"
         ws.Columns(f"{col}:{col}").ColumnWidth = 7.29
 
+    def _fixed_vat_formula_literal(self) -> str:
+        """Return FixedCosts.vat as an Excel formula numeric literal."""
+        fixed = self.cost_calculation.get_fixed_costs()
+        vat = self._to_decimal(fixed.vat)
+        return format(vat.normalize(), "f") if vat else "0"
+
+    @staticmethod
+    def _r1c1_ref(offset: int) -> str:
+        return "RC" if offset == 0 else f"RC[{offset}]"
+
+    def _write_uc3_formulas(self, ws, headers: list[str], first_row: int, last_row: int) -> None:
+        if last_row < first_row:
+            return
+        required_headers = ["uC3", "Full Cost Msk", "Дистр цена", "Промо цена"]
+        if any(header not in headers for header in required_headers):
+            return
+
+        vat_literal = self._fixed_vat_formula_literal()
+        uc3_idx = headers.index("uC3") + 1
+        full_cost_idx = headers.index("Full Cost Msk") + 1
+        distr_idx = headers.index("Дистр цена") + 1
+        promo_idx = headers.index("Промо цена") + 1
+
+        full_cost_ref = self._r1c1_ref(full_cost_idx - uc3_idx)
+        distr_ref = self._r1c1_ref(distr_idx - uc3_idx)
+        promo_ref = self._r1c1_ref(promo_idx - uc3_idx)
+
+        min_price_expr = (
+            f'IF({distr_ref}="",{promo_ref},'
+            f'IF({promo_ref}="",{distr_ref},MIN({distr_ref},{promo_ref})))'
+        )
+        formula = (
+            f'=IF(OR(AND({distr_ref}="",{promo_ref}=""),'
+            f'{full_cost_ref}="",{vat_literal}=0),"",'
+            f'({min_price_expr}-{full_cost_ref})/(1+{vat_literal}))'
+        )
+
+        uc3_col = self._excel_column_letter(uc3_idx)
+        ws.Range(f"{uc3_col}{first_row}:{uc3_col}{last_row}").FormulaR1C1 = formula
+
     @staticmethod
     def _calc_pack_price(price_per_l: object, pack: object):
         if price_per_l is None or pack is None:
@@ -300,6 +340,7 @@ class SupplierPriceExporter:
         rub_headers = [
             "Cost Novo with VAT",
             "Full Cost Msk",
+            "uC3",
             "Cost Novo with VAT (prev)",
             "Full Cost Msk (prev)",
             "Дистр цена",
@@ -313,6 +354,7 @@ class SupplierPriceExporter:
         integer_headers = [
             "Qty, pcs",
             "Volume, L",
+            "Volume to take",
             "Stock",
             "Transit",
             "Purchase Order",
@@ -341,7 +383,7 @@ class SupplierPriceExporter:
 
         for header in ("Supplier Product Name", "Our Product Name"):
             self._set_width_by_header(ws, header_map, header, 31.14)
-        for header in ("Qty, pcs", "Volume, L"):
+        for header in ("Qty, pcs", "Volume, L", "Volume to take"):
             self._set_width_by_header(ws, header_map, header, 10.50)
         self._set_width_by_header(ws, header_map, "last update", 11.00)
         self._set_width_by_header(ws, header_map, "last update (prev)", 11.00)
@@ -845,12 +887,14 @@ class SupplierPriceExporter:
                 "Pack",
                 "Qty, pcs",
                 "Volume, L",
+                "Volume to take",
                 "Price, L",
                 "Price, pack",
                 "Currency",
                 "FX rate",
                 "Cost Novo with VAT",
                 "Full Cost Msk",
+                "uC3",
                 "last update (prev)",
                 "Price, L (prev)",
                 "Cost Novo with VAT (prev)",
@@ -904,6 +948,8 @@ class SupplierPriceExporter:
                     else:
                         ws.Cells(row_num, col_index).Value = self._excel_value_or_blank(value)
                 row_num += 1
+
+            self._write_uc3_formulas(ws, headers, first_row=2, last_row=row_num - 1)
 
             self._apply_header_common(ws, len(headers))
 
@@ -960,6 +1006,7 @@ class SupplierPriceExporter:
                         rng.Font.ColorIndex = -4105
 
             _paint_header_block("Supplier Article", "Full Cost Msk", self._rgb(205, 205, 205))
+            _paint_header_block("uC3", "uC3", self._rgb(0, 176, 240))
             _paint_header_block("last update (prev)", "Full Cost Msk (prev)", self._rgb(166, 166, 166))
             _paint_header_block("Дистр цена", "curr Landed cost", self._rgb(192, 0, 0), self._rgb(255, 255, 255))
             _paint_header_block("Best Suppl", "Currency Best1", self._rgb(0, 176, 240))
@@ -971,6 +1018,7 @@ class SupplierPriceExporter:
 
             for _src, _dst in [
                 ("Currency", "FX rate"),
+                ("Best Suppl", "uC3"),
                 ("last update Best1", "FX rate Best1"),
                 ("last update Best1", "Currency Best1"),
                 ("last update Best2", "FX rate Best2"),
