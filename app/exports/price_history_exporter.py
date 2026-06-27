@@ -6,6 +6,8 @@ from pathlib import Path
 import pythoncom
 import win32com.client as win32
 
+from app.utils.excel_fast_writer import write_excel_table
+
 
 class PriceHistoryExporter:
     def __init__(self):
@@ -96,8 +98,27 @@ class PriceHistoryExporter:
             ws.Name = "Sheet1"
 
             headers = ["Product name", "Supplier name", "Price date", "Price", "Currency"]
-            for col_index, header in enumerate(headers, start=1):
-                ws.Cells(1, col_index).Value = header
+
+            def value_for_header(row, header, _col_index):
+                if header == "Product name":
+                    return row.get("product_name", "")
+                if header == "Supplier name":
+                    return row.get("supplier_name", "")
+                if header == "Price date":
+                    return row.get("price_date") or ""
+                if header == "Price":
+                    price = row.get("price")
+                    if price is None:
+                        return ""
+                    try:
+                        return float(price)
+                    except Exception:
+                        return ""
+                if header == "Currency":
+                    return row.get("currency", "")
+                return ""
+
+            write_excel_table(ws, headers, rows, value_getter=value_for_header)
 
             self._apply_base_font(ws)
             self._apply_header_range(ws, "A", "E", 0xCDCDCD, white_font=False)
@@ -115,29 +136,10 @@ class PriceHistoryExporter:
             ws.Columns("D:D").ColumnWidth = 13
             ws.Columns("E:E").ColumnWidth = 13
 
-            row_num = 2
-            for row in rows:
-                ws.Cells(row_num, 1).Value = row.get("product_name", "")
-                ws.Cells(row_num, 2).Value = row.get("supplier_name", "")
-
-                price_date = row.get("price_date")
-                if price_date is not None:
-                    ws.Cells(row_num, 3).Value = price_date
-
-                price = row.get("price")
-                if price is not None:
-                    try:
-                        ws.Cells(row_num, 4).Value = float(price)
-                    except Exception:
-                        ws.Cells(row_num, 4).Value = None
-
-                ws.Cells(row_num, 5).Value = row.get("currency", "")
-
-                row_num += 1
-
-            if row_num > 2:
-                ws.Range(f"C2:C{row_num - 1}").NumberFormatLocal = "ДД.ММ.ГГ;@"
-                ws.Range(f"D2:D{row_num - 1}").NumberFormatLocal = "0,00"
+            if rows:
+                last_row = len(rows) + 1
+                ws.Range(f"C2:C{last_row}").NumberFormatLocal = "ДД.ММ.ГГ;@"
+                ws.Range(f"D2:D{last_row}").NumberFormatLocal = "0,00"
 
             wb.SaveAs(str(Path(file_path).resolve()))
         except PermissionError:

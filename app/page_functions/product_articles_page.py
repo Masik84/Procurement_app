@@ -25,6 +25,7 @@ from app.imports.product_article_importer import ProductArticleImporter
 from app.exports.product_article_exporter import ProductArticleExporter
 from app.workers.excel_export_worker import start_excel_export
 from app.utils.output_headers import display_headers, standardize_output_header
+from app.utils.excel_fast_writer import write_excel_table
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -807,8 +808,19 @@ class ProductArticlesPage(QWidget):
                 "Product name (variant)",
             ]
 
-            for col_index, header in enumerate(headers, start=1):
-                ws.Cells(1, col_index).Value = standardize_output_header(header)
+            def value_for_header(row, header, _col_index):
+                if header == "ID":
+                    return row.get("id")
+                if header == "Product name":
+                    return row.get("product_name", "") or ""
+                if header == "Article":
+                    article_value = row.get("article", "")
+                    return "" if article_value is None else str(article_value)
+                if header == "Product name (variant)":
+                    return row.get("variant_name", "") or ""
+                return ""
+
+            write_excel_table(ws, headers, rows, header_getter=standardize_output_header, value_getter=value_for_header)
 
             ws.Cells.Font.Name = "Aptos Narrow"
             ws.Cells.Font.Size = 11
@@ -835,19 +847,6 @@ class ProductArticlesPage(QWidget):
             ws.Columns("D:D").ColumnWidth = 34
 
             ws.Columns("C:C").NumberFormat = "@"
-
-            row_num = 2
-            for row in rows:
-                ws.Cells(row_num, 1).Value = row.get("id")
-                ws.Cells(row_num, 2).Value = row.get("product_name", "") or ""
-
-                article_value = row.get("article", "")
-                if article_value is None:
-                    article_value = ""
-                ws.Cells(row_num, 3).Value = str(article_value)
-
-                ws.Cells(row_num, 4).Value = row.get("variant_name", "") or ""
-                row_num += 1
 
             wb.SaveAs(str(Path(file_path).resolve()))
 

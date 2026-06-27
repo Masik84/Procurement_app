@@ -1,0 +1,204 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>CheckedFilterDialog</class>
+ <widget class="QDialog" name="CheckedFilterDialog">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>460</width>
+    <height>560</height>
+   </rect>
+  </property>
+  <property name="minimumSize">
+   <size>
+    <width>420</width>
+    <height>480</height>
+   </size>
+  </property>
+  <property name="windowTitle">
+   <string>Фильтр</string>
+  </property>
+  <property name="styleSheet">
+   <string notr="true">QDialog {
+    background-color: #f8f8f2;
+    color: #262626;
+    font: 10pt &quot;Tahoma&quot;;
+}
+
+QLabel {
+    color: #262626;
+}
+
+QLabel#label_Title {
+    font: 12pt &quot;Tahoma&quot;;
+    font-weight: 700;
+    color: #2D2A26;
+}
+
+QLineEdit {
+    border: 1px solid #f09d54;
+    border-radius: 3px;
+    padding: 4px;
+    background-color: #ffffff;
+    color: #262626;
+}
+
+QListWidget {
+    border: 1px solid #f09d54;
+    border-radius: 3px;
+    background-color: #ffffff;
+    color: #262626;
+    selection-background-color: #f5d3b5;
+    selection-color: #262626;
+}
+
+QListWidget::item {
+    min-height: 18px;
+    padding: 1px 2px;
+    margin: 0px;
+}
+
+QPushButton {
+    border: 1px solid #f09d54;
+    border-radius: 5px;
+    background-color: #f8f8f2;
+    color: #964b09;
+    padding: 5px 10px;
+}
+
+QPushButton:hover {
+    background-color: #f5d3b5;
+}</string>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <property name="spacing">
+    <number>8</number>
+   </property>
+   <property name="leftMargin">
+    <number>12</number>
+   </property>
+   <property name="topMargin">
+    <number>12</number>
+   </property>
+   <property name="rightMargin">
+    <number>12</number>
+   </property>
+   <property name="bottomMargin">
+    <number>12</number>
+   </property>
+   <item>
+    <widget class="QLabel" name="label_Title">
+     <property name="text">
+      <string>Фильтр</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLineEdit" name="line_Search">
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>28</height>
+      </size>
+     </property>
+     <property name="placeholderText">
+      <string>Поиск в списке...</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="label_Count">
+     <property name="text">
+      <string/>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QListWidget" name="lst_Values">
+     <property name="minimumSize">
+      <size>
+       <width>0</width>
+       <height>300</height>
+      </size>
+     </property>
+     <property name="alternatingRowColors">
+      <bool>true</bool>
+     </property>
+     <property name="spacing">
+      <number>0</number>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="horizontalLayout_select">
+     <property name="spacing">
+      <number>8</number>
+     </property>
+     <item>
+      <widget class="QPushButton" name="btn_SelectAll">
+       <property name="text">
+        <string>Выбрать все</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="btn_ClearAll">
+       <property name="text">
+        <string>Снять все</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="horizontalLayout_buttons">
+     <property name="spacing">
+      <number>8</number>
+     </property>
+     <item>
+      <spacer name="horizontalSpacer">
+       <property name="orientation">
+        <enum>Qt::Orientation::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QPushButton" name="btn_Ok">
+       <property name="minimumSize">
+        <size>
+         <width>90</width>
+         <height>30</height>
+        </size>
+       </property>
+       <property name="text">
+        <string>ОК</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="btn_Cancel">
+       <property name="minimumSize">
+        <size>
+         <width>90</width>
+         <height>30</height>
+        </size>
+       </property>
+       <property name="text">
+        <string>Отмена</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

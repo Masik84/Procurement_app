@@ -388,6 +388,7 @@ class OrderPlanningService:
         safe_months: Decimal | int | float = Decimal("0"),
         brand_filter: Optional[list[str]] = None,
         family_filter: Optional[list[str]] = None,
+        product_filter: Optional[list[int]] = None,
         vol_not_null: bool = False,
     ) -> list[dict]:
         # group rows by selected Product.id; unmatched rows remain separate by sales_code
@@ -435,6 +436,9 @@ class OrderPlanningService:
 
         quick_m = self._to_decimal(quick_months)
         safe_m = self._to_decimal(safe_months)
+        brand_values = set(brand_filter) if brand_filter is not None else None
+        family_values = set(family_filter) if family_filter is not None else None
+        product_ids = {int(value) for value in product_filter} if product_filter is not None else None
         result: list[dict] = []
 
         for item in grouped.values():
@@ -444,10 +448,13 @@ class OrderPlanningService:
 
             brand = product.brand if product else item.get("sales_brand", "")
             family = product.family if product else ""
-            if brand_filter and brand not in brand_filter:
+            if brand_values is not None and brand not in brand_values:
                 continue
-            if family_filter and family not in family_filter:
+            if family_values is not None and family not in family_values:
                 continue
+            if product_ids is not None:
+                if not product_id or int(product_id) not in product_ids:
+                    continue
 
             avg_sales = self._to_decimal(item.get("avg_sales_month"))
             pack = self._to_decimal(product.pack if product else item.get("sales_pack"), Decimal("0"))

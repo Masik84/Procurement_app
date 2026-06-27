@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from sqlalchemy.orm import aliased, joinedload
 from PySide6.QtCore import QFile, QDate, Qt
@@ -32,6 +32,7 @@ from app.exports.excel_column_format import (
 )
 from app.exports.target_price_history_exporter import TargetPriceHistoryExporter
 from app.ui.table_style import setup_data_table
+from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 from app.utils.text import clean_multi_spaces
 from app.workers.excel_export_worker import start_excel_export
 
@@ -126,6 +127,9 @@ class TargetPriceHistoryPage(QWidget):
         self._pending_deletes: set[int] = set()
         self._deleted_row_snapshots: list[dict[str, Any]] = []
         self._table_row_ids: list[int] = []
+        self._selected_brand_values: set[str] | None = None
+        self._selected_family_values: set[str] | None = None
+        self._selected_product_ids: set[int] | None = None
         self._excel_export_thread = None
         self._excel_export_worker = None
 
@@ -165,11 +169,11 @@ class TargetPriceHistoryPage(QWidget):
         self.ui.btn_Save.clicked.connect(self.apply_pending_changes)
 
         self.ui.line_SupplName.currentTextChanged.connect(self.on_supplier_changed)
-        self.ui.line_Brand.currentTextChanged.connect(self.on_product_filter_changed)
-        self.ui.line_Prod_Fam.currentTextChanged.connect(self.on_family_changed)
-        self.ui.line_Prod_name.currentTextChanged.connect(self.clear_report_table)
+        self.ui.btn_FilterBrand.clicked.connect(self.open_brand_filter)
+        self.ui.btn_FilterProductFamily.clicked.connect(self.open_family_filter)
+        self.ui.btn_FilterProduct.clicked.connect(self.open_product_filter)
         if hasattr(self.ui, "line_NameSearch"):
-            self.ui.line_NameSearch.textChanged.connect(self.clear_report_table)
+            self.ui.line_NameSearch.textChanged.connect(self.on_name_search_changed)
 
         self.ui.line_Start_date.dateChanged.connect(self.on_date_filter_changed)
         self.ui.line_End_date.dateChanged.connect(self.on_date_filter_changed)
@@ -187,6 +191,12 @@ class TargetPriceHistoryPage(QWidget):
             return
         self.clear_report_table()
 
+    def on_name_search_changed(self):
+        if self._updating_filters:
+            return
+        self._refresh_filter_buttons(prune=True)
+        self.clear_report_table()
+
     def reset_filters(self, initial: bool = False):
         today = QDate.currentDate()
         self._updating_filters = True
@@ -198,6 +208,9 @@ class TargetPriceHistoryPage(QWidget):
         self._pending_changes.clear()
         self._pending_deletes.clear()
         self._deleted_row_snapshots.clear()
+        self._selected_brand_values = None
+        self._selected_family_values = None
+        self._selected_product_ids = None
         self.load_filter_values()
         self._updating_filters = False
         self.clear_report_table()
@@ -205,29 +218,12 @@ class TargetPriceHistoryPage(QWidget):
 
     def load_filter_values(self):
         self.fill_suppliers()
-        self.fill_brands()
-        self.fill_families()
-        self.fill_products()
+        self._refresh_filter_buttons(prune=True)
 
     def on_supplier_changed(self):
         if self._updating_filters:
             return
-        self.fill_brands()
-        self.fill_families()
-        self.fill_products()
-        self.clear_report_table()
-
-    def on_product_filter_changed(self):
-        if self._updating_filters:
-            return
-        self.fill_families()
-        self.fill_products()
-        self.clear_report_table()
-
-    def on_family_changed(self):
-        if self._updating_filters:
-            return
-        self.fill_products()
+        self._refresh_filter_buttons(prune=True)
         self.clear_report_table()
 
     def _combo_value(self, combo: QComboBox) -> str | None:
@@ -255,19 +251,19 @@ class TargetPriceHistoryPage(QWidget):
         )
 
         supplier_name = self._combo_value(self.ui.line_SupplName) if include_supplier else None
-        brand = self._combo_value(self.ui.line_Brand) if include_brand else None
-        family = self._combo_value(self.ui.line_Prod_Fam) if include_family else None
-        product_name = self._combo_value(self.ui.line_Prod_name) if include_product else None
+        brand_values = self._selected_brand_values if include_brand else None
+        family_values = self._selected_family_values if include_family else None
+        product_ids = self._selected_product_ids if include_product else None
         name_search = clean_multi_spaces(self.ui.line_NameSearch.text()) if hasattr(self.ui, "line_NameSearch") else ""
 
         if supplier_name:
             query = query.filter(TargetSupplier.name == supplier_name)
-        if brand:
-            query = query.filter(Product.brand == brand)
-        if family:
-            query = query.filter(Product.family == family)
-        if product_name:
-            query = query.filter(Product.name == product_name)
+        if brand_values is not None:
+            query = query.filter(Product.brand.in_(list(brand_values)))
+        if family_values is not None:
+            query = query.filter(Product.family.in_(list(family_values)))
+        if product_ids is not None:
+            query = query.filter(Product.id.in_([int(value) for value in product_ids]))
         if name_search:
             query = query.filter(Product.name.ilike(f"%{name_search}%"))
         return query
@@ -287,10 +283,56 @@ class TargetPriceHistoryPage(QWidget):
         except Exception as e:
             self.show_error_message(f"Ошибка при получении поставщиков: {e}")
 
-    def fill_brands(self):
+    def open_brand_filter(self):
+        accepted, selected = self._open_checked_filter_dialog(
+            title="Фильтр по брендам",
+            options=self._get_brand_filter_options(),
+            selected_keys=self._selected_brand_values,
+        )
+        if not accepted:
+            return
+        self._selected_brand_values = None if selected is None else {str(value) for value in selected}
+        self._refresh_filter_buttons(prune=True)
+        self.clear_report_table()
+
+    def open_family_filter(self):
+        accepted, selected = self._open_checked_filter_dialog(
+            title="Фильтр по Product Family",
+            options=self._get_family_filter_options(),
+            selected_keys=self._selected_family_values,
+        )
+        if not accepted:
+            return
+        self._selected_family_values = None if selected is None else {str(value) for value in selected}
+        self._refresh_filter_buttons(prune=True)
+        self.clear_report_table()
+
+    def open_product_filter(self):
+        accepted, selected = self._open_checked_filter_dialog(
+            title="Фильтр по продуктам",
+            options=self._get_product_filter_options(),
+            selected_keys=self._selected_product_ids,
+        )
+        if not accepted:
+            return
+        self._selected_product_ids = None if selected is None else {int(value) for value in selected}
+        self._refresh_filter_buttons(prune=True)
+        self.clear_report_table()
+
+    def _open_checked_filter_dialog(
+        self,
+        *,
+        title: str,
+        options: Sequence[FilterOption],
+        selected_keys: set[Any] | None,
+    ) -> tuple[bool, set[Any] | None]:
+        dialog = CheckedFilterDialog(self, title=title, options=options, selected_keys=selected_keys)
+        return dialog.exec_and_get_selection()
+
+    def _get_brand_filter_options(self) -> list[FilterOption]:
         try:
             with self.get_session() as session:
-                query = self._base_query(session, include_brand=False)
+                query = self._base_query(session, include_brand=False, include_family=True, include_product=True)
                 rows = (
                     query.with_entities(Product.brand)
                     .filter(Product.brand.isnot(None), Product.brand != "")
@@ -298,14 +340,16 @@ class TargetPriceHistoryPage(QWidget):
                     .order_by(Product.brand.asc())
                     .all()
                 )
-            self._fill_combo(self.ui.line_Brand, [r[0] for r in rows if r[0]], keep_current=True)
+            brands = [r[0] for r in rows if r[0]]
+            return [FilterOption(key=brand, label=brand, search_text=brand) for brand in brands]
         except Exception as e:
             self.show_error_message(f"Ошибка при получении брендов: {e}")
+            return []
 
-    def fill_families(self):
+    def _get_family_filter_options(self) -> list[FilterOption]:
         try:
             with self.get_session() as session:
-                query = self._base_query(session, include_family=False)
+                query = self._base_query(session, include_brand=True, include_family=False, include_product=True)
                 rows = (
                     query.with_entities(Product.family)
                     .filter(Product.family.isnot(None), Product.family != "")
@@ -313,24 +357,97 @@ class TargetPriceHistoryPage(QWidget):
                     .order_by(Product.family.asc())
                     .all()
                 )
-            self._fill_combo(self.ui.line_Prod_Fam, [r[0] for r in rows if r[0]], keep_current=True)
+            families = [r[0] for r in rows if r[0]]
+            return [FilterOption(key=family, label=family, search_text=family) for family in families]
         except Exception as e:
             self.show_error_message(f"Ошибка при получении Product Family: {e}")
+            return []
 
-    def fill_products(self):
+    def _get_product_filter_options(self) -> list[FilterOption]:
         try:
             with self.get_session() as session:
-                query = self._base_query(session, include_product=False)
+                query = self._base_query(session, include_brand=True, include_family=True, include_product=False)
                 rows = (
-                    query.with_entities(Product.name)
-                    .filter(Product.name.isnot(None), Product.name != "")
+                    query.with_entities(Product.id, Product.name, Product.brand, Product.family, Product.pack)
+                    .filter(Product.id.isnot(None), Product.name.isnot(None), Product.name != "")
                     .distinct()
                     .order_by(Product.name.asc())
                     .all()
                 )
-            self._fill_combo(self.ui.line_Prod_name, [r[0] for r in rows if r[0]], keep_current=True)
+            options: list[FilterOption] = []
+            for product_id, name, brand, family, pack in rows:
+                if product_id is None or not self._clean_text(name):
+                    continue
+                options.append(
+                    FilterOption(
+                        key=int(product_id),
+                        label=self._clean_text(name),
+                        search_text=self._product_filter_search_text(product_id, name, brand, family, pack),
+                    )
+                )
+            return options
         except Exception as e:
             self.show_error_message(f"Ошибка при получении продуктов: {e}")
+            return []
+
+    def _refresh_filter_buttons(self, prune: bool = False) -> None:
+        if prune:
+            self._prune_filter_selections()
+
+        self._set_filter_button_text(
+            self.ui.btn_FilterBrand,
+            all_text="все Бренды",
+            selected=self._selected_brand_values,
+        )
+        self._set_filter_button_text(
+            self.ui.btn_FilterProductFamily,
+            all_text="все Product Family",
+            selected=self._selected_family_values,
+        )
+        self._set_filter_button_text(
+            self.ui.btn_FilterProduct,
+            all_text="все Продукты",
+            selected=self._selected_product_ids,
+        )
+
+    def _set_filter_button_text(self, button, *, all_text: str, selected: set[Any] | None) -> None:
+        if selected is None:
+            button.setText(all_text)
+            return
+
+        button.setText(f"{all_text} ({len(selected)})")
+
+    def _prune_filter_selections(self) -> None:
+        try:
+            available_brands = {option.key for option in self._get_brand_filter_options()}
+            if self._selected_brand_values is not None:
+                self._selected_brand_values = {value for value in self._selected_brand_values if value in available_brands}
+
+            available_families = {option.key for option in self._get_family_filter_options()}
+            if self._selected_family_values is not None:
+                self._selected_family_values = {value for value in self._selected_family_values if value in available_families}
+
+            available_product_ids = {int(option.key) for option in self._get_product_filter_options()}
+            if self._selected_product_ids is not None:
+                self._selected_product_ids = {int(value) for value in self._selected_product_ids if int(value) in available_product_ids}
+        except Exception as e:
+            self.show_error_message(f"Ошибка обновления фильтров: {e}")
+
+    def _clean_text(self, value: object) -> str:
+        return " ".join(str(value or "").split())
+
+    def _product_filter_search_text(self, product_id: object, name: object, brand: object, family: object, pack: object) -> str:
+        return " ".join(
+            part
+            for part in [
+                str(product_id or ""),
+                self._clean_text(name),
+                self._clean_text(brand),
+                self._clean_text(family),
+                str(pack or ""),
+            ]
+            if part
+        )
 
     def _qdate_to_date(self, qdate: QDate, field_name: str) -> date:
         if not qdate.isValid():

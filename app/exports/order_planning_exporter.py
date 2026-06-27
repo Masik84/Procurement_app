@@ -13,6 +13,7 @@ from app.db.models import CurrentSupplierPrice, PriceHistory, Product, ProductSt
 from app.services.cost_calculation_service import CostCalculationService
 from app.services.supplier_service import SupplierService
 from app.exports.excel_column_format import apply_standard_worksheet_format, excel_value_by_header
+from app.utils.excel_fast_writer import write_excel_table
 from app.utils.output_headers import standardize_output_header
 
 
@@ -251,11 +252,16 @@ class OrderPlanningExporter:
             ws = wb.Worksheets(1)
             ws.Name = "Sheet1"
 
-            for col_index, header in enumerate(headers, start=1):
-                ws.Cells(1, col_index).Value = standardize_output_header(header)
-            for row_index, row in enumerate(rows, start=2):
-                for col_index, value in enumerate(row, start=1):
-                    ws.Cells(row_index, col_index).Value = self._excel_value(headers[col_index - 1], value)
+            write_excel_table(
+                ws,
+                headers,
+                rows,
+                header_getter=standardize_output_header,
+                value_getter=lambda row, header, col_index: self._excel_value(
+                    str(header),
+                    row[col_index] if col_index < len(row) else "",
+                ),
+            )
 
             apply_standard_worksheet_format(ws, headers, freeze_cell="L2", zoom=85)
 

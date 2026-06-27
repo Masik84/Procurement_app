@@ -6,6 +6,7 @@ import pythoncom
 import win32com.client as win32
 
 from app.exports.excel_column_format import apply_standard_worksheet_format, excel_value_by_header
+from app.utils.excel_fast_writer import write_excel_table
 
 
 class ProductSearchExporter:
@@ -138,10 +139,7 @@ class ProductSearchExporter:
                 "Excise duty",
             ]
 
-            for col_index, header in enumerate(headers, start=1):
-                ws.Cells(1, col_index).Value = header
-
-            for row_num, row in enumerate(rows, start=2):
+            def value_for_header(row, header, _col_index):
                 values_by_header = {
                     "Article": row.get("source_article"),
                     "Supplier Product Name": row.get("source_product_name"),
@@ -150,11 +148,9 @@ class ProductSearchExporter:
                     "Pack": row.get("pack"),
                     "Excise duty": row.get("is_excise"),
                 }
-                for col_index, header in enumerate(headers, start=1):
-                    ws.Cells(row_num, col_index).Value = excel_value_by_header(
-                        header,
-                        self._safe_value(values_by_header.get(header)),
-                    )
+                return excel_value_by_header(str(header), self._safe_value(values_by_header.get(header)))
+
+            write_excel_table(ws, headers, rows, value_getter=value_for_header)
 
             apply_standard_worksheet_format(ws, headers, freeze_cell="C2", zoom=85)
 

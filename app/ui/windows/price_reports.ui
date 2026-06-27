@@ -347,21 +347,9 @@ QScrollBar::handle:vertical {
              </widget>
             </item>
             <item>
-             <widget class="QListWidget" name="lst_Brand">
-              <property name="minimumSize">
-               <size>
-                <width>0</width>
-                <height>80</height>
-               </size>
-              </property>
-              <property name="maximumSize">
-               <size>
-                <width>16777215</width>
-                <height>16777215</height>
-               </size>
-              </property>
-              <property name="selectionMode">
-               <enum>QAbstractItemView::SelectionMode::ExtendedSelection</enum>
+             <widget class="QPushButton" name="btn_FilterBrand">
+              <property name="text">
+               <string>все Бренды</string>
               </property>
              </widget>
             </item>
@@ -373,21 +361,23 @@ QScrollBar::handle:vertical {
              </widget>
             </item>
             <item>
-             <widget class="QListWidget" name="lst_ProductFamily">
-              <property name="minimumSize">
-               <size>
-                <width>0</width>
-                <height>90</height>
-               </size>
+             <widget class="QPushButton" name="btn_FilterProductFamily">
+              <property name="text">
+               <string>все Product Family</string>
               </property>
-              <property name="maximumSize">
-               <size>
-                <width>16777215</width>
-                <height>16777215</height>
-               </size>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="label">
+              <property name="text">
+               <string>Продукты</string>
               </property>
-              <property name="selectionMode">
-               <enum>QAbstractItemView::SelectionMode::ExtendedSelection</enum>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="btn_FilterProduct">
+              <property name="text">
+               <string>все Продукты</string>
               </property>
              </widget>
             </item>
@@ -399,7 +389,7 @@ QScrollBar::handle:vertical {
              </widget>
             </item>
             <item>
-             <widget class="QLineEdit" name="lineEdit">
+             <widget class="QLineEdit" name="line_NameSearch">
               <property name="minimumSize">
                <size>
                 <width>0</width>
@@ -578,7 +568,7 @@ QScrollBar::handle:vertical {
                <string>Сформировать отчет</string>
               </property>
               <property name="icon">
-               <iconset resource="../resource.qrc">
+               <iconset resource="../../../app_old/app/ui/resource.qrc">
                 <normaloff>:/icon/icon/layers — копия — копия.svg</normaloff>:/icon/icon/layers — копия — копия.svg</iconset>
               </property>
              </widget>
@@ -601,7 +591,7 @@ QScrollBar::handle:vertical {
                <string>Сбросить</string>
               </property>
               <property name="icon">
-               <iconset resource="../resource.qrc">
+               <iconset resource="../../../app_old/app/ui/resource.qrc">
                 <normaloff>:/icon/icon/loader — копия — копия.svg</normaloff>:/icon/icon/loader — копия — копия.svg</iconset>
               </property>
              </widget>
@@ -624,7 +614,7 @@ QScrollBar::handle:vertical {
                <string>Сохранить в Excel</string>
               </property>
               <property name="icon">
-               <iconset resource="../resource.qrc">
+               <iconset resource="../../../app_old/app/ui/resource.qrc">
                 <normaloff>:/icon/icon/download — копия — копия.svg</normaloff>:/icon/icon/download — копия — копия.svg</iconset>
               </property>
              </widget>
@@ -824,7 +814,7 @@ QScrollBar::handle:vertical {
   </layout>
  </widget>
  <resources>
-  <include location="../resource.qrc"/>
+  <include location="../../../app_old/app/ui/resource.qrc"/>
  </resources>
  <connections/>
 </ui>

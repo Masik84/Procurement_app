@@ -58,6 +58,22 @@ class SupplierPriceService:
     def _round4(value: Decimal) -> Decimal:
         return value.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
 
+    @classmethod
+    def _is_positive_price(cls, value: object) -> bool:
+        """Returns True only for a real positive price.
+
+        Empty, zero and negative values are treated as rows without a price:
+        these rows may still be used for product matching/article links,
+        but they must not be written to price history or cost calculations.
+        """
+        if value is None:
+            return False
+
+        try:
+            return cls._to_decimal(value) > Decimal("0")
+        except Exception:
+            return False
+
     def start_batch(self) -> str:
         return generate_import_batch_id()
 
@@ -422,7 +438,6 @@ class SupplierPriceService:
                 TempPriceImport.batch_id == batch_id,
                 TempPriceImport.imported_by == imported_by,
                 TempPriceImport.selected_product_id.isnot(None),
-                TempPriceImport.price.is_(None),
                 TempPriceImport.price_pack.isnot(None),
             )
             .all()
@@ -434,8 +449,16 @@ class SupplierPriceService:
             if row.selected_product is None:
                 continue
 
+            # If Price, L is already a real positive value, keep it.
+            # If it is empty/0 but Price, pack is positive, calculate Price, L from pack.
+            if self._is_positive_price(row.price):
+                continue
+
+            if not self._is_positive_price(row.price_pack):
+                continue
+
             pack = self._to_decimal(row.selected_product.pack)
-            if pack == Decimal("0"):
+            if pack <= Decimal("0"):
                 continue
 
             row.price = self._round4(self._to_decimal(row.price_pack) / pack)
@@ -466,11 +489,16 @@ class SupplierPriceService:
         saved_count = 0
 
         for row in rows:
+            if not self._is_positive_price(row.price):
+                continue
+
             normalized_price = self._normalize_supplier_price_for_calc(
                 supplier_id=row.supplier_id,
                 raw_price=row.price,
                 rf_prices_include_vat=rf_prices_include_vat,
             )
+            if not self._is_positive_price(normalized_price):
+                continue
 
             self.price_repository.save_supplier_price(
                 supplier_id=row.supplier_id,
@@ -509,11 +537,16 @@ class SupplierPriceService:
         saved_count = 0
 
         for row in rows:
+            if not self._is_positive_price(row.price):
+                continue
+
             normalized_price = self._normalize_supplier_price_for_calc(
                 supplier_id=row.supplier_id,
                 raw_price=row.price,
                 rf_prices_include_vat=rf_prices_include_vat,
             )
+            if not self._is_positive_price(normalized_price):
+                continue
 
             calc_result = self.cost_calculation_service.calculate_supplier_costs(
                 supplier_id=row.supplier_id,

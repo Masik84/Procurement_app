@@ -65,9 +65,9 @@ class PlaceholderPage(QWidget):
     def __init__(self, title: str):
         super().__init__()
         layout = QVBoxLayout(self)
-        label = QLabel(f'Раздел "{title}" пока не реализован')
-        label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(label)
+        # label = QLabel(f'Раздел "{title}" пока не реализован')
+        # label.setAlignment(Qt.AlignCenter)
+        # layout.addWidget(label)
 
 
 class CompactComboDelegate(QStyledItemDelegate):
@@ -86,11 +86,7 @@ class MyWindow(QMainWindow):
         self.setWindowFlag(Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
 
-        self.shadow = QGraphicsDropShadowEffect(self)
-        self.shadow.setBlurRadius(17)
-        self.shadow.setXOffset(0)
-        self.shadow.setYOffset(0)
-        self.shadow.setColor(QColor(0, 0, 0, 150))
+        self.shadow = self._create_shadow_effect()
         self.ui.centralwidget.setGraphicsEffect(self.shadow)
 
         self.ui.minimizeAppBtn.clicked.connect(lambda: self.showMinimized())
@@ -121,7 +117,8 @@ class MyWindow(QMainWindow):
 
         self.sizegrip = QSizeGrip(self.ui.frame_size_grip)
         self.sizegrip.setStyleSheet("width: 20px; height: 20px; margin: 0px; padding: 0px;")
-        self.ui.frame_size_grip.setGraphicsEffect(self.shadow)
+        self.sizegrip_shadow = self._create_shadow_effect()
+        self.ui.frame_size_grip.setGraphicsEffect(self.sizegrip_shadow)
 
         self.home_btn = self.ui.btn_Home
         self.btn_product = self.ui.btn_Products
@@ -176,6 +173,14 @@ class MyWindow(QMainWindow):
         self.ui.tabWidget.tabCloseRequested.connect(self.close_tab)
         for button in self.menu_btns_list.keys():
             button.clicked.connect(self.show_selected_window)
+
+    def _create_shadow_effect(self):
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(17)
+        shadow.setXOffset(0)
+        shadow.setYOffset(0)
+        shadow.setColor(QColor(0, 0, 0, 150))
+        return shadow
 
     def show_home_window(self):
         result = self.open_tab_flag(self.home_btn.text())

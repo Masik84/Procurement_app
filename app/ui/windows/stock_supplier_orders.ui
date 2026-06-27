@@ -267,7 +267,7 @@ QScrollBar::handle:vertical {
             </size>
            </property>
            <property name="text">
-            <string>Филтр по Бренду</string>
+            <string>Фильтр по Бренду</string>
            </property>
           </widget>
          </item>

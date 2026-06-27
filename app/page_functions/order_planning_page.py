@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from PySide6.QtCore import QFile, Qt, QDate, QTimer
 from PySide6.QtGui import QColor, QDesktopServices
@@ -15,8 +15,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QHBoxLayout,
-    QListWidget,
-    QListWidgetItem,
     QMessageBox,
     QTableWidgetItem,
     QVBoxLayout,
@@ -28,6 +26,7 @@ from app.db.models import Product
 from app.exports.order_planning_exporter import OrderPlanningExporter
 from app.services.order_planning_service import OrderPlanningService
 from app.ui.table_style import *
+from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 from app.utils.text import clean_multi_spaces
 from app.workers.excel_export_worker import start_excel_export
 from app.utils.output_headers import display_headers
@@ -148,6 +147,9 @@ class OrderPlanningPage(QWidget):
         self._updating_table = False
         self._excel_export_thread = None
         self._excel_export_worker = None
+        self._selected_brand_values: set[str] | None = None
+        self._selected_family_values: set[str] | None = None
+        self._selected_product_ids: set[int] | None = None
 
         self.setup_ui()
         self.setup_connections()
@@ -177,15 +179,17 @@ class OrderPlanningPage(QWidget):
         self.ui.date_SalesFrom.setDate(today)
         self.ui.date_SalesTo.setDate(today)
 
-        self.ui.lst_Brand.setSelectionMode(QAbstractItemView.MultiSelection)
-        self.ui.lst_ProductFamily.setSelectionMode(QAbstractItemView.MultiSelection)
+        self.ui.spin_QuickOrd.setValue(3)
+        self.ui.spin_SafeStock.setValue(5)
         self.ui.lbl_CalcPeriod.setText("Текущий период расчета: -")
         self.ui.lbl_QuickVolResult.setText("0")
         self.ui.lbl_StandVolResult.setText("0")
+        self._refresh_filter_buttons()
 
     def setup_connections(self):
-        self.ui.lst_Brand.itemSelectionChanged.connect(self.on_brand_selection_changed)
-        self.ui.lst_ProductFamily.itemSelectionChanged.connect(self.on_family_selection_changed)
+        self.ui.btn_FilterBrand.clicked.connect(self.open_brand_filter)
+        self.ui.btn_FilterProductFamily.clicked.connect(self.open_family_filter)
+        self.ui.btn_FilterProduct.clicked.connect(self.open_product_filter)
         self.ui.radio_VolNotNull.toggled.connect(self.recalculate_current_rows)
         self.ui.spin_QuickOrd.valueChanged.connect(self.recalculate_current_rows)
         self.ui.spin_SafeStock.valueChanged.connect(self.recalculate_current_rows)
@@ -200,65 +204,188 @@ class OrderPlanningPage(QWidget):
         self.table.itemChanged.connect(self.on_item_changed)
 
     def load_initial_data(self):
-        self.fill_brand_list()
-        self.fill_family_list()
+        self._refresh_filter_buttons(prune=True)
 
     # ------------------------------------------------------------------
     # Filters
     # ------------------------------------------------------------------
-    def _fill_list_widget(self, widget: QListWidget, values: Sequence[str]):
-        selected_before = set(self._get_selected_list_values(widget, include_dash=True))
-        widget.blockSignals(True)
-        widget.clear()
-        dash = QListWidgetItem("-")
-        widget.addItem(dash)
-        if not selected_before or selected_before == {"-"}:
-            dash.setSelected(True)
-        for value in values:
-            item = QListWidgetItem(value)
-            widget.addItem(item)
-            if value in selected_before:
-                item.setSelected(True)
-        widget.blockSignals(False)
+    def open_brand_filter(self):
+        accepted, selected = self._open_checked_filter_dialog(
+            title="Фильтр по брендам",
+            options=self._get_brand_filter_options(),
+            selected_keys=self._selected_brand_values,
+        )
+        if not accepted:
+            return
+        self._selected_brand_values = None if selected is None else {str(value) for value in selected}
+        self._refresh_filter_buttons(prune=True)
+        self.recalculate_current_rows()
 
-    def _get_selected_list_values(self, widget: QListWidget, include_dash: bool = False) -> list[str]:
-        values = [item.text().strip() for item in widget.selectedItems() if item and item.text().strip()]
-        return values if include_dash else [value for value in values if value != "-"]
+    def open_family_filter(self):
+        accepted, selected = self._open_checked_filter_dialog(
+            title="Фильтр по Product Family",
+            options=self._get_family_filter_options(),
+            selected_keys=self._selected_family_values,
+        )
+        if not accepted:
+            return
+        self._selected_family_values = None if selected is None else {str(value) for value in selected}
+        self._refresh_filter_buttons(prune=True)
+        self.recalculate_current_rows()
 
-    def _normalize_multiselect(self, list_widget: QListWidget):
-        selected = self._get_selected_list_values(list_widget, include_dash=True)
-        if "-" in selected and len(selected) > 1:
-            for i in range(list_widget.count()):
-                item = list_widget.item(i)
-                if item and item.text() == "-":
-                    item.setSelected(False)
-                    break
+    def open_product_filter(self):
+        accepted, selected = self._open_checked_filter_dialog(
+            title="Фильтр по продуктам",
+            options=self._get_product_filter_options(),
+            selected_keys=self._selected_product_ids,
+        )
+        if not accepted:
+            return
+        self._selected_product_ids = None if selected is None else {int(value) for value in selected}
+        self._refresh_filter_buttons(prune=True)
+        self.recalculate_current_rows()
 
-    def fill_brand_list(self):
+    def _open_checked_filter_dialog(
+        self,
+        *,
+        title: str,
+        options: Sequence[FilterOption],
+        selected_keys: set[Any] | None,
+    ) -> tuple[bool, set[Any] | None]:
+        dialog = CheckedFilterDialog(self, title=title, options=options, selected_keys=selected_keys)
+        return dialog.exec_and_get_selection()
+
+    def _get_brand_filter_options(self) -> list[FilterOption]:
         try:
             with self.get_session() as session:
-                values = self.service(session).get_brand_values()
-            self._fill_list_widget(self.ui.lst_Brand, values)
+                products = self._get_all_products(session)
+            products = self._apply_selected_filters_to_products(products, use_brand=False, use_family=True, use_product=True)
+            brands = sorted({self._clean_text(product.brand) for product in products if self._clean_text(product.brand)})
+            return [FilterOption(key=brand, label=brand, search_text=brand) for brand in brands]
         except Exception as e:
             self.show_error_message(f"Ошибка загрузки брендов: {e}")
+            return []
 
-    def fill_family_list(self):
-        brands = self._get_selected_list_values(self.ui.lst_Brand)
+    def _get_family_filter_options(self) -> list[FilterOption]:
         try:
             with self.get_session() as session:
-                values = self.service(session).get_family_values(brands)
-            self._fill_list_widget(self.ui.lst_ProductFamily, values)
+                products = self._get_all_products(session)
+            products = self._apply_selected_filters_to_products(products, use_brand=True, use_family=False, use_product=True)
+            families = sorted({self._clean_text(product.family) for product in products if self._clean_text(product.family)})
+            return [FilterOption(key=family, label=family, search_text=family) for family in families]
         except Exception as e:
-            self.show_error_message(f"Ошибка загрузки family: {e}")
+            self.show_error_message(f"Ошибка загрузки Product Family: {e}")
+            return []
 
-    def on_brand_selection_changed(self):
-        self._normalize_multiselect(self.ui.lst_Brand)
-        self.fill_family_list()
-        self.recalculate_current_rows()
+    def _get_product_filter_options(self) -> list[FilterOption]:
+        try:
+            with self.get_session() as session:
+                products = self._get_all_products(session)
+            products = self._apply_selected_filters_to_products(products, use_brand=True, use_family=True, use_product=False)
+            products = self._sort_products(products)
+            return [
+                FilterOption(
+                    key=int(product.id),
+                    label=self._product_filter_label(product),
+                    search_text=self._product_filter_search_text(product),
+                )
+                for product in products
+                if product.id is not None and self._clean_text(product.name)
+            ]
+        except Exception as e:
+            self.show_error_message(f"Ошибка загрузки продуктов: {e}")
+            return []
 
-    def on_family_selection_changed(self):
-        self._normalize_multiselect(self.ui.lst_ProductFamily)
-        self.recalculate_current_rows()
+    def _get_all_products(self, session) -> list[Product]:
+        return session.query(Product).order_by(Product.brand.asc(), Product.family.asc(), Product.name.asc()).all()
+
+    def _apply_selected_filters_to_products(
+        self,
+        products: Sequence[Product],
+        *,
+        use_brand: bool = True,
+        use_family: bool = True,
+        use_product: bool = True,
+    ) -> list[Product]:
+        filtered = list(products)
+        if use_brand and self._selected_brand_values is not None:
+            filtered = [product for product in filtered if self._clean_text(product.brand) in self._selected_brand_values]
+        if use_family and self._selected_family_values is not None:
+            filtered = [product for product in filtered if self._clean_text(product.family) in self._selected_family_values]
+        if use_product and self._selected_product_ids is not None:
+            selected_ids = {int(value) for value in self._selected_product_ids}
+            filtered = [product for product in filtered if product.id is not None and int(product.id) in selected_ids]
+        return filtered
+
+    def _refresh_filter_buttons(self, prune: bool = False) -> None:
+        if prune:
+            self._prune_filter_selections()
+
+        self._set_filter_button_text(
+            self.ui.btn_FilterBrand,
+            all_text="все Бренды",
+            selected=self._selected_brand_values,
+        )
+        self._set_filter_button_text(
+            self.ui.btn_FilterProductFamily,
+            all_text="все Product Family",
+            selected=self._selected_family_values,
+        )
+        self._set_filter_button_text(
+            self.ui.btn_FilterProduct,
+            all_text="все Продукты",
+            selected=self._selected_product_ids,
+        )
+
+    def _set_filter_button_text(self, button, *, all_text: str, selected: set[Any] | None) -> None:
+        if selected is None:
+            button.setText(all_text)
+            return
+
+        button.setText(f"{all_text} ({len(selected)})")
+
+    def _prune_filter_selections(self) -> None:
+        try:
+            with self.get_session() as session:
+                products = self._get_all_products(session)
+
+            available_brands = {self._clean_text(product.brand) for product in products if self._clean_text(product.brand)}
+            if self._selected_brand_values is not None:
+                self._selected_brand_values = {value for value in self._selected_brand_values if value in available_brands}
+
+            products_for_family = self._apply_selected_filters_to_products(products, use_brand=True, use_family=False, use_product=False)
+            available_families = {self._clean_text(product.family) for product in products_for_family if self._clean_text(product.family)}
+            if self._selected_family_values is not None:
+                self._selected_family_values = {value for value in self._selected_family_values if value in available_families}
+
+            products_for_product = self._apply_selected_filters_to_products(products, use_brand=True, use_family=True, use_product=False)
+            available_product_ids = {int(product.id) for product in products_for_product if product.id is not None}
+            if self._selected_product_ids is not None:
+                self._selected_product_ids = {int(value) for value in self._selected_product_ids if int(value) in available_product_ids}
+        except Exception as e:
+            self.show_error_message(f"Ошибка обновления фильтров: {e}")
+
+    def _clean_text(self, value: object) -> str:
+        return " ".join(str(value or "").split())
+
+    def _sort_products(self, products: Sequence[Product]) -> list[Product]:
+        return sorted(products, key=lambda p: ((p.brand or ""), (p.family or ""), (p.name or ""), str(p.pack or "")))
+
+    def _product_filter_label(self, product: Product) -> str:
+        return self._clean_text(product.name)
+
+    def _product_filter_search_text(self, product: Product) -> str:
+        return " ".join(
+            part
+            for part in [
+                str(product.id or ""),
+                self._clean_text(product.name),
+                self._clean_text(product.brand),
+                self._clean_text(product.family),
+                str(product.pack or ""),
+            ]
+            if part
+        )
 
     # ------------------------------------------------------------------
     # Date / number helpers
@@ -503,8 +630,9 @@ class OrderPlanningPage(QWidget):
                     self._base_rows,
                     quick_months=self.ui.spin_QuickOrd.value(),
                     safe_months=self.ui.spin_SafeStock.value(),
-                    brand_filter=self._get_selected_list_values(self.ui.lst_Brand),
-                    family_filter=self._get_selected_list_values(self.ui.lst_ProductFamily),
+                    brand_filter=None if self._selected_brand_values is None else list(self._selected_brand_values),
+                    family_filter=None if self._selected_family_values is None else list(self._selected_family_values),
+                    product_filter=None if self._selected_product_ids is None else list(self._selected_product_ids),
                     vol_not_null=self.ui.radio_VolNotNull.isChecked(),
                 )
             self.display_rows(rows, self._mode)
@@ -591,15 +719,17 @@ class OrderPlanningPage(QWidget):
         today = QDate.currentDate()
         self.ui.date_SalesFrom.setDate(today)
         self.ui.date_SalesTo.setDate(today)
-        self.ui.spin_QuickOrd.setValue(0)
-        self.ui.spin_SafeStock.setValue(0)
+        self.ui.spin_QuickOrd.setValue(3)
+        self.ui.spin_SafeStock.setValue(5)
         self.ui.radio_VolNotNull.setChecked(False)
         self._base_rows = []
         self._rows = []
         self._period_from = None
         self._period_to = None
-        self.fill_brand_list()
-        self.fill_family_list()
+        self._selected_brand_values = None
+        self._selected_family_values = None
+        self._selected_product_ids = None
+        self._refresh_filter_buttons(prune=True)
         self.display_rows([], "calc")
         self._set_period_label()
         self.show_message("Форма очищена")

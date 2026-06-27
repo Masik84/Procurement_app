@@ -33,6 +33,7 @@ from app.utils.text import clean_multi_spaces
 from app.workers.excel_export_worker import start_excel_export
 from app.exports.product_exporter import ProductExporter
 from app.utils.output_headers import display_headers, standardize_output_header
+from app.utils.excel_fast_writer import write_excel_table
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -887,8 +888,28 @@ class ProductsPage(QWidget):
                 "Product Family",
             ]
 
-            for col_index, header in enumerate(headers, start=1):
-                ws.Cells(1, col_index).Value = standardize_output_header(header)
+            def value_for_header(row, header, _col_index):
+                if header == "ID":
+                    return row.get("id")
+                if header == "Product name":
+                    return row.get("name", "") or ""
+                if header == "Brand":
+                    return row.get("brand", "") or ""
+                if header == "Pack":
+                    pack = row.get("pack")
+                    if pack not in (None, ""):
+                        try:
+                            return float(pack)
+                        except Exception:
+                            return str(pack)
+                    return ""
+                if header == "Excise duty":
+                    return "Да" if bool(row.get("is_excise")) else "Нет"
+                if header == "Product Family":
+                    return row.get("family", "") or ""
+                return ""
+
+            write_excel_table(ws, headers, rows, header_getter=standardize_output_header, value_getter=value_for_header)
 
             ws.Cells.Font.Name = "Aptos Narrow"
             ws.Cells.Font.Size = 11
@@ -916,27 +937,8 @@ class ProductsPage(QWidget):
             ws.Columns("E:E").ColumnWidth = 14
             ws.Columns("F:F").ColumnWidth = 24
 
-            row_num = 2
-            for row in rows:
-                ws.Cells(row_num, 1).Value = row.get("id")
-                ws.Cells(row_num, 2).Value = row.get("name", "") or ""
-                ws.Cells(row_num, 3).Value = row.get("brand", "") or ""
-
-                pack = row.get("pack")
-                if pack not in (None, ""):
-                    try:
-                        ws.Cells(row_num, 4).Value = float(pack)
-                    except Exception:
-                        ws.Cells(row_num, 4).Value = str(pack)
-                else:
-                    ws.Cells(row_num, 4).Value = ""
-
-                ws.Cells(row_num, 5).Value = "Да" if bool(row.get("is_excise")) else "Нет"
-                ws.Cells(row_num, 6).Value = row.get("family", "") or ""
-                row_num += 1
-
-            # if row_num > 2:
-            #     ws.Range(f"D2:D{row_num - 1}").NumberFormat = "General"
+            # if rows:
+            #     ws.Range(f"D2:D{len(rows) + 1}").NumberFormat = "General"
 
             wb.SaveAs(str(Path(file_path).resolve()))
 

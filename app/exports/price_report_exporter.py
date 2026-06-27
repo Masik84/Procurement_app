@@ -8,6 +8,8 @@ from typing import Any, Sequence
 import pythoncom
 import win32com.client as win32
 
+from app.utils.excel_fast_writer import write_excel_table
+
 
 class PriceReportExporter:
     """Excel export for PriceReportsPage.
@@ -107,18 +109,15 @@ class PriceReportExporter:
                 raise
 
     def _write_table(self, ws, headers: Sequence[str], rows: Sequence[Sequence[object]]) -> None:
-        for col_index, header in enumerate(headers, start=1):
-            ws.Cells(1, col_index).Value = header
+        def value_for_header(row, header, col_index):
+            value = row[col_index] if col_index < len(row) else ""
+            if self._is_order_plan_export_header(header):
+                # Для колонок заказа 0 — это значение, а не пустая ячейка.
+                # Формат Excel сам покажет ноль как "-".
+                return self._excel_value_keep_zero(value)
+            return self._excel_value(value)
 
-        for row_index, row in enumerate(rows, start=2):
-            for col_index, header in enumerate(headers, start=1):
-                value = row[col_index - 1] if col_index - 1 < len(row) else ""
-                if self._is_order_plan_export_header(header):
-                    # Для колонок заказа 0 — это значение, а не пустая ячейка.
-                    # Формат Excel сам покажет ноль как "-".
-                    ws.Cells(row_index, col_index).Value = self._excel_value_keep_zero(value)
-                else:
-                    ws.Cells(row_index, col_index).Value = self._excel_value(value)
+        write_excel_table(ws, headers, rows, value_getter=value_for_header)
 
     def _header_map(self, headers: Sequence[str]) -> dict[str, int]:
         return {str(header): idx + 1 for idx, header in enumerate(headers)}

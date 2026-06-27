@@ -8,6 +8,7 @@ import pythoncom
 import pywintypes
 import win32com.client as win32
 
+from app.utils.excel_fast_writer import write_excel_table
 from app.exports.excel_column_format import (
     DATE_HEADERS,
     apply_standard_worksheet_format,
@@ -54,13 +55,16 @@ class TargetPriceHistoryExporter:
         return result
 
     def _write_table(self, ws, headers: Sequence[str], rows: Sequence[Sequence[object]]) -> None:
-        for col_index, header in enumerate(headers, start=1):
-            ws.Cells(1, col_index).Value = str(header)
-
-        for row_index, row_values in enumerate(rows, start=2):
-            for col_index, header in enumerate(headers, start=1):
-                value = row_values[col_index - 1] if col_index - 1 < len(row_values) else ""
-                ws.Cells(row_index, col_index).Value = self._excel_value(str(header), value)
+        write_excel_table(
+            ws,
+            headers,
+            rows,
+            header_getter=str,
+            value_getter=lambda row, header, col_index: self._excel_value(
+                str(header),
+                row[col_index] if col_index < len(row) else "",
+            ),
+        )
 
     def export_report(self, *, headers: Sequence[str], rows: Sequence[Sequence[object]], output_path: str | Path) -> Path:
         output_path = Path(output_path)

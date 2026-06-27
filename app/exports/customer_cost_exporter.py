@@ -9,6 +9,8 @@ import pythoncom
 import win32com.client as win32
 from sqlalchemy.orm import Session
 
+from app.utils.excel_fast_writer import write_excel_table
+
 from app.db.models import TempCustomerCostImport, TempCustomerCostOption
 
 
@@ -313,14 +315,12 @@ class CustomerCostExporter:
             ws = wb.Worksheets(1)
             ws.Name = "Calculated"
 
-            for col_index, header in enumerate(headers, start=1):
-                ws.Cells(1, col_index).Value = header
-
-            row_num = 2
-            for row in rows:
-                for col_index, header in enumerate(headers, start=1):
-                    ws.Cells(row_num, col_index).Value = self._excel_value_or_blank(row.get(header))
-                row_num += 1
+            write_excel_table(
+                ws,
+                headers,
+                rows,
+                value_getter=lambda row, header, _col_index: self._excel_value_or_blank(row.get(header)),
+            )
 
             self._apply_header_common(ws, len(headers))
 
@@ -507,14 +507,12 @@ class CustomerCostExporter:
             ws = wb.Worksheets(1)
             ws.Name = "KAM"
 
-            for col_index, header in enumerate(headers, start=1):
-                ws.Cells(1, col_index).Value = header
-
-            row_num = 2
-            for row in rows:
-                for col_index, header in enumerate(headers, start=1):
-                    ws.Cells(row_num, col_index).Value = self._excel_value_or_blank(row.get(header))
-                row_num += 1
+            write_excel_table(
+                ws,
+                headers,
+                rows,
+                value_getter=lambda row, header, _col_index: self._excel_value_or_blank(row.get(header)),
+            )
 
             self._apply_header_common(ws, len(headers))
 

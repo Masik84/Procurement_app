@@ -96,7 +96,7 @@ class TargetPricesPage(QWidget):
         if hasattr(self.ui, "spb_SuppPriceAge"):
             self.ui.spb_SuppPriceAge.setMinimum(0)
             self.ui.spb_SuppPriceAge.setMaximum(120)
-            self.ui.spb_SuppPriceAge.setValue(6)
+            self.ui.spb_SuppPriceAge.setValue(3)
         self.ui.line_NewSupplier.setEnabled(False)
         self.ui.line_NewSupplier.setStyleSheet("background-color: #f2f2f2;")
         for widget, tip in [
@@ -137,7 +137,7 @@ class TargetPricesPage(QWidget):
     def get_supplier_price_age_months(self) -> int:
         widget = getattr(self.ui, "spb_SuppPriceAge", None)
         if widget is None:
-            return 6
+            return 3
         return int(widget.value())
 
     def load_initial_state(self):

@@ -4,11 +4,11 @@ from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from sqlalchemy import and_, func
 from sqlalchemy.orm import joinedload
-from PySide6.QtCore import QFile, Qt, QDate, QThread
+from PySide6.QtCore import QFile, Qt, QDate, QThread, QTimer
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
@@ -28,6 +28,7 @@ from app.db.models import CustomerPriceCalculation, Product, Supplier
 from app.exports.customer_cost_report_exporter import CustomerCostReportExporter
 from app.workers.excel_export_worker import ExcelExportWorker
 from app.ui.table_style import build_table_item, setup_data_table
+from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -119,6 +120,9 @@ class CustomerCostsReportsPage(QWidget):
         self._row_ids: list[int] = []
         self._product_options: list[ProductOption] = []
         self._product_by_id: dict[int, ProductOption] = {}
+        self._selected_brand_values: set[str] | None = None
+        self._selected_family_values: set[str] | None = None
+        self._selected_product_ids: set[int] | None = None
         self._excel_export_thread: QThread | None = None
         self._excel_export_worker: ExcelExportWorker | None = None
         self._export_button_text = ""
@@ -149,14 +153,15 @@ class CustomerCostsReportsPage(QWidget):
     def setup_connections(self):
         self.ui.cbo_Manager.currentIndexChanged.connect(self.on_manager_changed)
         self.ui.cbo_Customer.currentIndexChanged.connect(self.on_customer_changed)
-        self.ui.cbo_Brand.currentIndexChanged.connect(self.on_product_filter_changed)
-        self.ui.cbo_ProdFamily.currentIndexChanged.connect(self.on_family_changed)
-        self.ui.cbo_ProductName.currentIndexChanged.connect(self.clear_report_table)
+        self.ui.btn_FilterBrand.clicked.connect(self.open_brand_filter)
+        self.ui.btn_FilterProductFamily.clicked.connect(self.open_family_filter)
+        self.ui.btn_FilterProduct.clicked.connect(self.open_product_filter)
         self.ui.btn_BuildReport.clicked.connect(self.build_report)
         self.ui.btn_Reset.clicked.connect(self.reset_filters)
         self.ui.btn_ExportExcel.clicked.connect(self.export_excel)
         self.ui.btn_Save.clicked.connect(self.save_changes)
         self.table.itemChanged.connect(self.on_item_changed)
+        self.table.cellDoubleClicked.connect(self.start_product_cell_edit)
 
     def reset_filters(self, initial: bool = False):
         today = QDate.currentDate()
@@ -168,6 +173,9 @@ class CustomerCostsReportsPage(QWidget):
 
         self._pending_changes.clear()
         self._pending_deletes.clear()
+        self._selected_brand_values = None
+        self._selected_family_values = None
+        self._selected_product_ids = None
         self.load_filter_values()
         self.clear_report_table()
         self.show_message("" if initial else "Фильтры сброшены")
@@ -175,38 +183,19 @@ class CustomerCostsReportsPage(QWidget):
     def load_filter_values(self):
         self.fill_managers()
         self.fill_customers()
-        self.fill_brands()
-        self.fill_families()
-        self.fill_products()
+        self._refresh_filter_buttons(prune=True)
 
     def on_manager_changed(self):
         if self._updating_filters:
             return
         self.fill_customers()
-        self.fill_brands()
-        self.fill_families()
-        self.fill_products()
+        self._refresh_filter_buttons(prune=True)
         self.clear_report_table()
 
     def on_customer_changed(self):
         if self._updating_filters:
             return
-        self.fill_brands()
-        self.fill_families()
-        self.fill_products()
-        self.clear_report_table()
-
-    def on_product_filter_changed(self):
-        if self._updating_filters:
-            return
-        self.fill_families()
-        self.fill_products()
-        self.clear_report_table()
-
-    def on_family_changed(self):
-        if self._updating_filters:
-            return
-        self.fill_products()
+        self._refresh_filter_buttons(prune=True)
         self.clear_report_table()
 
     def _combo_value(self, combo: QComboBox) -> str | None:
@@ -229,20 +218,20 @@ class CustomerCostsReportsPage(QWidget):
         query = session.query(CustomerPriceCalculation).outerjoin(Product, CustomerPriceCalculation.product_id == Product.id)
         manager = self._combo_value(self.ui.cbo_Manager)
         customer = self._combo_value(self.ui.cbo_Customer) if include_customer else None
-        brand = self._combo_value(self.ui.cbo_Brand) if include_brand else None
-        family = self._combo_value(self.ui.cbo_ProdFamily) if include_family else None
-        product_name = self._combo_value(self.ui.cbo_ProductName) if include_product else None
+        brand_values = self._selected_brand_values if include_brand else None
+        family_values = self._selected_family_values if include_family else None
+        product_ids = self._selected_product_ids if include_product else None
 
         if manager:
             query = query.filter(CustomerPriceCalculation.manager_name == manager)
         if customer:
             query = query.filter(CustomerPriceCalculation.customer_name == customer)
-        if brand:
-            query = query.filter(Product.brand == brand)
-        if family:
-            query = query.filter(Product.family == family)
-        if product_name:
-            query = query.filter(Product.name == product_name)
+        if brand_values is not None:
+            query = query.filter(Product.brand.in_(list(brand_values)))
+        if family_values is not None:
+            query = query.filter(Product.family.in_(list(family_values)))
+        if product_ids is not None:
+            query = query.filter(Product.id.in_([int(value) for value in product_ids]))
         return query
 
     def fill_managers(self):
@@ -276,10 +265,56 @@ class CustomerCostsReportsPage(QWidget):
         except Exception as e:
             self.show_error_message(f"Ошибка при получении клиентов: {e}")
 
-    def fill_brands(self):
+    def open_brand_filter(self):
+        accepted, selected = self._open_checked_filter_dialog(
+            title="Фильтр по брендам",
+            options=self._get_brand_filter_options(),
+            selected_keys=self._selected_brand_values,
+        )
+        if not accepted:
+            return
+        self._selected_brand_values = None if selected is None else {str(value) for value in selected}
+        self._refresh_filter_buttons(prune=True)
+        self.clear_report_table()
+
+    def open_family_filter(self):
+        accepted, selected = self._open_checked_filter_dialog(
+            title="Фильтр по Product Family",
+            options=self._get_family_filter_options(),
+            selected_keys=self._selected_family_values,
+        )
+        if not accepted:
+            return
+        self._selected_family_values = None if selected is None else {str(value) for value in selected}
+        self._refresh_filter_buttons(prune=True)
+        self.clear_report_table()
+
+    def open_product_filter(self):
+        accepted, selected = self._open_checked_filter_dialog(
+            title="Фильтр по продуктам",
+            options=self._get_product_filter_options(),
+            selected_keys=self._selected_product_ids,
+        )
+        if not accepted:
+            return
+        self._selected_product_ids = None if selected is None else {int(value) for value in selected}
+        self._refresh_filter_buttons(prune=True)
+        self.clear_report_table()
+
+    def _open_checked_filter_dialog(
+        self,
+        *,
+        title: str,
+        options: Sequence[FilterOption],
+        selected_keys: set[Any] | None,
+    ) -> tuple[bool, set[Any] | None]:
+        dialog = CheckedFilterDialog(self, title=title, options=options, selected_keys=selected_keys)
+        return dialog.exec_and_get_selection()
+
+    def _get_brand_filter_options(self) -> list[FilterOption]:
         try:
             with self.get_session() as session:
-                query = self._base_query(session, include_brand=False, include_family=False, include_product=False)
+                query = self._base_query(session, include_brand=False, include_family=True, include_product=True)
                 rows = (
                     query.with_entities(Product.brand)
                     .filter(Product.brand.isnot(None), Product.brand != "")
@@ -287,14 +322,16 @@ class CustomerCostsReportsPage(QWidget):
                     .order_by(Product.brand.asc())
                     .all()
                 )
-            self._fill_combo(self.ui.cbo_Brand, [r[0] for r in rows if r[0]], keep_current=True)
+            brands = [r[0] for r in rows if r[0]]
+            return [FilterOption(key=brand, label=brand, search_text=brand) for brand in brands]
         except Exception as e:
             self.show_error_message(f"Ошибка при получении брендов: {e}")
+            return []
 
-    def fill_families(self):
+    def _get_family_filter_options(self) -> list[FilterOption]:
         try:
             with self.get_session() as session:
-                query = self._base_query(session, include_family=False, include_product=False)
+                query = self._base_query(session, include_brand=True, include_family=False, include_product=True)
                 rows = (
                     query.with_entities(Product.family)
                     .filter(Product.family.isnot(None), Product.family != "")
@@ -302,24 +339,97 @@ class CustomerCostsReportsPage(QWidget):
                     .order_by(Product.family.asc())
                     .all()
                 )
-            self._fill_combo(self.ui.cbo_ProdFamily, [r[0] for r in rows if r[0]], keep_current=True)
+            families = [r[0] for r in rows if r[0]]
+            return [FilterOption(key=family, label=family, search_text=family) for family in families]
         except Exception as e:
             self.show_error_message(f"Ошибка при получении Product Family: {e}")
+            return []
 
-    def fill_products(self):
+    def _get_product_filter_options(self) -> list[FilterOption]:
         try:
             with self.get_session() as session:
-                query = self._base_query(session, include_product=False)
+                query = self._base_query(session, include_brand=True, include_family=True, include_product=False)
                 rows = (
-                    query.with_entities(Product.name)
-                    .filter(Product.name.isnot(None), Product.name != "")
+                    query.with_entities(Product.id, Product.name, Product.brand, Product.family, Product.pack)
+                    .filter(Product.id.isnot(None), Product.name.isnot(None), Product.name != "")
                     .distinct()
                     .order_by(Product.name.asc())
                     .all()
                 )
-            self._fill_combo(self.ui.cbo_ProductName, [r[0] for r in rows if r[0]], keep_current=True)
+            options: list[FilterOption] = []
+            for product_id, name, brand, family, pack in rows:
+                if product_id is None or not self._clean_text(name):
+                    continue
+                options.append(
+                    FilterOption(
+                        key=int(product_id),
+                        label=self._clean_text(name),
+                        search_text=self._product_filter_search_text(product_id, name, brand, family, pack),
+                    )
+                )
+            return options
         except Exception as e:
             self.show_error_message(f"Ошибка при получении продуктов: {e}")
+            return []
+
+    def _refresh_filter_buttons(self, prune: bool = False) -> None:
+        if prune:
+            self._prune_filter_selections()
+
+        self._set_filter_button_text(
+            self.ui.btn_FilterBrand,
+            all_text="все Бренды",
+            selected=self._selected_brand_values,
+        )
+        self._set_filter_button_text(
+            self.ui.btn_FilterProductFamily,
+            all_text="все Product Family",
+            selected=self._selected_family_values,
+        )
+        self._set_filter_button_text(
+            self.ui.btn_FilterProduct,
+            all_text="все Продукты",
+            selected=self._selected_product_ids,
+        )
+
+    def _set_filter_button_text(self, button, *, all_text: str, selected: set[Any] | None) -> None:
+        if selected is None:
+            button.setText(all_text)
+            return
+
+        button.setText(f"{all_text} ({len(selected)})")
+
+    def _prune_filter_selections(self) -> None:
+        try:
+            available_brands = {option.key for option in self._get_brand_filter_options()}
+            if self._selected_brand_values is not None:
+                self._selected_brand_values = {value for value in self._selected_brand_values if value in available_brands}
+
+            available_families = {option.key for option in self._get_family_filter_options()}
+            if self._selected_family_values is not None:
+                self._selected_family_values = {value for value in self._selected_family_values if value in available_families}
+
+            available_product_ids = {int(option.key) for option in self._get_product_filter_options()}
+            if self._selected_product_ids is not None:
+                self._selected_product_ids = {int(value) for value in self._selected_product_ids if int(value) in available_product_ids}
+        except Exception as e:
+            self.show_error_message(f"Ошибка обновления фильтров: {e}")
+
+    def _clean_text(self, value: object) -> str:
+        return " ".join(str(value or "").split())
+
+    def _product_filter_search_text(self, product_id: object, name: object, brand: object, family: object, pack: object) -> str:
+        return " ".join(
+            part
+            for part in [
+                str(product_id or ""),
+                self._clean_text(name),
+                self._clean_text(brand),
+                self._clean_text(family),
+                str(pack or ""),
+            ]
+            if part
+        )
 
     def _qdate_to_date(self, qdate: QDate, field_name: str) -> date:
         if not qdate.isValid():
@@ -435,10 +545,10 @@ class CustomerCostsReportsPage(QWidget):
             for col_idx, value in enumerate(values):
                 header = self.HEADERS[col_idx]
                 if header == "Our Product Name":
-                    self._set_product_combo(row_idx, col_idx, row_id, calc.product_id)
-                    continue
-                editable = header in editable_headers
-                item = build_table_item(value, editable=editable, align_left=header in {"Менеджер", "Клиент", "Customer Product Name", "Supplier", "Comments"})
+                    item = self._build_product_display_item(value, calc.product_id)
+                else:
+                    editable = header in editable_headers
+                    item = build_table_item(value, editable=editable, align_left=header in {"Менеджер", "Клиент", "Customer Product Name", "Supplier", "Comments"})
                 if header in {"Дата", "Price date"} and isinstance(value, datetime):
                     item.setText(value.strftime("%d.%m.%Y"))
                 if isinstance(value, bool):
@@ -449,39 +559,80 @@ class CustomerCostsReportsPage(QWidget):
         self.table.setSortingEnabled(True)
         self._updating_table = False
 
-    def _set_product_combo(self, row_idx: int, col_idx: int, row_id: int, product_id: int | None):
+    def _build_product_display_item(self, product_name: object, product_id: int | None) -> QTableWidgetItem:
+        item = build_table_item(product_name, editable=False, align_left=True)
+        item.setData(Qt.UserRole, product_id)
+        item.setToolTip("Дважды кликните, чтобы выбрать другой продукт")
+        return item
+
+    def start_product_cell_edit(self, row: int, column: int):
+        if self._updating_table or column != self.HEADERS.index("Our Product Name"):
+            return
+
+        row_id = self._id_for_visual_row(row)
+        if row_id is None:
+            return
+
+        item = self.table.item(row, column)
+        current_product_id = item.data(Qt.UserRole) if item else None
+        try:
+            current_product_id = int(current_product_id)
+        except (TypeError, ValueError):
+            current_product_id = None
+
+        combo = self._build_product_combo(current_product_id)
+        combo.activated.connect(lambda _=None, rid=row_id, cb=combo: self.finish_product_edit(rid, cb))
+        self.table.setCellWidget(row, column, combo)
+        combo.setFocus()
+        QTimer.singleShot(0, combo.showPopup)
+
+    def _build_product_combo(self, selected_product_id: int | None) -> QComboBox:
         combo = QComboBox(self.table)
         combo.setEditable(False)
         for option in self._product_options:
             combo.addItem(option.name, option.id)
-        if product_id:
-            idx = combo.findData(product_id)
+
+        if selected_product_id is not None:
+            idx = combo.findData(selected_product_id)
             if idx >= 0:
                 combo.setCurrentIndex(idx)
-        combo.currentIndexChanged.connect(lambda _=None, rid=row_id, cb=combo: self.on_product_changed(rid, cb))
-        self.table.setCellWidget(row_idx, col_idx, combo)
-        item = build_table_item(combo.currentText(), editable=False, align_left=True)
-        item.setData(Qt.UserRole, product_id)
-        self.table.setItem(row_idx, col_idx, item)
 
-    def on_product_changed(self, row_id: int, combo: QComboBox):
+        return combo
+
+    def finish_product_edit(self, row_id: int, combo: QComboBox):
         if self._updating_table:
             return
+
         product_id = combo.currentData()
-        if product_id is None:
-            return
-        self._pending_changes.setdefault(row_id, {})["product_id"] = int(product_id)
+        try:
+            product_id = int(product_id)
+        except (TypeError, ValueError):
+            product_id = None
+
         row = self._find_row_by_id(row_id)
-        if row is not None:
-            item = self.table.item(row, self.HEADERS.index("Our Product Name"))
-            if item:
-                item.setText(combo.currentText())
-                item.setData(Qt.UserRole, int(product_id))
-            option = self._product_by_id.get(int(product_id))
-            if option:
-                pack_item = self.table.item(row, self.HEADERS.index("Pack"))
-                if pack_item:
-                    pack_item.setText(str(option.pack or "").replace(".", ","))
+        product_col = self.HEADERS.index("Our Product Name")
+        if row is None or product_id is None:
+            return
+
+        option = self._product_by_id.get(product_id)
+        product_name = option.name if option else combo.currentText()
+
+        self._updating_table = True
+        sorting_enabled = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
+        self.table.removeCellWidget(row, product_col)
+        self.table.setItem(row, product_col, self._build_product_display_item(product_name, product_id))
+
+        if option:
+            pack_item = self.table.item(row, self.HEADERS.index("Pack"))
+            if pack_item:
+                pack_item.setText(str(option.pack or "").replace(".", ","))
+
+        self.table.resizeColumnsToContents()
+        self.table.setSortingEnabled(sorting_enabled)
+        self._updating_table = False
+
+        self._pending_changes.setdefault(row_id, {})["product_id"] = product_id
 
     def on_item_changed(self, item: QTableWidgetItem):
         if self._updating_table or item is None:

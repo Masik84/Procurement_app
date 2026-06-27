@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.db.models import PriceHistory, Product, ProductStock, Supplier, SupplierPriceCalculation, TempPriceImport, OrderPlanningCalculation
 from app.services.cost_calculation_service import CostCalculationService
 from app.services.price_repository import PriceRepository
+from app.utils.excel_fast_writer import write_excel_table
 
 
 class SupplierPriceExporter:
@@ -926,11 +927,9 @@ class SupplierPriceExporter:
                 f"к Заказу, л ({safe_stock_months} м)" if safe_stock_months is not None else "к Заказу, л",
             ]
 
-            for col_index, header in enumerate(headers, start=1):
-                ws.Cells(1, col_index).Value = header
-
-            row_num = 2
-            for row in rows:
+            prepared_rows = []
+            for source_row in rows:
+                row = dict(source_row)
                 qty_value, volume_value = self._calc_qty_volume_for_export(
                     row.get("Qty, pcs"),
                     row.get("Volume, L"),
@@ -938,18 +937,19 @@ class SupplierPriceExporter:
                 )
                 row["Qty, pcs"] = self._excel_value(qty_value)
                 row["Volume, L"] = self._excel_value(volume_value)
+                prepared_rows.append(row)
 
-                for col_index, header in enumerate(headers, start=1):
-                    value = self._row_value_by_export_header(row, header)
-                    if self._is_order_plan_export_header(header):
-                        # Для колонок заказа 0 — это значение, а не пустая ячейка.
-                        # Формат Excel сам покажет ноль как "-".
-                        ws.Cells(row_num, col_index).Value = self._excel_value(value)
-                    else:
-                        ws.Cells(row_num, col_index).Value = self._excel_value_or_blank(value)
-                row_num += 1
+            def value_for_header(row, header, _col_index):
+                value = self._row_value_by_export_header(row, header)
+                if self._is_order_plan_export_header(header):
+                    # Для колонок заказа 0 — это значение, а не пустая ячейка.
+                    # Формат Excel сам покажет ноль как "-".
+                    return self._excel_value(value)
+                return self._excel_value_or_blank(value)
 
-            self._write_uc3_formulas(ws, headers, first_row=2, last_row=row_num - 1)
+            write_excel_table(ws, headers, prepared_rows, value_getter=value_for_header)
+
+            self._write_uc3_formulas(ws, headers, first_row=2, last_row=len(prepared_rows) + 1)
 
             self._apply_header_common(ws, len(headers))
 

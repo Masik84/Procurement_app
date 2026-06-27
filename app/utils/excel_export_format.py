@@ -6,6 +6,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping, Sequence
 
 from app.utils.excel_headers import display_header
+from app.utils.excel_fast_writer import write_excel_table
 
 XL_CENTER = -4108
 XL_LEFT = -4131
@@ -266,12 +267,16 @@ def apply_column_formats(ws, headers: Sequence[str]) -> None:
 
 
 def write_table(ws, headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
-    for col_index, header in enumerate(headers, start=1):
-        ws.Cells(1, col_index).Value = display_header(header)
-    for row_index, row in enumerate(rows, start=2):
-        for col_index, header in enumerate(headers, start=1):
-            value = row[col_index - 1] if col_index - 1 < len(row) else ""
-            ws.Cells(row_index, col_index).Value = excel_cell_value(header, value)
+    write_excel_table(
+        ws,
+        headers,
+        rows,
+        header_getter=display_header,
+        value_getter=lambda row, header, col_index: excel_cell_value(
+            str(header),
+            row[col_index] if col_index < len(row) else "",
+        ),
+    )
 
 
 def set_widths_by_headers(ws, headers: Sequence[str], widths: Mapping[str, float], default_width: float = 10.0) -> None:
@@ -297,11 +302,13 @@ def color_headers(ws, headers: Sequence[str], color_map: Mapping[str, tuple[int,
 
 def write_dict_table(ws, headers: Sequence[str], rows: Sequence[Mapping[str, Any]]) -> None:
     """Write headers and dict rows with column-name based value conversion."""
-    for col_index, header in enumerate(headers, start=1):
-        ws.Cells(1, col_index).Value = display_header(header)
-    for row_index, row in enumerate(rows, start=2):
-        for col_index, header in enumerate(headers, start=1):
-            ws.Cells(row_index, col_index).Value = excel_cell_value(header, row.get(header, ""))
+    write_excel_table(
+        ws,
+        headers,
+        rows,
+        header_getter=display_header,
+        value_getter=lambda row, header, _col_index: excel_cell_value(str(header), row.get(header, "")),
+    )
 
 
 def apply_standard_table_format(

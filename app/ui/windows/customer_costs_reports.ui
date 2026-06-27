@@ -346,18 +346,18 @@ QScrollBar::handle:vertical {
              </widget>
             </item>
             <item>
-             <widget class="QComboBox" name="cbo_Brand">
+             <widget class="QPushButton" name="btn_FilterBrand">
               <property name="minimumSize">
                <size>
                 <width>0</width>
-                <height>25</height>
+                <height>28</height>
                </size>
               </property>
-              <property name="maximumSize">
-               <size>
-                <width>16777215</width>
-                <height>25</height>
-               </size>
+              <property name="toolTip">
+               <string>Открыть фильтр по брендам</string>
+              </property>
+              <property name="text">
+               <string>все Бренды</string>
               </property>
              </widget>
             </item>
@@ -369,41 +369,41 @@ QScrollBar::handle:vertical {
              </widget>
             </item>
             <item>
-             <widget class="QComboBox" name="cbo_ProdFamily">
+             <widget class="QPushButton" name="btn_FilterProductFamily">
               <property name="minimumSize">
                <size>
                 <width>0</width>
-                <height>25</height>
+                <height>28</height>
                </size>
               </property>
-              <property name="maximumSize">
-               <size>
-                <width>16777215</width>
-                <height>25</height>
-               </size>
+              <property name="toolTip">
+               <string>Открыть фильтр по Product Family</string>
+              </property>
+              <property name="text">
+               <string>все Product Family</string>
               </property>
              </widget>
             </item>
             <item>
              <widget class="QLabel" name="label_product_name">
               <property name="text">
-               <string>Название продукта</string>
+               <string>Продукт</string>
               </property>
              </widget>
             </item>
             <item>
-             <widget class="QComboBox" name="cbo_ProductName">
+             <widget class="QPushButton" name="btn_FilterProduct">
               <property name="minimumSize">
                <size>
                 <width>0</width>
-                <height>25</height>
+                <height>28</height>
                </size>
               </property>
-              <property name="maximumSize">
-               <size>
-                <width>16777215</width>
-                <height>25</height>
-               </size>
+              <property name="toolTip">
+               <string>Открыть фильтр по продуктам</string>
+              </property>
+              <property name="text">
+               <string>все Продукты</string>
               </property>
              </widget>
             </item>

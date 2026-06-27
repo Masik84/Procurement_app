@@ -139,7 +139,7 @@ class CustomerCostsPage(QWidget):
         if hasattr(self.ui, "spb_SuppPriceAge"):
             self.ui.spb_SuppPriceAge.setMinimum(0)
             self.ui.spb_SuppPriceAge.setMaximum(120)
-            self.ui.spb_SuppPriceAge.setValue(6)
+            self.ui.spb_SuppPriceAge.setValue(3)
         self.ui.line_FindProduct.setToolTip("Часть названия продукта")
         self.ui.line_FindProduct.textChanged.connect(self.refresh_product_combos)
         self.ui.cbo_FindBrand.currentTextChanged.connect(self.refresh_product_combos)
@@ -162,7 +162,7 @@ class CustomerCostsPage(QWidget):
     def get_supplier_price_age_months(self) -> int:
         widget = getattr(self.ui, "spb_SuppPriceAge", None)
         if widget is None:
-            return 6
+            return 3
         return int(widget.value())
 
     def show_message(self, text):
@@ -856,7 +856,6 @@ class CustomerCostsPage(QWidget):
         combo = self.table.cellWidget(row, COL_PRODUCT)
         if isinstance(combo, QComboBox):
             self.populate_product_combo(combo, keep_current=True)
-
 
     def _commit_open_editors(self):
         for row in range(self.table.rowCount()):

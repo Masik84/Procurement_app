@@ -128,7 +128,7 @@ class SupplierPricesPage(QWidget):
         if hasattr(self.ui, "spb_SuppPriceAge"):
             self.ui.spb_SuppPriceAge.setMinimum(0)
             self.ui.spb_SuppPriceAge.setMaximum(120)
-            self.ui.spb_SuppPriceAge.setValue(6)
+            self.ui.spb_SuppPriceAge.setValue(3)
         self.ui.line_NewSupplier.setEnabled(False)
         self.ui.line_NewSupplier.setStyleSheet("background-color: #f2f2f2;")
 
@@ -173,7 +173,7 @@ class SupplierPricesPage(QWidget):
     def get_supplier_price_age_months(self) -> int:
         widget = getattr(self.ui, "spb_SuppPriceAge", None)
         if widget is None:
-            return 6
+            return 3
         return int(widget.value())
 
     def load_initial_state(self):
@@ -299,7 +299,7 @@ class SupplierPricesPage(QWidget):
             self,
             "Быстрый заказ",
             "Кол-во месяцев к Быстрому заказу:",
-            value=0,
+            value=3,
             minValue=0,
             maxValue=120,
             step=1,
@@ -309,9 +309,9 @@ class SupplierPricesPage(QWidget):
 
         safe_months, ok = QInputDialog.getInt(
             self,
-            "Заказ",
-            "Кол-во месяцев к Заказу:",
-            value=0,
+            "Стандартный заказ",
+            "Кол-во месяцев к Стандартному заказу:",
+            value=5,
             minValue=0,
             maxValue=120,
             step=1,
@@ -1150,7 +1150,6 @@ class SupplierPricesPage(QWidget):
         except Exception as e:
             self.show_error_message(str(e))
 
-
     def _commit_open_editors(self):
         for row in range(self.table.rowCount()):
             for column in (0, 8):
@@ -1248,6 +1247,9 @@ class SupplierPricesPage(QWidget):
             if not currency_code or currency_code == "-":
                 raise ValueError("Выбери валюту")
 
+            saved_prices_count = 0
+            saved_calculations_count = 0
+
             with self.get_session() as session:
                 service = SupplierPriceService(session)
 
@@ -1304,7 +1306,7 @@ class SupplierPricesPage(QWidget):
                 self.rf_prices_include_vat = rf_prices_include_vat
 
                 if self.ui.cbo_History.currentText() == "да":
-                    service.save_prices_to_history_and_current(
+                    saved_prices_count = service.save_prices_to_history_and_current(
                         batch_id=self.batch_id,
                         imported_by=self.imported_by,
                         currency_code=currency_code,
@@ -1312,7 +1314,7 @@ class SupplierPricesPage(QWidget):
                     )
 
                 fx_rate = self.parse_decimal_field(self.ui.line_ExchangeRate, "Курс")
-                service.save_supplier_price_calculations(
+                saved_calculations_count = service.save_supplier_price_calculations(
                     batch_id=self.batch_id,
                     imported_by=self.imported_by,
                     fx_rate=fx_rate,
@@ -1325,7 +1327,7 @@ class SupplierPricesPage(QWidget):
             self._export_quick_order_months = locals().get("quick_order_months", locals().get("quick_months"))
             self._export_safe_stock_months = locals().get("safe_stock_months", locals().get("safe_months", locals().get("order_months")))
 
-            if self.ask_export_calculated_excel():
+            if saved_calculations_count > 0 and self.ask_export_calculated_excel():
                 quick_order_months, safe_stock_months = self.ask_order_planning_months_for_export()
                 try:
                     export_started = self.export_calculated_excel(
@@ -1342,13 +1344,15 @@ class SupplierPricesPage(QWidget):
 
             self.cleanup_current_batch(start_new_batch_after=True)
             self.reset_form_fields_after_successful_save()
-            self.show_message("Данные сохранены")
+            if saved_calculations_count == 0 and saved_prices_count == 0:
+                self.show_message("Данные сохранены. Строки без цены использованы только для продуктов и связок")
+            else:
+                self.show_message("Данные сохранены")
 
             if export_error_text:
                 self.show_error_message(f"Данные сохранены, но Excel не удалось выгрузить:\n{export_error_text}")
         except Exception as e:
             self.show_error_message(str(e))
-
 
     def cleanup_current_batch(self, start_new_batch_after: bool = False):
         current_batch_id = self.batch_id
