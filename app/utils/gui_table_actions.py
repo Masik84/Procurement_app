@@ -334,20 +334,38 @@ def apply_pending_table_deletes_to_db(session: Any, owner: Any) -> None:
     cls_name = owner.__class__.__name__
     if cls_name == "CustomerCostsPage":
         from app.db.models import TempCustomerCostImport, TempCustomerCostOption
-        session.query(TempCustomerCostOption).filter(
-            TempCustomerCostOption.temp_import_id.in_(pending_deletes)
-        ).delete(synchronize_session=False)
-        session.query(TempCustomerCostImport).filter(
-            TempCustomerCostImport.id.in_(pending_deletes)
-        ).delete(synchronize_session=False)
+        batch_id = getattr(owner, "_batch_id", None)
+        imported_by = getattr(owner, "_imported_by", None)
+        option_filters = [TempCustomerCostOption.temp_import_id.in_(pending_deletes)]
+        row_filters = [TempCustomerCostImport.id.in_(pending_deletes)]
+        if batch_id and imported_by:
+            option_filters.extend([
+                TempCustomerCostOption.batch_id == batch_id,
+                TempCustomerCostOption.imported_by == imported_by,
+            ])
+            row_filters.extend([
+                TempCustomerCostImport.batch_id == batch_id,
+                TempCustomerCostImport.imported_by == imported_by,
+            ])
+        session.query(TempCustomerCostOption).filter(*option_filters).delete(synchronize_session=False)
+        session.query(TempCustomerCostImport).filter(*row_filters).delete(synchronize_session=False)
     elif cls_name == "TargetPricesPage":
         from app.db.models import TempTargetPriceImport, TempTargetPriceOption
-        session.query(TempTargetPriceOption).filter(
-            TempTargetPriceOption.temp_import_id.in_(pending_deletes)
-        ).delete(synchronize_session=False)
-        session.query(TempTargetPriceImport).filter(
-            TempTargetPriceImport.id.in_(pending_deletes)
-        ).delete(synchronize_session=False)
+        batch_id = getattr(owner, "batch_id", None)
+        imported_by = getattr(owner, "imported_by", None)
+        option_filters = [TempTargetPriceOption.temp_import_id.in_(pending_deletes)]
+        row_filters = [TempTargetPriceImport.id.in_(pending_deletes)]
+        if batch_id and imported_by:
+            option_filters.extend([
+                TempTargetPriceOption.batch_id == batch_id,
+                TempTargetPriceOption.imported_by == imported_by,
+            ])
+            row_filters.extend([
+                TempTargetPriceImport.batch_id == batch_id,
+                TempTargetPriceImport.imported_by == imported_by,
+            ])
+        session.query(TempTargetPriceOption).filter(*option_filters).delete(synchronize_session=False)
+        session.query(TempTargetPriceImport).filter(*row_filters).delete(synchronize_session=False)
     elif cls_name == "ProductStockPage":
         model_map = getattr(owner, "MODEL_BY_MODE", None)
         model = None
@@ -362,7 +380,12 @@ def apply_pending_table_deletes_to_db(session: Any, owner: Any) -> None:
                 model = TempSupplierOrdersImport
             else:
                 model = TempIsImport
-        session.query(model).filter(model.id.in_(pending_deletes)).delete(synchronize_session=False)
+        filters = [model.id.in_(pending_deletes)]
+        batch_id = getattr(owner, "_batch_id", None)
+        imported_by = getattr(owner, "_imported_by", None)
+        if batch_id and imported_by:
+            filters.extend([model.batch_id == batch_id, model.imported_by == imported_by])
+        session.query(model).filter(*filters).delete(synchronize_session=False)
     else:
         # For pages not known here, deletion is handled in apply_pending_changes().
         return

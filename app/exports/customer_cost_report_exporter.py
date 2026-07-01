@@ -62,14 +62,39 @@ class CustomerCostReportExporter:
         excel.DisplayAlerts = False
         return excel
 
+    @staticmethod
+    def _excel_invariant_number_format(format_code: str | None) -> str | None:
+        if not format_code:
+            return format_code
+        return (
+            str(format_code)
+            .replace("ДД", "dd")
+            .replace("ММ", "mm")
+            .replace("ГГ", "yy")
+            .replace(",0000", ".0000")
+            .replace(",00", ".00")
+            .replace(",0", ".0")
+        )
+
     def _set_number_format_safe(self, target, format_en: str, format_local: str | None = None) -> None:
-        try:
-            target.NumberFormat = format_en
-        except Exception:
-            if format_local:
-                target.NumberFormatLocal = format_local
-            else:
-                raise
+        candidates = []
+        if format_local:
+            candidates.append(("NumberFormatLocal", format_local))
+        if format_en:
+            candidates.append(("NumberFormat", format_en))
+        invariant_local = self._excel_invariant_number_format(format_local)
+        if invariant_local and invariant_local != format_en:
+            candidates.append(("NumberFormat", invariant_local))
+        if format_local and format_local != format_en:
+            candidates.append(("NumberFormat", format_local))
+        candidates.append(("NumberFormat", "General"))
+
+        for attr, fmt in candidates:
+            try:
+                setattr(target, attr, fmt)
+                return
+            except Exception:
+                pass
 
     def _apply_header_common(self, ws, headers_count: int) -> None:
         ws.Cells.Font.Name = "Aptos Narrow"

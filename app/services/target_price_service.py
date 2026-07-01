@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 import uuid
 
@@ -20,6 +20,8 @@ from app.services.cost_calculation_service import CostCalculationService
 from app.services.price_repository import PriceRepository
 from app.services.product_matching_service import ProductMatchingService
 from app.services.supplier_service import SupplierService
+from app.services.supplier_currency_cost_service import SupplierCurrencyCostService
+from app.services.temp_cleanup_service import TempCleanupService
 from app.utils.text import clean_multi_spaces
 
 
@@ -30,6 +32,7 @@ class TargetPriceService:
         self.price_repository = PriceRepository(session)
         self.cost_calculation = CostCalculationService(session)
         self.supplier_service = SupplierService(session)
+        self.currency_cost_service = SupplierCurrencyCostService(session)
         self.importer = TargetPriceImporter()
 
     @staticmethod
@@ -64,16 +67,16 @@ class TargetPriceService:
         self.session.flush()
         return int(deleted or 0)
 
-    def cleanup_old_temp_rows(self, imported_by: str) -> int:
-        # Keep behaviour conservative: remove only current user's old batches not referenced by active page.
-        deleted_options = self.session.query(TempTargetPriceOption).filter(
-            TempTargetPriceOption.imported_by == imported_by
-        ).delete(synchronize_session=False)
-        deleted_rows = self.session.query(TempTargetPriceImport).filter(
-            TempTargetPriceImport.imported_by == imported_by
-        ).delete(synchronize_session=False)
-        self.session.flush()
-        return int(deleted_options or 0) + int(deleted_rows or 0)
+    def delete_temp_rows_for_user(self, imported_by: str) -> int:
+        return TempCleanupService(self.session).delete_current_user(
+            imported_by=imported_by,
+            tables=(TempTargetPriceOption, TempTargetPriceImport),
+        )
+
+    def cleanup_old_temp_rows(self, imported_by: str | None = None, before_date: date | None = None) -> int:
+        # Daily cleanup is global by date: all temp rows older than today are stale.
+        # Current user temp rows are cleaned after successful save.
+        return TempCleanupService(self.session).cleanup_old_for_all(before_date=before_date)
 
     def import_rows(
         self,
@@ -227,12 +230,11 @@ class TargetPriceService:
         return created
 
     def _create_option_from_snapshot(self, row: TempTargetPriceImport, batch_id: str, imported_by: str, supplier_price) -> None:
-        calc = self.cost_calculation.calculate_supplier_costs(
+        calc = self.currency_cost_service.calculate_costs_for_price_record(
             supplier_id=supplier_price.supplier_id,
             product_id=row.selected_product_id,
             supplier_price=supplier_price.price,
-            fx_rate=self._get_fx_rate_for_currency(supplier_price.currency_code),
-            currency_code=supplier_price.currency_code,
+            price_currency_code=supplier_price.currency_code,
         )
 
         def safe(v):
@@ -562,7 +564,7 @@ class TargetPriceService:
                 currency_code=currency_code,
                 fx_rate_used=fx_rate,
                 full_cost_msk_source=option.full_cost_msk,
-                cost_novo_wvat_recalculated=cost_novo_wvat,
+                cost_novo_wvat=cost_novo_wvat,
                 fx_markup_used=fx_markup,
                 transport_used=transport,
                 reexport_used=reexport,

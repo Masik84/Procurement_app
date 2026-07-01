@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.db.models import CurrentSupplierPrice, PriceHistory, Product, ProductStock, Supplier
 from app.services.cost_calculation_service import CostCalculationService
 from app.services.supplier_service import SupplierService
+from app.services.supplier_currency_cost_service import SupplierCurrencyCostService
 from app.exports.excel_column_format import apply_standard_worksheet_format, excel_value_by_header
 from app.utils.excel_fast_writer import write_excel_table
 from app.utils.output_headers import standardize_output_header
@@ -22,6 +23,7 @@ class OrderPlanningExporter:
         self.session = session
         self.cost_calculation = CostCalculationService(session)
         self.supplier_service = SupplierService(session)
+        self.currency_cost_service = SupplierCurrencyCostService(session)
         self._xl_center = -4108
         self._xl_vcenter = -4160
 
@@ -72,11 +74,33 @@ class OrderPlanningExporter:
         rng.VerticalAlignment = self._xl_vcenter
         ws.Rows(1).RowHeight = 60
 
+    @staticmethod
+    def _excel_invariant_number_format(fmt: str | None) -> str | None:
+        if not fmt:
+            return fmt
+        return (
+            str(fmt)
+            .replace("ДД", "dd")
+            .replace("ММ", "mm")
+            .replace("ГГ", "yy")
+            .replace(",0000", ".0000")
+            .replace(",00", ".00")
+            .replace(",0", ".0")
+        )
+
     def _set_format(self, target, fmt: str) -> None:
-        try:
-            target.NumberFormatLocal = fmt
-        except Exception:
-            target.NumberFormat = fmt
+        candidates = [
+            ("NumberFormatLocal", fmt),
+            ("NumberFormat", self._excel_invariant_number_format(fmt) or fmt),
+            ("NumberFormat", fmt),
+            ("NumberFormat", "General"),
+        ]
+        for attr, value in candidates:
+            try:
+                setattr(target, attr, value)
+                return
+            except Exception:
+                pass
 
     def _header_map(self, headers: Sequence[str]) -> dict[str, int]:
         return {str(header): idx + 1 for idx, header in enumerate(headers)}
@@ -106,24 +130,27 @@ class OrderPlanningExporter:
             if letter:
                 self._set_format(ws.Columns(f"{letter}:{letter}"), fmt)
 
-    def _calc_supplier_option(self, supplier: Supplier, product_id: int, supplier_price: object, price_date):
-        rate = self.supplier_service.get_rate_to_rub(supplier.base_currency)
-        if rate is None or float(rate) == 0:
-            return None
+    def _calc_supplier_option(
+        self,
+        supplier: Supplier,
+        product_id: int,
+        supplier_price: object,
+        price_date,
+        price_currency_code: object | None = None,
+    ):
         try:
-            calc = self.cost_calculation.calculate_supplier_costs(
+            calc = self.currency_cost_service.calculate_costs_for_price_record(
                 supplier_id=supplier.id,
                 product_id=product_id,
                 supplier_price=self._to_decimal(supplier_price),
-                fx_rate=self._to_decimal(rate),
-                currency_code=supplier.base_currency,
+                price_currency_code=price_currency_code or supplier.base_currency,
             )
             return {
                 "supplier": supplier.name or "",
                 "cost_novo": calc.cost_novo_wvat,
                 "full_cost": calc.full_cost_msk,
                 "date": price_date,
-                "currency": supplier.base_currency or "",
+                "currency": calc.currency_code,
             }
         except Exception:
             return None
@@ -143,13 +170,25 @@ class OrderPlanningExporter:
                 CurrentSupplierPrice.product_id == product_id,
             ).first()
             if current is not None:
-                option = self._calc_supplier_option(supplier, product_id, current.price, current.last_update)
+                option = self._calc_supplier_option(
+                    supplier,
+                    product_id,
+                    current.price,
+                    current.last_update,
+                    current.currency,
+                )
             else:
                 history = self.session.query(PriceHistory).filter(
                     PriceHistory.supplier_id == supplier_id,
                     PriceHistory.product_id == product_id,
                 ).order_by(PriceHistory.price_date.desc()).first()
-                option = self._calc_supplier_option(supplier, product_id, history.price, history.price_date) if history else None
+                option = self._calc_supplier_option(
+                    supplier,
+                    product_id,
+                    history.price,
+                    history.price_date,
+                    history.currency,
+                ) if history else None
             if option and option["full_cost"] is not None:
                 options.append(option)
         options.sort(key=lambda x: (self._to_decimal(x["full_cost"]), str(x["supplier"]).lower()))

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.db.models import PriceHistory, Product, ProductStock, Supplier, SupplierPriceCalculation, TempPriceImport, OrderPlanningCalculation
 from app.services.cost_calculation_service import CostCalculationService
 from app.services.price_repository import PriceRepository
+from app.services.supplier_currency_cost_service import SupplierCurrencyCostService
 from app.utils.excel_fast_writer import write_excel_table
 
 
@@ -20,6 +21,7 @@ class SupplierPriceExporter:
         self.session = session
         self.cost_calculation = CostCalculationService(session)
         self.price_repository = PriceRepository(session)
+        self.currency_cost_service = SupplierCurrencyCostService(session)
 
         self._xl_center = -4108
         self._xl_vcenter = -4160
@@ -99,12 +101,18 @@ class SupplierPriceExporter:
         supplier = self.session.query(Supplier).filter(Supplier.id == supplier_id).first()
         if supplier is None:
             return "", None
+        return self._get_currency_rate(supplier.base_currency)
+
+    def _get_currency_rate(self, currency_code: object):
+        currency = str(currency_code or "").strip().upper()
+        if not currency:
+            return "", None
         try:
             from app.services.supplier_service import SupplierService
-            rate = SupplierService(self.session).get_rate_to_rub(supplier.base_currency)
+            rate = SupplierService(self.session).get_rate_to_rub(currency)
         except Exception:
             rate = None
-        return supplier.base_currency or "", rate
+        return currency, rate
 
     def _copy_header_style(self, ws, from_header: str, to_header: str, headers: list[str]):
         if from_header not in headers or to_header not in headers:
@@ -123,7 +131,7 @@ class SupplierPriceExporter:
         if header not in headers:
             return
         col = self._excel_column_letter(headers.index(header) + 1)
-        ws.Columns(f"{col}:{col}").NumberFormatLocal = "# ##0"
+        self._set_number_format_safe(ws.Columns(f"{col}:{col}"), "# ##0", "# ##0")
         ws.Columns(f"{col}:{col}").ColumnWidth = 7.29
 
     def _fixed_vat_formula_literal(self) -> str:
@@ -165,6 +173,67 @@ class SupplierPriceExporter:
 
         uc3_col = self._excel_column_letter(uc3_idx)
         ws.Range(f"{uc3_col}{first_row}:{uc3_col}{last_row}").FormulaR1C1 = formula
+
+    def _write_target_price_l_formulas(self, ws, headers: list[str], first_row: int, last_row: int) -> None:
+        if last_row < first_row:
+            return
+        required_headers = ["Target price, L", "Дистр цена", "Промо цена", "uC3 PY"]
+        if any(header not in headers for header in required_headers):
+            return
+
+        target_idx = headers.index("Target price, L") + 1
+        distr_idx = headers.index("Дистр цена") + 1
+        promo_idx = headers.index("Промо цена") + 1
+        uc3_py_idx = headers.index("uC3 PY") + 1
+
+        distr_ref = self._r1c1_ref(distr_idx - target_idx)
+        promo_ref = self._r1c1_ref(promo_idx - target_idx)
+        uc3_py_ref = self._r1c1_ref(uc3_py_idx - target_idx)
+
+        no_distr_expr = f'OR({distr_ref}="",{distr_ref}=0)'
+        no_promo_expr = f'OR({promo_ref}="",{promo_ref}=0)'
+        min_price_expr = (
+            f'IF({no_distr_expr},{promo_ref},'
+            f'IF({no_promo_expr},{distr_ref},MIN({distr_ref},{promo_ref})))'
+        )
+        formula = (
+            f'=IF(OR(AND({no_distr_expr},{no_promo_expr}),{uc3_py_ref}=""),"",'
+            f'{min_price_expr}-{uc3_py_ref})'
+        )
+
+        target_col = self._excel_column_letter(target_idx)
+        ws.Range(f"{target_col}{first_row}:{target_col}{last_row}").FormulaR1C1 = formula
+
+    def _write_min_uc3_stock_formulas(self, ws, headers: list[str], first_row: int, last_row: int) -> None:
+        if last_row < first_row:
+            return
+        required_headers = ["min uC3 stock", "Дистр цена", "Промо цена", "curr Landed cost"]
+        if any(header not in headers for header in required_headers):
+            return
+
+        vat_literal = self._fixed_vat_formula_literal()
+        target_idx = headers.index("min uC3 stock") + 1
+        distr_idx = headers.index("Дистр цена") + 1
+        promo_idx = headers.index("Промо цена") + 1
+        landed_idx = headers.index("curr Landed cost") + 1
+
+        distr_ref = self._r1c1_ref(distr_idx - target_idx)
+        promo_ref = self._r1c1_ref(promo_idx - target_idx)
+        landed_ref = self._r1c1_ref(landed_idx - target_idx)
+
+        no_distr_expr = f'OR({distr_ref}="",{distr_ref}=0)'
+        no_promo_expr = f'OR({promo_ref}="",{promo_ref}=0)'
+        min_price_expr = (
+            f'IF({no_distr_expr},{promo_ref},'
+            f'IF({no_promo_expr},{distr_ref},MIN({distr_ref},{promo_ref})))'
+        )
+        formula = (
+            f'=IF(OR(AND({no_distr_expr},{no_promo_expr}),{landed_ref}="",{vat_literal}=0),"",'
+            f'({min_price_expr}-{landed_ref})/(1+{vat_literal}))'
+        )
+
+        target_col = self._excel_column_letter(target_idx)
+        ws.Range(f"{target_col}{first_row}:{target_col}{last_row}").FormulaR1C1 = formula
 
     @staticmethod
     def _calc_pack_price(price_per_l: object, pack: object):
@@ -304,14 +373,40 @@ class SupplierPriceExporter:
         header_range.VerticalAlignment = self._xl_vcenter
         ws.Rows(1).EntireRow.AutoFit()
 
-    def _set_number_format_safe(self, target, format_en: str, format_local: str | None = None):
-        try:
-            target.NumberFormat = format_en
-        except Exception:
-            if format_local:
-                target.NumberFormatLocal = format_local
-            else:
-                raise
+    @staticmethod
+    def _excel_invariant_number_format(format_code: str | None) -> str | None:
+        if not format_code:
+            return format_code
+        return (
+            str(format_code)
+            .replace("ДД", "dd")
+            .replace("ММ", "mm")
+            .replace("ГГ", "yy")
+            .replace(",0000", ".0000")
+            .replace(",00", ".00")
+            .replace(",0", ".0")
+        )
+
+    def _set_number_format_safe(self, target, format_en: str = "General", format_local: str | None = None):
+        """Set Excel number format without breaking export on locale-specific Excel builds."""
+        candidates = []
+        if format_local:
+            candidates.append(("NumberFormatLocal", format_local))
+        if format_en:
+            candidates.append(("NumberFormat", format_en))
+        invariant_local = self._excel_invariant_number_format(format_local)
+        if invariant_local and invariant_local != format_en:
+            candidates.append(("NumberFormat", invariant_local))
+        if format_local and format_local != format_en:
+            candidates.append(("NumberFormat", format_local))
+        candidates.append(("NumberFormat", "General"))
+
+        for attr, fmt in candidates:
+            try:
+                setattr(target, attr, fmt)
+                return
+            except Exception:
+                pass
 
 
     def _header_map(self, headers: list[str]) -> dict[str, int]:
@@ -326,7 +421,11 @@ class SupplierPriceExporter:
     def _set_format_by_header(self, ws, header_map: dict[str, int], header: str, format_local: str) -> None:
         letter = self._column_letter_by_header(header_map, header)
         if letter:
-            ws.Columns(f"{letter}:{letter}").NumberFormatLocal = format_local
+            self._set_number_format_safe(
+                ws.Columns(f"{letter}:{letter}"),
+                self._excel_invariant_number_format(format_local) or "General",
+                format_local,
+            )
 
     def _set_width_by_header(self, ws, header_map: dict[str, int], header: str, width: float) -> None:
         letter = self._column_letter_by_header(header_map, header)
@@ -337,11 +436,10 @@ class SupplierPriceExporter:
         header_map = self._header_map(headers)
 
         text_headers = ["Supplier Article"]
-        price_decimal_headers = ["Price, L", "Price, pack", "Price, L (prev)"]
+        price_decimal_headers = ["Price, L", "Price, pack", "Price, L (prev)", "Target price, L"]
         rub_headers = [
             "Cost Novo with VAT",
             "Full Cost Msk",
-            "uC3",
             "Cost Novo with VAT (prev)",
             "Full Cost Msk (prev)",
             "Дистр цена",
@@ -351,11 +449,14 @@ class SupplierPriceExporter:
             "Best full Price, L",
             "Best full Price, L 2",
         ]
+        uc3_headers = ["uC3", "min uC3 stock", "uC3 PY", "uC3 3 mnth"]
         date_headers = ["last update", "last update (prev)", "last update Best1", "last update Best2"]
         integer_headers = [
             "Qty, pcs",
             "Volume, L",
             "Volume to take",
+            "Volume PY",
+            "Volume 3 mnth",
             "Stock",
             "Transit",
             "Purchase Order",
@@ -375,6 +476,8 @@ class SupplierPriceExporter:
             self._set_format_by_header(ws, header_map, header, "# ##0,00_ ;[Red]-# ##0,00_ ;'-'")
         for header in rub_headers:
             self._set_format_by_header(ws, header_map, header, "# ##0 ₽")
+        for header in uc3_headers:
+            self._set_format_by_header(ws, header_map, header, '# ##0,00;[Red]-# ##0,00;"-"')
         for header in date_headers:
             self._set_format_by_header(ws, header_map, header, "ДД.ММ.ГГ;@")
         for header in integer_headers:
@@ -384,8 +487,11 @@ class SupplierPriceExporter:
 
         for header in ("Supplier Product Name", "Our Product Name"):
             self._set_width_by_header(ws, header_map, header, 31.14)
-        for header in ("Qty, pcs", "Volume, L", "Volume to take"):
+        for header in ("Qty, pcs", "Volume, L", "Volume to take", "Volume PY", "Volume 3 mnth"):
             self._set_width_by_header(ws, header_map, header, 10.50)
+        for header in ("uC3", "Target price, L", "uC3 PY", "uC3 3 mnth"):
+            self._set_width_by_header(ws, header_map, header, 7.57)
+        self._set_width_by_header(ws, header_map, "min uC3 stock", 10.50)
         self._set_width_by_header(ws, header_map, "last update", 11.00)
         self._set_width_by_header(ws, header_map, "last update (prev)", 11.00)
         self._set_width_by_header(ws, header_map, "Best Suppl", 16.14)
@@ -399,32 +505,39 @@ class SupplierPriceExporter:
         for header in ("Currency", "Currency Best1", "Currency Best2"):
             self._set_width_by_header(ws, header_map, header, 8.14)
 
-    def _calc_supplier_full_cost_from_db(self, supplier_id: int, product_id: int, supplier_price: object):
+    def _calc_supplier_costs_from_price_record(
+        self,
+        supplier_id: int,
+        product_id: int,
+        supplier_price: object,
+        price_currency_code: object | None = None,
+    ):
         if supplier_price is None:
             return None
-
-        supplier = self.session.query(Supplier).filter(Supplier.id == supplier_id).first()
-        if supplier is None:
-            return None
-
-        from app.services.supplier_service import SupplierService
-
-        supplier_service = SupplierService(self.session)
-        rate_to_rub = supplier_service.get_rate_to_rub(supplier.base_currency)
-        if rate_to_rub is None or float(rate_to_rub) == 0:
-            return None
-
         try:
-            result = self.cost_calculation.calculate_supplier_costs(
+            return self.currency_cost_service.calculate_costs_for_price_record(
                 supplier_id=supplier_id,
                 product_id=product_id,
-                supplier_price=self._to_decimal(supplier_price),
-                fx_rate=self._to_decimal(rate_to_rub),
-                currency_code=supplier.base_currency,
+                supplier_price=supplier_price,
+                price_currency_code=price_currency_code,
             )
-            return result.full_cost_msk
         except Exception:
             return None
+
+    def _calc_supplier_full_cost_from_db(
+        self,
+        supplier_id: int,
+        product_id: int,
+        supplier_price: object,
+        price_currency_code: object | None = None,
+    ):
+        calc = self._calc_supplier_costs_from_price_record(
+            supplier_id=supplier_id,
+            product_id=product_id,
+            supplier_price=supplier_price,
+            price_currency_code=price_currency_code,
+        )
+        return calc.full_cost_msk if calc is not None else None
 
     def _consider_best_candidate(self, cand_supplier_name, cand_full_cost, cand_date, best1, best2, cand_fx_rate=None, cand_currency=""):
         if not cand_supplier_name or cand_full_cost is None:
@@ -464,6 +577,8 @@ class SupplierPriceExporter:
         current_imported_full_cost,
         current_imported_date,
         min_price_date=None,
+        current_imported_fx_rate=None,
+        current_imported_currency="",
     ):
         best1 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": ""}
         best2 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": ""}
@@ -479,8 +594,8 @@ class SupplierPriceExporter:
                 current_imported_date,
                 best1,
                 best2,
-                self._get_supplier_currency_rate(current_supplier_id)[1],
-                self._get_supplier_currency_rate(current_supplier_id)[0],
+                current_imported_fx_rate,
+                current_imported_currency,
             )
 
         seen.add(current_supplier_id)
@@ -497,6 +612,7 @@ class SupplierPriceExporter:
                 current_row.supplier_id,
                 product_id,
                 current_row.price,
+                current_row.currency_code,
             )
             best1, best2 = self._consider_best_candidate(
                 current_row.supplier_name,
@@ -504,8 +620,8 @@ class SupplierPriceExporter:
                 current_row.price_date,
                 best1,
                 best2,
-                self._get_supplier_currency_rate(current_row.supplier_id)[1],
-                self._get_supplier_currency_rate(current_row.supplier_id)[0],
+                self._get_currency_rate(current_row.currency_code)[1],
+                self._get_currency_rate(current_row.currency_code)[0],
             )
             seen.add(current_row.supplier_id)
 
@@ -536,15 +652,20 @@ class SupplierPriceExporter:
             if supplier_key in seen:
                 continue
             history_row, supplier_row = data
-            v_full_cost = self._calc_supplier_full_cost_from_db(supplier_row.id, product_id, history_row.price)
+            v_full_cost = self._calc_supplier_full_cost_from_db(
+                supplier_row.id,
+                product_id,
+                history_row.price,
+                history_row.currency,
+            )
             best1, best2 = self._consider_best_candidate(
                 supplier_row.name,
                 v_full_cost,
                 history_row.price_date,
                 best1,
                 best2,
-                self._get_supplier_currency_rate(supplier_row.id)[1],
-                self._get_supplier_currency_rate(supplier_row.id)[0],
+                self._get_currency_rate(history_row.currency)[1],
+                self._get_currency_rate(history_row.currency)[0],
             )
             seen.add(supplier_key)
 
@@ -562,30 +683,17 @@ class SupplierPriceExporter:
         if prev_snapshot is None:
             return None, None, None, None
 
-        prev_price = prev_snapshot.price
-        prev_full_cost = self._calc_supplier_full_cost_from_db(supplier_id, product_id, prev_price)
-        prev_cost_novo = None
-        if prev_full_cost is not None:
-            try:
-                supplier = self.session.query(Supplier).filter(Supplier.id == supplier_id).first()
-                if supplier is not None:
-                    from app.services.supplier_service import SupplierService
+        calc_result = self._calc_supplier_costs_from_price_record(
+            supplier_id=supplier_id,
+            product_id=product_id,
+            supplier_price=prev_snapshot.price,
+            price_currency_code=prev_snapshot.currency_code,
+        )
 
-                    supplier_service = SupplierService(self.session)
-                    rate_to_rub = supplier_service.get_rate_to_rub(supplier.base_currency)
-                    if rate_to_rub is not None and float(rate_to_rub) != 0:
-                        calc_result = self.cost_calculation.calculate_supplier_costs(
-                            supplier_id=supplier_id,
-                            product_id=product_id,
-                            supplier_price=self._to_decimal(prev_price),
-                            fx_rate=self._to_decimal(rate_to_rub),
-                            currency_code=supplier.base_currency,
-                        )
-                        prev_cost_novo = calc_result.cost_novo_wvat
-            except Exception:
-                prev_cost_novo = None
+        prev_cost_novo = calc_result.cost_novo_wvat if calc_result is not None else None
+        prev_full_cost = calc_result.full_cost_msk if calc_result is not None else None
 
-        return prev_price, prev_cost_novo, prev_full_cost, prev_snapshot.price_date
+        return prev_snapshot.price, prev_cost_novo, prev_full_cost, prev_snapshot.price_date
 
 
     def _get_latest_avg_sales_month(self, product_id: int):
@@ -705,6 +813,8 @@ class SupplierPriceExporter:
                     current_imported_full_cost=calc_row.full_cost_msk if calc_row else None,
                     current_imported_date=calc_row.calc_date if calc_row else current_price_date,
                     min_price_date=min_price_date,
+                    current_imported_fx_rate=calc_row.fx_rate_used if calc_row else None,
+                    current_imported_currency=calc_row.currency_code if calc_row else (supplier.base_currency if supplier else ""),
                 )
 
             pack_value = product.pack if product is not None else temp_row.new_pack
@@ -750,6 +860,9 @@ class SupplierPriceExporter:
                     "FX rate": self._round_fx_rate(calc_row.fx_rate_used if calc_row else None),
                     "Cost Novo with VAT": self._excel_value(calc_row.cost_novo_wvat if calc_row else None),
                     "Full Cost Msk": self._excel_value(calc_row.full_cost_msk if calc_row else None),
+                    "Target price, L": None,
+                    "uC3 PY": self._excel_value(getattr(stock, "uc3_py", None) if stock else None),
+                    "uC3 3 mnth": self._excel_value(getattr(stock, "uc3_3m", None) if stock else None),
                     "last update (prev)": prev_price_date,
                     "Price, L (prev)": self._excel_value(prev_price),
                     "Cost Novo with VAT (prev)": self._excel_value(prev_cost_novo),
@@ -758,6 +871,7 @@ class SupplierPriceExporter:
                     "Промо цена": self._excel_value(stock.promo_price if stock else None),
                     "curr LPC": self._excel_value(stock.lpc if stock else None),
                     "curr Landed cost": self._excel_value(stock.landed_cost if stock else None),
+                    "min uC3 stock": None,
                     "Best Suppl": best1["supplier"],
                     "Best full Price, L": self._excel_value(best1["price"]),
                     "last update Best1": best1["date"],
@@ -768,6 +882,8 @@ class SupplierPriceExporter:
                     "last update Best2": best2["date"],
                     "FX rate Best2": self._round_fx_rate(best2.get("fx_rate")),
                     "Currency Best2": best2.get("currency", ""),
+                    "Volume PY": self._excel_value(getattr(stock, "volume_py", None) if stock else None),
+                    "Volume 3 mnth": self._excel_value(getattr(stock, "volume_3m", None) if stock else None),
                     "Stock": self._excel_value(stock.stock_qty if stock else None),
                     "Transit": self._excel_value(transit_total),
                     "Purchase Order": self._excel_value(stock.order_qty if stock else None),
@@ -896,6 +1012,9 @@ class SupplierPriceExporter:
                 "Cost Novo with VAT",
                 "Full Cost Msk",
                 "uC3",
+                "Target price, L",
+                "uC3 PY",
+                "uC3 3 mnth",
                 "last update (prev)",
                 "Price, L (prev)",
                 "Cost Novo with VAT (prev)",
@@ -904,6 +1023,7 @@ class SupplierPriceExporter:
                 "Промо цена",
                 "curr LPC",
                 "curr Landed cost",
+                "min uC3 stock",
                 "Best Suppl",
                 "Best full Price, L",
                 "last update Best1",
@@ -914,6 +1034,8 @@ class SupplierPriceExporter:
                 "last update Best2",
                 "FX rate Best2",
                 "Currency Best2",
+                "Volume PY",
+                "Volume 3 mnth",
                 "Stock",
                 "Transit",
                 "Purchase Order",
@@ -950,41 +1072,13 @@ class SupplierPriceExporter:
             write_excel_table(ws, headers, prepared_rows, value_getter=value_for_header)
 
             self._write_uc3_formulas(ws, headers, first_row=2, last_row=len(prepared_rows) + 1)
+            self._write_target_price_l_formulas(ws, headers, first_row=2, last_row=len(prepared_rows) + 1)
+            self._write_min_uc3_stock_formulas(ws, headers, first_row=2, last_row=len(prepared_rows) + 1)
 
             self._apply_header_common(ws, len(headers))
 
-            # ===== Header colors: one-to-one with the Access export layout,
-            # shifted for the inserted "(prev)" block =====
-            ws.Range("A1:K1").Interior.Color = self._rgb(205, 205, 205)
-
-            # prev block
-            ws.Range("L1:O1").Interior.Color = self._rgb(166, 166, 166)
-
-            # price / stock price block
-            ws.Range("P1:S1").Interior.Color = self._rgb(192, 0, 0)
-            ws.Range("P1:S1").Font.Color = self._rgb(255, 255, 255)
-
-            # best supplier 1
-            ws.Range("T1:V1").Interior.Color = self._rgb(0, 176, 240)
-
-            # best supplier 2
-            ws.Range("W1:Y1").Interior.Color = self._rgb(146, 208, 80)
-
-            # stock / transit / purchase order
-            ws.Range("Z1:AB1").Interior.Color = self._rgb(33, 92, 152)
-            ws.Range("Z1:AB1").Font.Color = self._rgb(255, 255, 255)
-
-            # order is / stock is
-            ws.Range("AC1:AD1").Interior.Color = self._rgb(192, 0, 0)
-            ws.Range("AC1:AD1").Font.Color = self._rgb(255, 255, 255)
-
-            # reserve / damaged
-            ws.Range("AE1:AG1").Interior.Color = self._rgb(33, 92, 152)
-            ws.Range("AE1:AG1").Font.Color = self._rgb(255, 255, 255)
-
-            # order planning
-            ws.Range("AH1:AJ1").Interior.Color = self._rgb(160, 43, 147)
-            ws.Range("AH1:AJ1").Font.Color = self._rgb(255, 255, 255)
+            # Header colors are applied by header names, not fixed Excel letters,
+            # because additional calculated columns can shift the layout.
 
             # ===== Number/date formats and widths =====
             # Важно: после добавления новых колонок нельзя форматировать по буквам A/B/C.
@@ -1006,11 +1100,13 @@ class SupplierPriceExporter:
                         rng.Font.ColorIndex = -4105
 
             _paint_header_block("Supplier Article", "Full Cost Msk", self._rgb(205, 205, 205))
-            _paint_header_block("uC3", "uC3", self._rgb(0, 176, 240))
+            _paint_header_block("uC3", "Target price, L", self._rgb(0, 176, 240))
+            _paint_header_block("uC3 PY", "uC3 3 mnth", self._rgb(21, 61, 100), self._rgb(255, 255, 255))
             _paint_header_block("last update (prev)", "Full Cost Msk (prev)", self._rgb(166, 166, 166))
-            _paint_header_block("Дистр цена", "curr Landed cost", self._rgb(192, 0, 0), self._rgb(255, 255, 255))
+            _paint_header_block("Дистр цена", "min uC3 stock", self._rgb(192, 0, 0), self._rgb(255, 255, 255))
             _paint_header_block("Best Suppl", "Currency Best1", self._rgb(0, 176, 240))
             _paint_header_block("Best Suppl 2", "Currency Best2", self._rgb(146, 208, 80))
+            _paint_header_block("Volume PY", "Volume 3 mnth", self._rgb(21, 61, 100), self._rgb(255, 255, 255))
             _paint_header_block("Stock", "Purchase Order", self._rgb(33, 92, 152), self._rgb(255, 255, 255))
             _paint_header_block("Order IS", "Stock IS", self._rgb(192, 0, 0), self._rgb(255, 255, 255))
             _paint_header_block("Reserve cust", "Damaged", self._rgb(33, 92, 152), self._rgb(255, 255, 255))
@@ -1025,6 +1121,10 @@ class SupplierPriceExporter:
                 ("last update Best2", "Currency Best2"),
             ]:
                 self._copy_header_style(ws, _src, _dst, headers)
+            _paint_header_block("uC3", "Target price, L", self._rgb(0, 176, 240))
+            _paint_header_block("uC3 PY", "uC3 3 mnth", self._rgb(21, 61, 100), self._rgb(255, 255, 255))
+            _paint_header_block("Volume PY", "Volume 3 mnth", self._rgb(21, 61, 100), self._rgb(255, 255, 255))
+
             for _fx_header in ("FX rate", "FX rate Best1", "FX rate Best2"):
                 self._format_fx_column(ws, _fx_header, headers)
             for _cur_header in ("Currency", "Currency Best1", "Currency Best2"):

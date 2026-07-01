@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import uuid
 from pathlib import Path
 
 from PySide6.QtCore import QFile, Qt, QUrl, QTimer
@@ -125,6 +126,7 @@ class CustomerCostsPage(QWidget):
         self.setup_ui()
         self.setup_connections()
         self.start_new_batch()
+        self.cleanup_old_temp_rows()
         self.refresh_filters()
         self.clear_message()
         
@@ -158,6 +160,12 @@ class CustomerCostsPage(QWidget):
 
     def get_session(self):
         return SessionLocal()
+
+    def cleanup_old_temp_rows(self):
+        with self.get_session() as session:
+            service = CustomerCostService(session)
+            service.cleanup_old_temp_rows(imported_by=self._imported_by)
+            session.commit()
 
     def get_supplier_price_age_months(self) -> int:
         widget = getattr(self.ui, "spb_SuppPriceAge", None)
@@ -196,7 +204,7 @@ class CustomerCostsPage(QWidget):
             QApplication.clipboard().setText(text)
 
     def start_new_batch(self):
-        self._batch_id = datetime.now().strftime("CC_%Y%m%d_%H%M%S_%f")
+        self._batch_id = f"CC_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{uuid.uuid4().hex[:6]}"
         self._imported_by = get_current_username()
         self.table.clearContents()
         self.table.setRowCount(0)
@@ -1057,13 +1065,19 @@ class CustomerCostsPage(QWidget):
                     )
                     service.save_calculations(batch_id, imported_by)
                     output = exporter.export_kam_files(batch_id, imported_by, folder)
+                    service.delete_temp_rows_for_user(imported_by)
                     session.commit()
                     return output
+
+            def done(_output):
+                self.start_new_batch()
+                self._current_file_path = ""
+                self.show_message("Данные сохранены")
 
             if not start_excel_export(
                 self,
                 do_export,
-                on_finished=lambda _output: self.show_message("Данные сохранены"),
+                on_finished=done,
                 on_error=lambda text: self.show_error_message(str(text)),
             ):
                 self.show_message("Excel файл уже формируется. Можно продолжать работать в программе.")

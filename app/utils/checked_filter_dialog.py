@@ -95,17 +95,29 @@ class CheckedFilterDialog:
         self.ui.lst_Values.blockSignals(False)
 
     def _apply_search_filter(self) -> None:
-        query = " ".join((self.ui.line_Search.text() or "").split()).casefold()
-        tokens = [token for token in query.split(" ") if token]
+        # Search works the same way as product search fields above dropdown lists:
+        # the entered text is treated as one normalized phrase and is matched
+        # against the visible option label.
+        #
+        # Previous logic split the query into separate tokens and searched in
+        # the extended tooltip text. For product filters this returned too many
+        # rows: e.g. "Omala S4 GXV 460" could also show products where
+        # "Omala S4 GXV" came from family and "460" came from another
+        # field.
+        query = self._normalize_search_text(self.ui.line_Search.text())
 
         for index in range(self.ui.lst_Values.count()):
             item = self.ui.lst_Values.item(index)
             if not item:
                 continue
-            haystack = str(item.toolTip() or item.text() or "").casefold()
-            item.setHidden(bool(tokens) and not all(token in haystack for token in tokens))
+            haystack = self._normalize_search_text(item.text())
+            item.setHidden(bool(query) and query not in haystack)
 
         self._update_count_label()
+
+    @staticmethod
+    def _normalize_search_text(value: object) -> str:
+        return " ".join(str(value or "").split()).casefold()
 
     def _set_visible_items_checked(self, checked: bool) -> None:
         state = Qt.Checked if checked else Qt.Unchecked

@@ -1213,7 +1213,9 @@ class SupplierPricesPage(QWidget):
 
             if self._pending_deletes:
                 session.query(TempPriceImport).filter(
-                    TempPriceImport.id.in_(self._pending_deletes)
+                    TempPriceImport.id.in_(self._pending_deletes),
+                    TempPriceImport.batch_id == self.batch_id,
+                    TempPriceImport.imported_by == self.imported_by,
                 ).delete(synchronize_session=False)
 
             session.commit()
@@ -1291,9 +1293,11 @@ class SupplierPricesPage(QWidget):
                             row.new_is_excise = False
 
                 if self._pending_deletes:
-                    session.query(TempPriceImport).filter(TempPriceImport.id.in_(self._pending_deletes)).delete(
-                        synchronize_session=False
-                    )
+                    session.query(TempPriceImport).filter(
+                        TempPriceImport.id.in_(self._pending_deletes),
+                        TempPriceImport.batch_id == self.batch_id,
+                        TempPriceImport.imported_by == self.imported_by,
+                    ).delete(synchronize_session=False)
 
                 service.validate_new_products_before_save(self.batch_id, self.imported_by)
                 service.create_products_from_temp(self.batch_id, self.imported_by)
@@ -1360,7 +1364,8 @@ class SupplierPricesPage(QWidget):
             if current_batch_id:
                 with self.get_session() as session:
                     service = SupplierPriceService(session)
-                    service.reset_batch(current_batch_id, self.imported_by)
+                    service.delete_supplier_price_calculations(current_batch_id, self.imported_by)
+                    service.delete_temp_rows_for_user(self.imported_by)
                     session.commit()
         except Exception:
             pass

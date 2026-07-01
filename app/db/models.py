@@ -318,6 +318,12 @@ class ProductStock(Base):
     distr_price = Column(Numeric, nullable=False, default=0)
     promo_price = Column(Numeric, nullable=False, default=0)
 
+    # Calculated from the sales DB during stock update.
+    volume_py = Column(Numeric, nullable=False, default=0)
+    volume_3m = Column(Numeric, nullable=False, default=0)
+    uc3_py = Column(Numeric, nullable=False, default=0)
+    uc3_3m = Column(Numeric, nullable=False, default=0)
+
     transit_qty = Column(Numeric, nullable=False, default=0)
     order_qty = Column(Numeric, nullable=False, default=0)
 

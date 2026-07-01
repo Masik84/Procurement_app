@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 import uuid
 from pathlib import Path
 from decimal import Decimal
@@ -13,6 +13,8 @@ from app.services.cost_calculation_service import CostCalculationService
 from app.services.price_repository import PriceRepository
 from app.services.product_matching_service import ProductMatchingService
 from app.services.supplier_service import SupplierService
+from app.services.supplier_currency_cost_service import SupplierCurrencyCostService
+from app.services.temp_cleanup_service import TempCleanupService
 
 
 class CustomerCostService:
@@ -22,6 +24,7 @@ class CustomerCostService:
         self.price_repository = PriceRepository(session)
         self.cost_calculation = CostCalculationService(session)
         self.supplier_service = SupplierService(session)
+        self.currency_cost_service = SupplierCurrencyCostService(session)
         self.importer = CustomerCostImporter()
         self.exporter = CustomerCostExporter(session)
 
@@ -49,6 +52,17 @@ class CustomerCostService:
         ).delete(synchronize_session=False)
         self.session.flush()
         return int(deleted_count or 0)
+
+    def delete_temp_rows_for_user(self, imported_by: str) -> int:
+        return TempCleanupService(self.session).delete_current_user(
+            imported_by=imported_by,
+            tables=(TempCustomerCostOption, TempCustomerCostImport),
+        )
+
+    def cleanup_old_temp_rows(self, imported_by: str | None = None, before_date: date | None = None) -> int:
+        # Daily cleanup is global by date: all temp rows older than today are stale.
+        # Current user temp rows are cleaned after successful save.
+        return TempCleanupService(self.session).cleanup_old_for_all(before_date=before_date)
 
     def import_rows(self, rows: list[dict], batch_id: str, imported_by: str, replace_existing: bool = True) -> int:
         if replace_existing:
@@ -302,12 +316,11 @@ class CustomerCostService:
         return created_count
 
     def _create_option_from_snapshot(self, row: TempCustomerCostImport, batch_id: str, imported_by: str, supplier_price) -> None:
-        calc = self.cost_calculation.calculate_supplier_costs(
+        calc = self.currency_cost_service.calculate_costs_for_price_record(
             supplier_id=supplier_price.supplier_id,
             product_id=row.selected_product_id,
             supplier_price=supplier_price.price,
-            fx_rate=self._get_fx_rate_for_currency(supplier_price.currency_code),
-            currency_code=supplier_price.currency_code,
+            price_currency_code=supplier_price.currency_code,
         )
 
         def safe(v):
@@ -507,6 +520,7 @@ class CustomerCostService:
         kam_files = []
         if kam_folder is not None:
             kam_files = self.exporter.export_kam_files(batch_id=batch_id, imported_by=imported_by, folder_path=kam_folder)
+        self.delete_temp_rows_for_user(imported_by)
         return {
             "batch_id": batch_id,
             "saved_count": saved_count,

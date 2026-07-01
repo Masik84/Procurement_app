@@ -491,7 +491,7 @@ class PriceReportsPage(QWidget):
             rate_item = self.fx_table.item(row, 1)
             if not cur_item:
                 continue
-            currency = (cur_item.text() or "").strip()
+            currency = (cur_item.text() or "").strip().upper()
             if not currency:
                 continue
             rate = self._to_decimal(rate_item.text() if rate_item else None)
@@ -1254,6 +1254,7 @@ class PriceReportsPage(QWidget):
             fx_rates=fx_rates,
             fixed_costs=fixed_costs,
             session=session,
+            price_currency=latest["currency"],
         )
         full_cost = self._calc_full_cost(
             product=product,
@@ -1263,6 +1264,7 @@ class PriceReportsPage(QWidget):
             fixed_costs=fixed_costs,
             session=session,
             cost_novo=cost_novo,
+            price_currency=latest["currency"],
         )
         return SupplierOption(
             supplier_id=supplier.id,
@@ -1270,7 +1272,7 @@ class PriceReportsPage(QWidget):
             supplier_price=latest["price"],
             price_date=latest["price_date"],
             currency=latest["currency"],
-            fx_rate=fx_rates.get((latest["currency"] or "").strip()),
+            fx_rate=fx_rates.get((latest["currency"] or "").strip().upper()),
             cost_novo=cost_novo,
             full_cost=full_cost,
         )
@@ -1294,6 +1296,7 @@ class PriceReportsPage(QWidget):
             fx_rates=fx_rates,
             fixed_costs=fixed_costs,
             session=session,
+            price_currency=previous["currency"],
         )
         full_cost = self._calc_full_cost(
             product=product,
@@ -1303,6 +1306,7 @@ class PriceReportsPage(QWidget):
             fixed_costs=fixed_costs,
             session=session,
             cost_novo=cost_novo,
+            price_currency=previous["currency"],
         )
         return SupplierOption(
             supplier_id=supplier.id,
@@ -1310,7 +1314,7 @@ class PriceReportsPage(QWidget):
             supplier_price=previous["price"],
             price_date=previous["price_date"],
             currency=previous["currency"],
-            fx_rate=fx_rates.get((previous["currency"] or "").strip()),
+            fx_rate=fx_rates.get((previous["currency"] or "").strip().upper()),
             cost_novo=cost_novo,
             full_cost=full_cost,
         )
@@ -1354,6 +1358,28 @@ class PriceReportsPage(QWidget):
         options.sort(key=lambda opt: (self._sort_cost_key(opt.full_cost), opt.supplier_name.lower()))
         return options
 
+    @staticmethod
+    def _currency(value: object) -> str:
+        return str(value or "").strip().upper()
+
+    def _convert_amount_by_rates(
+        self,
+        amount: object,
+        from_currency: object,
+        to_currency: object,
+        fx_rates: Dict[str, Decimal],
+    ) -> Optional[Decimal]:
+        value = self._to_decimal(amount, Decimal("0")) or Decimal("0")
+        source = self._currency(from_currency)
+        target = self._currency(to_currency)
+        if value == 0 or not source or not target or source == target:
+            return value
+        source_rate = fx_rates.get(source)
+        target_rate = fx_rates.get(target)
+        if source_rate is None or target_rate is None or source_rate == 0 or target_rate == 0:
+            return None
+        return self._round4(value * source_rate / target_rate)
+
     def _calc_cost_novo(
         self,
         product: Product,
@@ -1362,18 +1388,27 @@ class PriceReportsPage(QWidget):
         fx_rates: Dict[str, Decimal],
         fixed_costs: Optional[FixedCosts],
         session,
+        price_currency: Optional[str] = None,
     ) -> Optional[Decimal]:
         if supplier_price is None or supplier_price == 0:
             return None
 
-        fx_rate = fx_rates.get((supplier.base_currency or "").strip())
+        supplier_currency = self._currency(getattr(supplier, "base_currency", None))
+        calc_currency = self._currency(price_currency) or supplier_currency
+        fx_rate = fx_rates.get(calc_currency)
         if fx_rate is None or fx_rate == 0:
             return None
 
-        transport = self._to_decimal(getattr(supplier, "transport_cost_per_l", None), Decimal("0"))
+        transport = self._to_decimal(getattr(supplier, "transport_cost_per_l", None), Decimal("0")) or Decimal("0")
+        agent_fee = self._to_decimal(getattr(supplier, "agent_fee", None), Decimal("0")) or Decimal("0")
+        if supplier_currency and calc_currency and supplier_currency != calc_currency:
+            transport = self._convert_amount_by_rates(transport, supplier_currency, calc_currency, fx_rates)
+            agent_fee = self._convert_amount_by_rates(agent_fee, supplier_currency, calc_currency, fx_rates)
+            if transport is None or agent_fee is None:
+                return None
+
         reexport = self._to_decimal(getattr(supplier, "reexport_percent", None), Decimal("0"))
         fx_markup = self._to_decimal(getattr(supplier, "fx_rate_markup", None), Decimal("0"))
-        agent_fee = self._to_decimal(getattr(supplier, "agent_fee", None), Decimal("0"))
 
         customs_clearance = self._fixed_cost(fixed_costs, "customs_clearance")
         additional_customs = self._fixed_cost(fixed_costs, "additional_customs")
@@ -1422,9 +1457,18 @@ class PriceReportsPage(QWidget):
         fixed_costs: Optional[FixedCosts],
         session,
         cost_novo: Optional[Decimal] = None,
+        price_currency: Optional[str] = None,
     ) -> Optional[Decimal]:
         if cost_novo is None:
-            cost_novo = self._calc_cost_novo(product, supplier, supplier_price, fx_rates, fixed_costs, session)
+            cost_novo = self._calc_cost_novo(
+                product,
+                supplier,
+                supplier_price,
+                fx_rates,
+                fixed_costs,
+                session,
+                price_currency=price_currency,
+            )
         if cost_novo is None:
             return None
 

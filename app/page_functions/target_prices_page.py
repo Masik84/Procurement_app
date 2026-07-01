@@ -897,11 +897,13 @@ class TargetPricesPage(QWidget):
                         manual_full_costs=manual_full_costs,
                     )
                     output = exporter.export_final(batch_id, imported_by, save_path)
+                    service.delete_temp_rows_for_user(imported_by)
                     session.commit()
                     return output
 
             def done(output_path):
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_path)))
+                self.start_new_batch()
                 self.show_message("Target price сохранен")
 
             if not start_excel_export(self, do_export, on_finished=done, on_error=lambda text: self.show_error_message(str(text))):

@@ -6,13 +6,7 @@ from dotenv import load_dotenv
 
 
 def get_base_dir() -> Path:
-    """
-    Обычный запуск:
-        C:/работа/My_Work_Phoenix/Procurement_app
 
-    Запуск exe:
-        C:/работа/My_Work_Phoenix/Procurement_app/dist/ProcurementApp
-    """
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
 

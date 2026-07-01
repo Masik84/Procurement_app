@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import date, datetime
 import uuid
 from pathlib import Path
 from decimal import Decimal
@@ -13,6 +13,8 @@ from app.imports.stock_importer import StockImporter
 from app.imports.supplier_orders_importer import SupplierOrdersImporter
 from app.db.models import Product, ProductArticle, ProductStock, TempIsImport, TempStockImport, TempSupplierOrdersImport
 from app.services.product_matching_service import ProductMatchingService
+from app.services.sales_stock_metrics_service import ProductStockMetrics, SalesStockMetricsService
+from app.services.temp_cleanup_service import TempCleanupService
 
 
 class ProductStockService:
@@ -23,6 +25,7 @@ class ProductStockService:
         self.supplier_orders_importer = SupplierOrdersImporter()
         self.is_importer = ISImporter()
         self.exporter = ProductStockExporter(session)
+        self.sales_metrics_service = SalesStockMetricsService(session)
 
     @staticmethod
     def _to_decimal(value: object) -> Decimal:
@@ -32,26 +35,19 @@ class ProductStockService:
             return value
         return Decimal(str(value))
 
+    def cleanup_old_temp_rows(self, imported_by: str | None = None, before_date: date | None = None) -> int:
+        # Daily cleanup is global by date: all temp rows older than today are stale.
+        # Current user temp rows are cleaned after successful save.
+        return TempCleanupService(self.session).cleanup_old_for_all(before_date=before_date)
+
     def cleanup_old_temp_stock(self) -> int:
-        deleted = self.session.query(TempStockImport).filter(
-            (TempStockImport.import_date.is_(None)) | (TempStockImport.import_date < datetime.now().date())
-        ).delete(synchronize_session=False)
-        self.session.flush()
-        return int(deleted or 0)
+        return self.cleanup_old_temp_rows()
 
     def cleanup_old_temp_supplier_orders(self) -> int:
-        deleted = self.session.query(TempSupplierOrdersImport).filter(
-            (TempSupplierOrdersImport.import_date.is_(None)) | (TempSupplierOrdersImport.import_date < datetime.now().date())
-        ).delete(synchronize_session=False)
-        self.session.flush()
-        return int(deleted or 0)
+        return self.cleanup_old_temp_rows()
 
     def cleanup_old_temp_is(self) -> int:
-        deleted = self.session.query(TempIsImport).filter(
-            (TempIsImport.import_date.is_(None)) | (TempIsImport.import_date < datetime.now().date())
-        ).delete(synchronize_session=False)
-        self.session.flush()
-        return int(deleted or 0)
+        return self.cleanup_old_temp_rows()
 
     def delete_stock_rows(self, batch_id: str, imported_by: str) -> int:
         deleted = self.session.query(TempStockImport).filter(
@@ -61,6 +57,12 @@ class ProductStockService:
         self.session.flush()
         return int(deleted or 0)
 
+    def delete_stock_rows_for_user(self, imported_by: str) -> int:
+        return TempCleanupService(self.session).delete_current_user(
+            imported_by=imported_by,
+            tables=(TempStockImport,),
+        )
+
     def delete_supplier_orders_rows(self, batch_id: str, imported_by: str) -> int:
         deleted = self.session.query(TempSupplierOrdersImport).filter(
             TempSupplierOrdersImport.batch_id == batch_id,
@@ -69,6 +71,12 @@ class ProductStockService:
         self.session.flush()
         return int(deleted or 0)
 
+    def delete_supplier_orders_rows_for_user(self, imported_by: str) -> int:
+        return TempCleanupService(self.session).delete_current_user(
+            imported_by=imported_by,
+            tables=(TempSupplierOrdersImport,),
+        )
+
     def delete_is_rows(self, batch_id: str, imported_by: str) -> int:
         deleted = self.session.query(TempIsImport).filter(
             TempIsImport.batch_id == batch_id,
@@ -76,6 +84,12 @@ class ProductStockService:
         ).delete(synchronize_session=False)
         self.session.flush()
         return int(deleted or 0)
+
+    def delete_is_rows_for_user(self, imported_by: str) -> int:
+        return TempCleanupService(self.session).delete_current_user(
+            imported_by=imported_by,
+            tables=(TempIsImport,),
+        )
 
     def import_stock_rows(self, rows: list[dict], batch_id: str, imported_by: str, replace_existing: bool = True) -> int:
         if replace_existing:
@@ -394,6 +408,8 @@ class ProductStockService:
 
         vals_any = []
         vals_import_non_ru = []
+        positive_any = []
+        positive_import_non_ru = []
 
         for row in rows:
             price_val = getattr(row, field_name)
@@ -401,17 +417,84 @@ class ProductStockService:
                 continue
             d = self._to_decimal(price_val)
             vals_any.append(d)
+            if d > 0:
+                positive_any.append(d)
             brand_group = str(row.source_brand_group or "").strip().lower()
             if brand_group == "import" and not self._is_origin_ru(row.source_origin):
                 vals_import_non_ru.append(d)
+                if d > 0:
+                    positive_import_non_ru.append(d)
 
-        if not vals_any:
-            return Decimal("0")
-        if len(vals_any) == 1:
-            return vals_any[0]
+        # Empty prices are imported as 0. They must not make the final distributor/promo
+        # price equal to 0 when the same product also has a valid positive price.
+        if positive_import_non_ru:
+            return min(positive_import_non_ru)
+        if positive_any:
+            return min(positive_any)
         if vals_import_non_ru:
             return min(vals_import_non_ru)
-        return min(vals_any)
+        if vals_any:
+            return min(vals_any)
+        return Decimal("0")
+
+
+    def _apply_sales_metrics_to_product_stock(
+        self,
+        metrics_by_product: dict[int, ProductStockMetrics],
+        now: datetime,
+    ) -> int:
+        if not metrics_by_product:
+            return 0
+
+        product_ids = list(metrics_by_product.keys())
+        products = self._load_products_map(product_ids)
+        stocks = self._load_product_stock_map(product_ids)
+
+        saved = 0
+        for product_id, metric in metrics_by_product.items():
+            product = products.get(product_id)
+            if product is None:
+                continue
+
+            stock = stocks.get(product_id)
+            if stock is None:
+                stock = ProductStock(
+                    product_id=product_id,
+                    product_name=product.name or "",
+                    stock_update_date=now,
+                    supplier_orders_update_date=now,
+                    is_update_date=now,
+                    stock_qty=0,
+                    markdown_qty=0,
+                    reserve_qty=0,
+                    reserve_ecomm_qty=0,
+                    lpc=0,
+                    landed_cost=0,
+                    distr_price=0,
+                    promo_price=0,
+                    volume_py=0,
+                    volume_3m=0,
+                    uc3_py=0,
+                    uc3_3m=0,
+                    transit_qty=0,
+                    order_qty=0,
+                    is_order_qty=0,
+                    is_confirmed_order_qty=0,
+                    is_stock_qty=0,
+                )
+                self.session.add(stock)
+                stocks[product_id] = stock
+
+            stock.product_name = product.name or ""
+            stock.stock_update_date = now
+            stock.lpc = metric.lpc
+            stock.volume_py = metric.volume_py
+            stock.volume_3m = metric.volume_3m
+            stock.uc3_py = metric.uc3_py
+            stock.uc3_3m = metric.uc3_3m
+            saved += 1
+
+        return saved
 
     def _weighted_field_by_product(self, batch_id: str, imported_by: str, product_id: int, field_name: str) -> Decimal:
         rows = self.session.query(TempStockImport).filter(
@@ -450,12 +533,25 @@ class ProductStockService:
 
     def save_stock_to_product_stock(self, batch_id: str, imported_by: str) -> int:
         now = datetime.combine(datetime.now().date(), datetime.min.time())
+        try:
+            sales_metrics = self.sales_metrics_service.calculate(update_date=now.date())
+        except Exception as exc:
+            raise ValueError(f"Не удалось рассчитать LPC/uC3 по БД продаж: {exc}") from exc
 
         self.session.query(ProductStock).update({
             ProductStock.stock_qty: 0,
             ProductStock.transit_qty: 0,
             ProductStock.markdown_qty: 0,
             ProductStock.reserve_qty: 0,
+            ProductStock.reserve_ecomm_qty: 0,
+            ProductStock.lpc: 0,
+            ProductStock.landed_cost: 0,
+            ProductStock.distr_price: 0,
+            ProductStock.promo_price: 0,
+            ProductStock.volume_py: 0,
+            ProductStock.volume_3m: 0,
+            ProductStock.uc3_py: 0,
+            ProductStock.uc3_3m: 0,
             ProductStock.stock_update_date: now,
         }, synchronize_session=False)
 
@@ -492,10 +588,15 @@ class ProductStockService:
             reserve_qty = sum(self._to_decimal(x.reserve_qty) for x in sums)
             reserve_ecomm_qty = sum(self._to_decimal(getattr(x, "reserve_ecomm_qty", 0)) for x in sums)
 
-            lpc_val = self._weighted_field_by_product(batch_id, imported_by, product_id, "lpc")
+            metric = sales_metrics.get(int(product_id))
+            lpc_val = metric.lpc if metric else Decimal("0")
             landed_val = self._weighted_field_by_product(batch_id, imported_by, product_id, "landed_cost")
             distr_val = self._min_price_by_product(batch_id, imported_by, product_id, "distr_price")
             promo_val = self._min_price_by_product(batch_id, imported_by, product_id, "promo_price")
+            volume_py = metric.volume_py if metric else Decimal("0")
+            volume_3m = metric.volume_3m if metric else Decimal("0")
+            uc3_py = metric.uc3_py if metric else Decimal("0")
+            uc3_3m = metric.uc3_3m if metric else Decimal("0")
 
             product = self.session.query(Product).filter(Product.id == product_id).first()
             p_name = product.name if product else ""
@@ -516,6 +617,10 @@ class ProductStockService:
                     landed_cost=landed_val,
                     distr_price=distr_val,
                     promo_price=promo_val,
+                    volume_py=volume_py,
+                    volume_3m=volume_3m,
+                    uc3_py=uc3_py,
+                    uc3_3m=uc3_3m,
                     transit_qty=transit_qty,
                     order_qty=0,
                     is_order_qty=0,
@@ -535,8 +640,13 @@ class ProductStockService:
                 stock.landed_cost = landed_val
                 stock.distr_price = distr_val
                 stock.promo_price = promo_val
+                stock.volume_py = volume_py
+                stock.volume_3m = volume_3m
+                stock.uc3_py = uc3_py
+                stock.uc3_3m = uc3_3m
             saved += 1
 
+        self._apply_sales_metrics_to_product_stock(sales_metrics, now)
         self.session.flush()
         if saved == 0:
             raise ValueError("SaveStockToProductStock: не была сохранена ни одна строка.")
@@ -594,6 +704,10 @@ class ProductStockService:
                     landed_cost=0,
                     distr_price=0,
                     promo_price=0,
+                    volume_py=0,
+                    volume_3m=0,
+                    uc3_py=0,
+                    uc3_3m=0,
                     transit_qty=0,
                     order_qty=order_val,
                     is_order_qty=0,
@@ -661,6 +775,10 @@ class ProductStockService:
                     landed_cost=0,
                     distr_price=0,
                     promo_price=0,
+                    volume_py=0,
+                    volume_3m=0,
+                    uc3_py=0,
+                    uc3_3m=0,
                     transit_qty=0,
                     order_qty=0,
                     is_order_qty=remains_val,
@@ -694,7 +812,7 @@ class ProductStockService:
         created_products_count = self.create_stock_products_from_temp(batch_id, imported_by)
         product_articles_count = self.create_or_update_stock_product_articles(batch_id, imported_by)
         saved_count = self.save_stock_to_product_stock(batch_id, imported_by)
-        self.delete_stock_rows(batch_id, imported_by)
+        self.delete_stock_rows_for_user(imported_by)
         return {
             "batch_id": batch_id,
             "created_products_count": created_products_count,
@@ -715,7 +833,7 @@ class ProductStockService:
         created_products_count = self.create_supplier_orders_products_from_temp(batch_id, imported_by)
         product_articles_count = self.create_or_update_supplier_orders_product_articles(batch_id, imported_by)
         saved_count = self.save_supplier_orders_to_product_stock(batch_id, imported_by)
-        self.delete_supplier_orders_rows(batch_id, imported_by)
+        self.delete_supplier_orders_rows_for_user(imported_by)
         return {
             "batch_id": batch_id,
             "created_products_count": created_products_count,
@@ -736,7 +854,7 @@ class ProductStockService:
         created_products_count = self.create_is_products_from_temp(batch_id, imported_by)
         product_articles_count = self.create_or_update_is_product_articles(batch_id, imported_by)
         saved_count = self.save_is_to_product_stock(batch_id, imported_by)
-        self.delete_is_rows(batch_id, imported_by)
+        self.delete_is_rows_for_user(imported_by)
         return {
             "batch_id": batch_id,
             "created_products_count": created_products_count,

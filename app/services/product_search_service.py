@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import TempProductSearchImport
 from app.services.product_matching_service import ProductMatchingService
+from app.services.temp_cleanup_service import TempCleanupService
 from app.utils.batch import generate_import_batch_id
 
 
@@ -35,18 +36,16 @@ class ProductSearchService:
         self.delete_temp_rows(batch_id, imported_by)
         self.session.flush()
 
-    def cleanup_old_temp_rows(self, imported_by: str, before_date: date | None = None) -> int:
-        cutoff = before_date or date.today()
-        deleted_count = (
-            self.session.query(TempProductSearchImport)
-            .filter(
-                TempProductSearchImport.imported_by == imported_by,
-                TempProductSearchImport.import_date < datetime.combine(cutoff, datetime.min.time()),
-            )
-            .delete(synchronize_session=False)
+    def delete_temp_rows_for_user(self, imported_by: str) -> int:
+        return TempCleanupService(self.session).delete_current_user(
+            imported_by=imported_by,
+            tables=(TempProductSearchImport,),
         )
-        self.session.flush()
-        return int(deleted_count or 0)
+
+    def cleanup_old_temp_rows(self, imported_by: str | None = None, before_date: date | None = None) -> int:
+        # Daily cleanup is global by date: all temp rows older than today are stale.
+        # Current user temp rows are cleaned after successful save.
+        return TempCleanupService(self.session).cleanup_old_for_all(before_date=before_date)
 
     def create_empty_temp_row(
         self,

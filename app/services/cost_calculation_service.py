@@ -123,6 +123,7 @@ class CostCalculationService:
         fx_rate: Decimal,
         fx_markup: Decimal,
         has_customs: bool,
+        agent_fee: Optional[Decimal] = None,
     ) -> Optional[float]:
         if supplier_price is None or self._to_decimal(supplier_price) == Decimal("0"):
             return None
@@ -144,7 +145,9 @@ class CostCalculationService:
         d_vat = self._to_decimal(fixed.vat)
         d_customs_fee = self._to_decimal(fixed.customs_fee)
         d_bank_fee = self._to_decimal(fixed.bank_fee)
-        d_agent_fee = self._to_decimal(getattr(supplier, "agent_fee", None))
+        d_agent_fee = self._to_decimal(
+            getattr(supplier, "agent_fee", None) if agent_fee is None else agent_fee
+        )
 
         if supplier.marks_for_us:
             d_marking = Decimal("0")
@@ -198,6 +201,7 @@ class CostCalculationService:
         fx_markup: Decimal,
         has_customs: bool,
         via_novo: bool,
+        agent_fee: Optional[Decimal] = None,
     ) -> Optional[float]:
         cost_novo = self.calc_cost_novo_wvat(
             supplier_price=supplier_price,
@@ -208,6 +212,7 @@ class CostCalculationService:
             fx_rate=fx_rate,
             fx_markup=fx_markup,
             has_customs=has_customs,
+            agent_fee=agent_fee,
         )
 
         if cost_novo is None:
@@ -250,6 +255,7 @@ class CostCalculationService:
         fx_markup: Optional[Decimal] = None,
         has_customs: Optional[bool] = None,
         via_novo: Optional[bool] = None,
+        agent_fee: Optional[Decimal] = None,
     ) -> CostCalculationResult:
         supplier = self.get_supplier(supplier_id)
         product = self.get_product(product_id)
@@ -270,7 +276,9 @@ class CostCalculationService:
         via_novo_used = bool(
             supplier.is_via_novo if via_novo is None else via_novo
         )
-        agent_fee_used = self._to_decimal(getattr(supplier, "agent_fee", None))
+        agent_fee_used = self._to_decimal(
+            getattr(supplier, "agent_fee", None) if agent_fee is None else agent_fee
+        )
 
         cost_novo = self.calc_cost_novo_wvat(
             supplier_price=self._to_decimal(supplier_price),
@@ -281,6 +289,7 @@ class CostCalculationService:
             fx_rate=self._to_decimal(fx_rate),
             fx_markup=fx_markup_used,
             has_customs=has_customs_used,
+            agent_fee=agent_fee_used,
         )
         if cost_novo is None:
             raise ValueError("Не удалось рассчитать cost_novo_wvat.")
@@ -295,6 +304,7 @@ class CostCalculationService:
             fx_markup=fx_markup_used,
             has_customs=has_customs_used,
             via_novo=via_novo_used,
+            agent_fee=agent_fee_used,
         )
         if full_cost is None:
             raise ValueError("Не удалось рассчитать full_cost_msk.")

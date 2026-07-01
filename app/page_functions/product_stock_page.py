@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import uuid
 from pathlib import Path
 from typing import Any
 from math import isnan
@@ -144,12 +145,19 @@ class ProductStockPage(QWidget):
         self.setup_ui()
         self.setup_connections()
         self.start_new_batch()
+        self.cleanup_old_temp_rows()
         self.refresh_filters()
         self.apply_mode(MODE_STOCK)
         self.clear_message()
 
     def get_session(self):
         return SessionLocal()
+
+    def cleanup_old_temp_rows(self):
+        with self.get_session() as session:
+            service = ProductStockService(session)
+            service.cleanup_old_temp_rows(imported_by=self._imported_by)
+            session.commit()
 
     def eventFilter(self, watched, event):
         if isinstance(watched, QComboBox):
@@ -222,7 +230,7 @@ class ProductStockPage(QWidget):
             QApplication.clipboard().setText(text)
 
     def start_new_batch(self):
-        self._batch_id = datetime.now().strftime("PS_%Y%m%d_%H%M%S_%f")
+        self._batch_id = f"PS_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{uuid.uuid4().hex[:6]}"
         self._imported_by = get_current_username()
         self._current_file_path = ""
 
@@ -925,7 +933,7 @@ class ProductStockPage(QWidget):
                     "ReserveQty": self._format_int_like(row.reserve_qty, blank_zero=True),
                     "ReserveECommQty": self._format_int_like(getattr(row, "reserve_ecomm_qty", 0), blank_zero=True),
                     "LPC": self._format_decimal1(row.lpc, blank_zero=True),
-                    "Comment": "Есть остаток, но LPC пустой или 0. В расчете будет использовано LPC = 0.",
+                    "Comment": "Есть остаток, но LPC в файле пустой или 0. Итоговый LPC рассчитывается по БД продаж.",
                 } for row in warn_rows]
                 if lpc_warnings:
                     sheets.append(("LPC warnings", lpc_warnings))

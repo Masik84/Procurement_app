@@ -696,7 +696,9 @@ class ProductSearchPage(QWidget):
 
             if self._pending_deletes:
                 session.query(TempProductSearchImport).filter(
-                    TempProductSearchImport.id.in_(self._pending_deletes)
+                    TempProductSearchImport.id.in_(self._pending_deletes),
+                    TempProductSearchImport.batch_id == self.batch_id,
+                    TempProductSearchImport.imported_by == self.imported_by,
                 ).delete(synchronize_session=False)
 
             session.commit()
@@ -820,13 +822,16 @@ class ProductSearchPage(QWidget):
 
                 if self._pending_deletes:
                     session.query(TempProductSearchImport).filter(
-                        TempProductSearchImport.id.in_(self._pending_deletes)
+                        TempProductSearchImport.id.in_(self._pending_deletes),
+                        TempProductSearchImport.batch_id == self.batch_id,
+                        TempProductSearchImport.imported_by == self.imported_by,
                     ).delete(synchronize_session=False)
 
                 if not save_to_db_only:
                     service.validate_new_products_before_save(self.batch_id, self.imported_by)
                     service.create_products_from_temp(self.batch_id, self.imported_by)
                     service.create_or_update_product_articles(self.batch_id, self.imported_by)
+                    service.delete_temp_rows_for_user(self.imported_by)
 
                 session.commit()
 

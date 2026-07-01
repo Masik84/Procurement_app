@@ -92,12 +92,30 @@ class CustomerCostExporter:
         header_range.VerticalAlignment = self._xl_vcenter
         ws.Rows(1).EntireRow.AutoFit()
 
+    @staticmethod
+    def _excel_invariant_number_format(format_code: str | None) -> str | None:
+        if not format_code:
+            return format_code
+        return (
+            str(format_code)
+            .replace("ДД", "dd")
+            .replace("ММ", "mm")
+            .replace("ГГ", "yy")
+            .replace(",0000", ".0000")
+            .replace(",00", ".00")
+            .replace(",0", ".0")
+        )
+
     def _set_number_format_safe(self, target, format_code: str):
-        try:
-            target.NumberFormat = format_code
-        except Exception:
+        for attr, fmt in (
+            ("NumberFormatLocal", format_code),
+            ("NumberFormat", self._excel_invariant_number_format(format_code) or format_code),
+            ("NumberFormat", format_code),
+            ("NumberFormat", "General"),
+        ):
             try:
-                target.NumberFormatLocal = format_code
+                setattr(target, attr, fmt)
+                return
             except Exception:
                 pass
 

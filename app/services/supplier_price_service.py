@@ -12,9 +12,11 @@ from app.db.models import SupplierPriceCalculation, TempPriceImport
 from app.exports.supplier_price_exporter import SupplierPriceExporter
 from app.imports.supplier_price_importer import SupplierPriceImporter
 from app.services.supplier_service import SupplierService, SupplierUpsertData
+from app.services.supplier_currency_cost_service import SupplierCurrencyCostService
 from app.services.cost_calculation_service import CostCalculationService
 from app.services.price_repository import PriceRepository
 from app.services.product_matching_service import ProductMatchingService
+from app.services.temp_cleanup_service import TempCleanupService
 from app.utils.batch import generate_import_batch_id
 
 
@@ -41,6 +43,7 @@ class SupplierPriceService:
         self.cost_calculation_service = CostCalculationService(session)
         self.price_repository = PriceRepository(session)
         self.supplier_service = SupplierService(session)
+        self.currency_cost_service = SupplierCurrencyCostService(session)
         self.importer = SupplierPriceImporter()
         self.exporter = SupplierPriceExporter(session)
         self.last_create_products_debug: list[dict] = []
@@ -89,6 +92,12 @@ class SupplierPriceService:
         self.session.flush()
         return int(deleted_count or 0)
 
+    def delete_temp_rows_for_user(self, imported_by: str) -> int:
+        return TempCleanupService(self.session).delete_current_user(
+            imported_by=imported_by,
+            tables=(TempPriceImport,),
+        )
+
     def delete_supplier_price_calculations(self, batch_id: str, imported_by: str) -> int:
         deleted_count = (
             self.session.query(SupplierPriceCalculation)
@@ -106,17 +115,10 @@ class SupplierPriceService:
         self.delete_temp_rows(batch_id, imported_by)
         self.session.flush()
 
-    def cleanup_old_temp_rows(self, imported_by: str, before_date: Optional[date] = None) -> int:
-        cutoff = before_date or date.today()
-        deleted_count = (
-            self.session.query(TempPriceImport)
-            .filter(
-                TempPriceImport.import_date < datetime.combine(cutoff, datetime.min.time()),
-            )
-            .delete(synchronize_session=False)
-        )
-        self.session.flush()
-        return int(deleted_count or 0)
+    def cleanup_old_temp_rows(self, imported_by: str | None = None, before_date: Optional[date] = None) -> int:
+        # Daily cleanup is global by date: all temp rows older than today are stale.
+        # Current user temp rows are cleaned after successful save.
+        return TempCleanupService(self.session).cleanup_old_for_all(before_date=before_date)
 
     def get_temp_rows(self, batch_id: str, imported_by: str) -> list[TempPriceImport]:
         return (
@@ -548,12 +550,11 @@ class SupplierPriceService:
             if not self._is_positive_price(normalized_price):
                 continue
 
-            calc_result = self.cost_calculation_service.calculate_supplier_costs(
+            calc_result = self.currency_cost_service.calculate_costs_for_price_record(
                 supplier_id=row.supplier_id,
                 product_id=row.selected_product_id,
                 supplier_price=self._to_decimal(normalized_price),
-                fx_rate=self._to_decimal(fx_rate),
-                currency_code=currency_code,
+                price_currency_code=currency_code,
             )
 
             calc_row = SupplierPriceCalculation(

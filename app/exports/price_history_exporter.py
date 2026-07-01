@@ -38,6 +38,34 @@ class PriceHistoryExporter:
         if white_font:
             rng.Font.Color = 0xFFFFFF
 
+    @staticmethod
+    def _excel_invariant_number_format(format_code: str | None) -> str | None:
+        if not format_code:
+            return format_code
+        return (
+            str(format_code)
+            .replace("ДД", "dd")
+            .replace("ММ", "mm")
+            .replace("ГГ", "yy")
+            .replace(",0000", ".0000")
+            .replace(",00", ".00")
+            .replace(",0", ".0")
+        )
+
+    def _set_number_format_safe(self, target, format_local: str, format_en: str | None = None) -> None:
+        candidates = [
+            ("NumberFormatLocal", format_local),
+            ("NumberFormat", format_en or self._excel_invariant_number_format(format_local) or format_local),
+            ("NumberFormat", format_local),
+            ("NumberFormat", "General"),
+        ]
+        for attr, fmt in candidates:
+            try:
+                setattr(target, attr, fmt)
+                return
+            except Exception:
+                pass
+
     def export_template(self, file_path: str):
         excel = None
         wb = None
@@ -138,8 +166,8 @@ class PriceHistoryExporter:
 
             if rows:
                 last_row = len(rows) + 1
-                ws.Range(f"C2:C{last_row}").NumberFormatLocal = "ДД.ММ.ГГ;@"
-                ws.Range(f"D2:D{last_row}").NumberFormatLocal = "0,00"
+                self._set_number_format_safe(ws.Range(f"C2:C{last_row}"), "ДД.ММ.ГГ;@", "dd.mm.yy;@")
+                self._set_number_format_safe(ws.Range(f"D2:D{last_row}"), "0,00", "0.00")
 
             wb.SaveAs(str(Path(file_path).resolve()))
         except PermissionError:
