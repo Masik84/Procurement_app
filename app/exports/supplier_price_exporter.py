@@ -174,36 +174,6 @@ class SupplierPriceExporter:
         uc3_col = self._excel_column_letter(uc3_idx)
         ws.Range(f"{uc3_col}{first_row}:{uc3_col}{last_row}").FormulaR1C1 = formula
 
-    def _write_target_price_l_formulas(self, ws, headers: list[str], first_row: int, last_row: int) -> None:
-        if last_row < first_row:
-            return
-        required_headers = ["Target price, L", "Дистр цена", "Промо цена", "uC3 PY"]
-        if any(header not in headers for header in required_headers):
-            return
-
-        target_idx = headers.index("Target price, L") + 1
-        distr_idx = headers.index("Дистр цена") + 1
-        promo_idx = headers.index("Промо цена") + 1
-        uc3_py_idx = headers.index("uC3 PY") + 1
-
-        distr_ref = self._r1c1_ref(distr_idx - target_idx)
-        promo_ref = self._r1c1_ref(promo_idx - target_idx)
-        uc3_py_ref = self._r1c1_ref(uc3_py_idx - target_idx)
-
-        no_distr_expr = f'OR({distr_ref}="",{distr_ref}=0)'
-        no_promo_expr = f'OR({promo_ref}="",{promo_ref}=0)'
-        min_price_expr = (
-            f'IF({no_distr_expr},{promo_ref},'
-            f'IF({no_promo_expr},{distr_ref},MIN({distr_ref},{promo_ref})))'
-        )
-        formula = (
-            f'=IF(OR(AND({no_distr_expr},{no_promo_expr}),{uc3_py_ref}=""),"",'
-            f'{min_price_expr}-{uc3_py_ref})'
-        )
-
-        target_col = self._excel_column_letter(target_idx)
-        ws.Range(f"{target_col}{first_row}:{target_col}{last_row}").FormulaR1C1 = formula
-
     def _write_min_uc3_stock_formulas(self, ws, headers: list[str], first_row: int, last_row: int) -> None:
         if last_row < first_row:
             return
@@ -539,6 +509,111 @@ class SupplierPriceExporter:
         )
         return calc.full_cost_msk if calc is not None else None
 
+    def _positive_decimal_or_none(self, value: object) -> Decimal | None:
+        if value is None or value == "":
+            return None
+        try:
+            decimal_value = self._to_decimal(value)
+        except Exception:
+            return None
+        return decimal_value if decimal_value > Decimal("0") else None
+
+    def _calc_target_full_cost_msk_from_stock(self, stock) -> Decimal | None:
+        """Source Full Cost Msk for target-price reverse calculation.
+
+        This is the business value requested for CostCalc_:
+        min(Дистр цена, Промо цена) - uC3 PY.
+
+        It is not the final supplier target price. The final Target price, L must be
+        calculated by the same reverse calculation as target_prices_page.
+        """
+        if stock is None:
+            return None
+
+        prices = [
+            value
+            for value in (
+                self._positive_decimal_or_none(getattr(stock, "distr_price", None)),
+                self._positive_decimal_or_none(getattr(stock, "promo_price", None)),
+            )
+            if value is not None
+        ]
+        if not prices:
+            return None
+
+        uc3_py_raw = getattr(stock, "uc3_py", None)
+        if uc3_py_raw is None:
+            return None
+
+        try:
+            uc3_py = self._to_decimal(uc3_py_raw)
+        except Exception:
+            return None
+
+        # In product_stock this field has default 0, so zero means "no PY data"
+        # for the CostCalc_ target-price calculation.
+        if uc3_py == Decimal("0"):
+            return None
+
+        return min(prices) - uc3_py
+
+    def _calc_target_price_l_for_export(self, *, supplier, product_id: int, stock, calc_row) -> Decimal | None:
+        """Calculate Target price, L exactly through TargetPriceService reverse logic.
+
+        In target_prices_page, the selected supplier's Full Cost Msk is passed into
+        reverse_calculate_target_price(), and the result is the supplier price per L.
+        In CostCalc_ the source Full Cost Msk is calculated as:
+            min(Дистр цена, Промо цена) - uC3 PY
+        Then the same reverse calculation is applied for the currently loaded supplier.
+        """
+        if supplier is None or not getattr(supplier, "id", None) or not product_id:
+            return None
+
+        full_cost_source = self._calc_target_full_cost_msk_from_stock(stock)
+        if full_cost_source is None:
+            return None
+
+        if calc_row is not None:
+            currency_code = calc_row.currency_code or getattr(supplier, "base_currency", "")
+            fx_rate = calc_row.fx_rate_used
+            transport = calc_row.transport_used
+            reexport = calc_row.reexport_used
+            fx_markup = calc_row.fx_markup_used
+            has_customs = bool(calc_row.has_customs_used)
+            via_novo = bool(calc_row.via_novo_used)
+            agent_fee = calc_row.agent_fee_used
+        else:
+            currency_code = getattr(supplier, "base_currency", "") or ""
+            _, fx_rate = self._get_currency_rate(currency_code)
+            if fx_rate is None:
+                return None
+            transport = getattr(supplier, "transport_cost_per_l", None)
+            reexport = getattr(supplier, "reexport_percent", None)
+            fx_markup = getattr(supplier, "fx_rate_markup", None)
+            has_customs = bool(getattr(supplier, "has_import_duty", False))
+            via_novo = bool(getattr(supplier, "is_via_novo", False))
+            agent_fee = getattr(supplier, "agent_fee", None)
+
+        try:
+            from app.services.target_price_service import TargetPriceService
+
+            _cost_novo_wvat, target_price_l = TargetPriceService(self.session).reverse_calculate_target_price(
+                target_supplier_id=int(supplier.id),
+                product_id=int(product_id),
+                full_cost_msk=full_cost_source,
+                currency_code=str(currency_code or ""),
+                fx_rate=fx_rate,
+                transport=transport,
+                reexport=reexport,
+                fx_markup=fx_markup,
+                has_customs=has_customs,
+                via_novo=via_novo,
+                agent_fee=agent_fee,
+            )
+            return target_price_l
+        except Exception:
+            return None
+
     def _consider_best_candidate(self, cand_supplier_name, cand_full_cost, cand_date, best1, best2, cand_fx_rate=None, cand_currency=""):
         if not cand_supplier_name or cand_full_cost is None:
             return best1, best2
@@ -846,6 +921,13 @@ class SupplierPriceExporter:
                 order_months=order_months,
             )
 
+            target_price_l = self._calc_target_price_l_for_export(
+                supplier=supplier,
+                product_id=product_id_for_row,
+                stock=stock,
+                calc_row=calc_row,
+            )
+
             out_rows.append(
                 {
                     "Supplier Article": temp_row.supplier_article or "",
@@ -860,7 +942,7 @@ class SupplierPriceExporter:
                     "FX rate": self._round_fx_rate(calc_row.fx_rate_used if calc_row else None),
                     "Cost Novo with VAT": self._excel_value(calc_row.cost_novo_wvat if calc_row else None),
                     "Full Cost Msk": self._excel_value(calc_row.full_cost_msk if calc_row else None),
-                    "Target price, L": None,
+                    "Target price, L": self._excel_value(target_price_l),
                     "uC3 PY": self._excel_value(getattr(stock, "uc3_py", None) if stock else None),
                     "uC3 3 mnth": self._excel_value(getattr(stock, "uc3_3m", None) if stock else None),
                     "last update (prev)": prev_price_date,
@@ -1072,7 +1154,6 @@ class SupplierPriceExporter:
             write_excel_table(ws, headers, prepared_rows, value_getter=value_for_header)
 
             self._write_uc3_formulas(ws, headers, first_row=2, last_row=len(prepared_rows) + 1)
-            self._write_target_price_l_formulas(ws, headers, first_row=2, last_row=len(prepared_rows) + 1)
             self._write_min_uc3_stock_formulas(ws, headers, first_row=2, last_row=len(prepared_rows) + 1)
 
             self._apply_header_common(ws, len(headers))

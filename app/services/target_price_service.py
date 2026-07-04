@@ -429,6 +429,7 @@ class TargetPriceService:
         fx_markup: object,
         has_customs: bool,
         via_novo: bool,
+        agent_fee: object | None = None,
     ) -> tuple[Decimal, Decimal]:
         supplier = self.session.query(Supplier).filter(Supplier.id == target_supplier_id).first()
         if supplier is None:
@@ -447,7 +448,9 @@ class TargetPriceService:
         d_transport = self._to_decimal(transport)
         d_reexport = self._to_decimal(reexport)
         d_fx_markup = self._to_decimal(fx_markup)
-        d_agent_fee = self._to_decimal(getattr(supplier, "agent_fee", None))
+        d_agent_fee = self._to_decimal(
+            getattr(supplier, "agent_fee", None) if agent_fee is None else agent_fee
+        )
         d_vat = self._to_decimal(fixed.vat)
         d_money = self._to_decimal(fixed.money)
         d_storage = self._to_decimal(fixed.storage)
