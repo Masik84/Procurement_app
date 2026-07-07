@@ -4,6 +4,7 @@ from pathlib import Path
 import pandas as pd
 
 from app.imports.stock_importer import is_excluded_brand
+from app.utils.excel_import import excel_text, read_excel_raw
 from app.utils.text import clean_multi_spaces, normalize_product_name
 
 
@@ -39,7 +40,7 @@ class SupplierOrdersImporter:
         if not file_path.exists():
             raise FileNotFoundError(f"Файл не найден: {file_path}")
 
-        df = pd.read_excel(file_path, sheet_name=self.sheet_name, header=None)
+        df = read_excel_raw(file_path, sheet_name=self.sheet_name, header=None)
         if len(df) < 3:
             return []
 
@@ -62,7 +63,7 @@ class SupplierOrdersImporter:
             'status': data.iloc[:, col_status].fillna('').map(_norm).str.lower(),
             'brand': data.iloc[:, col_brand].fillna('').map(_norm),
             'supplier1': data.iloc[:, col_supplier1].fillna('').map(_norm),
-            'article': data.iloc[:, col_article].fillna('').map(_norm),
+            'article': data.iloc[:, col_article].map(excel_text),
             'product_name': data.iloc[:, col_prod].fillna('').map(_norm),
             'order_qty': pd.to_numeric(data.iloc[:, col_qty], errors='coerce').fillna(0).astype(float),
         })

@@ -105,6 +105,27 @@ class CustomerCostService:
             TempCustomerCostImport.imported_by == imported_by,
         ).order_by(TempCustomerCostImport.import_row_no.asc(), TempCustomerCostImport.id.asc()).all()
 
+    def automatch_temp_row(self, row: TempCustomerCostImport) -> bool:
+        product = self.product_matching.find_customer_product(
+            supplier_article=row.supplier_article,
+            product_name=row.product_name,
+            pack=row.pack,
+        )
+        if product is None:
+            return False
+
+        changed = row.selected_product_id != product.id
+        row.selected_product_id = product.id
+        row.selected_option_id = None
+
+        # If the row is matched to an existing product, it should not keep stale
+        # "new product" fields from a previous manual edit/import attempt.
+        row.new_product_name = None
+        row.new_brand = None
+        row.new_pack = None
+        row.new_is_excise = None
+        return changed
+
     def automatch_temp_rows(self, batch_id: str, imported_by: str) -> int:
         rows = self.session.query(TempCustomerCostImport).filter(
             TempCustomerCostImport.batch_id == batch_id,
@@ -114,13 +135,7 @@ class CustomerCostService:
 
         matched_count = 0
         for row in rows:
-            product = self.product_matching.find_customer_product(
-                supplier_article=row.supplier_article,
-                product_name=row.product_name,
-                pack=row.pack,
-            )
-            if product is not None:
-                row.selected_product_id = product.id
+            if self.automatch_temp_row(row):
                 matched_count += 1
 
         self.session.flush()
@@ -269,12 +284,84 @@ class CustomerCostService:
 
         self.session.flush()
 
+    def _collect_selected_supplier_choices(self, batch_id: str, imported_by: str) -> dict[int, int]:
+        """Remember user-selected final supplier choices before options are rebuilt.
+
+        TempCustomerCostOption rows are recreated on every calculation run, so their ids
+        are not stable.  The stable user choice is the supplier selected for the temp
+        import row.
+        """
+        rows = self.session.query(TempCustomerCostImport).filter(
+            TempCustomerCostImport.batch_id == batch_id,
+            TempCustomerCostImport.imported_by == imported_by,
+            TempCustomerCostImport.selected_option_id.isnot(None),
+        ).all()
+
+        choices: dict[int, int] = {}
+        for row in rows:
+            option = self.session.query(TempCustomerCostOption).filter(
+                TempCustomerCostOption.id == row.selected_option_id,
+                TempCustomerCostOption.batch_id == batch_id,
+                TempCustomerCostOption.imported_by == imported_by,
+                TempCustomerCostOption.temp_import_id == row.id,
+            ).first()
+            if option is not None:
+                choices[int(row.id)] = int(option.supplier_id)
+
+        return choices
+
+    def _restore_selected_supplier_choices(
+        self,
+        batch_id: str,
+        imported_by: str,
+        selected_suppliers_by_row: dict[int, int],
+    ) -> int:
+        if not selected_suppliers_by_row:
+            return 0
+
+        restored_count = 0
+        for row_id, supplier_id in selected_suppliers_by_row.items():
+            row = self.session.query(TempCustomerCostImport).filter(
+                TempCustomerCostImport.id == int(row_id),
+                TempCustomerCostImport.batch_id == batch_id,
+                TempCustomerCostImport.imported_by == imported_by,
+            ).first()
+            if row is None:
+                continue
+
+            option = self.session.query(TempCustomerCostOption).filter(
+                TempCustomerCostOption.batch_id == batch_id,
+                TempCustomerCostOption.imported_by == imported_by,
+                TempCustomerCostOption.temp_import_id == int(row_id),
+                TempCustomerCostOption.supplier_id == int(supplier_id),
+            ).order_by(
+                TempCustomerCostOption.opt_rank.asc(),
+                TempCustomerCostOption.full_cost_msk.asc(),
+                TempCustomerCostOption.id.asc(),
+            ).first()
+
+            if option is None:
+                continue
+
+            row.selected_option_id = option.id
+            restored_count += 1
+
+        self.session.flush()
+        return restored_count
+
     def build_supplier_options(
         self,
         batch_id: str,
         imported_by: str,
         supplier_price_age_months: int | None = None,
+        preserve_selected_suppliers: bool = True,
     ) -> int:
+        selected_suppliers_by_row = (
+            self._collect_selected_supplier_choices(batch_id, imported_by)
+            if preserve_selected_suppliers
+            else {}
+        )
+
         self.delete_temp_options(batch_id, imported_by)
         min_price_date = self.price_repository.supplier_price_cutoff_from_months(supplier_price_age_months)
 
@@ -313,6 +400,7 @@ class CustomerCostService:
         self.session.flush()
         self.rank_supplier_options(batch_id, imported_by)
         self.select_best_options(batch_id, imported_by)
+        self._restore_selected_supplier_choices(batch_id, imported_by, selected_suppliers_by_row)
         return created_count
 
     def _create_option_from_snapshot(self, row: TempCustomerCostImport, batch_id: str, imported_by: str, supplier_price) -> None:
@@ -484,6 +572,7 @@ class CustomerCostService:
         manual_prices: list[dict] | None = None,
         supplier_price_age_months: int | None = None,
     ) -> dict:
+        matched_count = self.automatch_temp_rows(batch_id, imported_by)
         self.validate_new_products_before_save(batch_id, imported_by)
         created_products_count = self.create_products_from_temp(batch_id, imported_by)
         product_articles_count = self.create_or_update_product_articles(batch_id, imported_by)
@@ -495,6 +584,7 @@ class CustomerCostService:
         )
         self.select_manual_options(batch_id, imported_by, manual_prices)
         return {
+            "matched_count": matched_count,
             "created_products_count": created_products_count,
             "product_articles_count": product_articles_count,
             "manual_prices_count": manual_prices_count,

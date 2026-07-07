@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from app.utils.excel_import import excel_text, read_excel_raw
 from app.utils.text import clean_multi_spaces
 
 
@@ -16,7 +17,7 @@ class ProductArticleImporter:
         if not file_path.exists():
             raise FileNotFoundError(f"Файл не найден: {file_path}")
 
-        df = pd.read_excel(file_path, header=0)
+        df = read_excel_raw(file_path, header=0)
 
         for column in self.REQUIRED_COLUMNS:
             if column not in df.columns:
@@ -28,7 +29,7 @@ class ProductArticleImporter:
         rows: list[dict] = []
         for _, row in df.iterrows():
             product_name = clean_multi_spaces(row["Product name"]).upper()
-            article = clean_multi_spaces(row["Article"])
+            article = excel_text(row["Article"])
             variant_name = clean_multi_spaces(row["Product name (variant)"]).upper()
 
             if not product_name and not article and not variant_name:

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from app.utils.excel_import import excel_text, read_excel_raw
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
 
@@ -15,7 +16,7 @@ class PriceHistoryImporter:
         if not file_path.exists():
             raise FileNotFoundError(f"Файл не найден: {file_path}")
 
-        df = pd.read_excel(file_path, header=0)
+        df = read_excel_raw(file_path, header=0)
 
         if df.shape[1] < 7:
             raise ValueError(
@@ -36,7 +37,9 @@ class PriceHistoryImporter:
 
         df["import_row_no"] = df.index + 2
 
-        for col in ["supplier_name", "supplier_article", "supplier_product_name", "our_product_name", "currency"]:
+        df["supplier_name"] = df["supplier_name"].apply(clean_multi_spaces)
+        df["supplier_article"] = df["supplier_article"].apply(excel_text)
+        for col in ["supplier_product_name", "our_product_name", "currency"]:
             df[col] = df[col].apply(clean_multi_spaces)
 
         df["price"] = df["price"].apply(parse_loose_number)

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import pandas as pd
 
+from app.utils.excel_import import excel_text, read_excel_raw
 from app.utils.text import clean_multi_spaces, normalize_product_name
 
 
@@ -60,7 +61,7 @@ class StockImporter:
         if not file_path.exists():
             raise FileNotFoundError(f"Файл не найден: {file_path}")
 
-        df = pd.read_excel(file_path, sheet_name=self.sheet_name, header=None)
+        df = read_excel_raw(file_path, sheet_name=self.sheet_name, header=None)
         if len(df) < 5:
             return []
 
@@ -151,8 +152,8 @@ class StockImporter:
         compact = pd.DataFrame({
             "source_brand": data.iloc[:, col_brand].map(_norm),
             "source_product_name": data.iloc[:, col_prod].map(_norm),
-            "source_article": data.iloc[:, col_article].map(_norm),
-            "source_sku": data.iloc[:, col_sku].map(_norm),
+            "source_article": data.iloc[:, col_article].map(excel_text),
+            "source_sku": data.iloc[:, col_sku].map(excel_text),
             "source_origin": data.iloc[:, col_origin].map(_norm),
             "source_brand_group": data.iloc[:, col_brand_group].map(_norm),
             "lpc": self._series_to_number(data.iloc[:, col_lpc]),

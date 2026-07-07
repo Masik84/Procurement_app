@@ -5,6 +5,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 
+from app.utils.excel_import import excel_text
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
 
@@ -44,12 +45,7 @@ class SupplierPriceImporter:
 
     @staticmethod
     def _clean_text(value: Any) -> str | None:
-        if value is None:
-            return None
-        text = clean_multi_spaces(str(value))
-        if not text or text.lower() == "nan":
-            return None
-        return text
+        return excel_text(value, none_if_empty=True)
 
     @staticmethod
     def _num(value: Any):

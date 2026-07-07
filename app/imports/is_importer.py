@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import pandas as pd
 
+from app.utils.excel_import import excel_text, read_excel_raw
 from app.utils.text import clean_multi_spaces, normalize_product_name
 
 
@@ -43,7 +44,7 @@ class ISImporter:
         parts: list[pd.DataFrame] = []
 
         if self.orders_sheet in book.sheet_names:
-            df = pd.read_excel(book, sheet_name=self.orders_sheet, header=None)
+            df = read_excel_raw(book, sheet_name=self.orders_sheet, header=None)
             if len(df) >= 4:
                 headers = [str(x).strip() if pd.notna(x) else "" for x in df.iloc[3].tolist()]
                 data = df.iloc[4:].copy().reset_index(drop=True)
@@ -59,7 +60,7 @@ class ISImporter:
                     raise ValueError("Не найдены обязательные колонки на листе IS orders tracking.")
 
                 orders = pd.DataFrame({
-                    'source_article': data.iloc[:, col_code].fillna('').map(_norm),
+                    'source_article': data.iloc[:, col_code].map(excel_text),
                     'source_product_name': data.iloc[:, col_products].fillna('').map(_norm),
                     'remains_qty': pd.to_numeric(data.iloc[:, col_remains], errors='coerce').fillna(0).clip(lower=0).astype(float),
                     'confirmed_qty': pd.to_numeric(data.iloc[:, col_confirmed], errors='coerce').fillna(0).clip(lower=0).astype(float),
@@ -73,7 +74,7 @@ class ISImporter:
                     parts.append(orders)
 
         if self.stock_sheet in book.sheet_names:
-            df = pd.read_excel(book, sheet_name=self.stock_sheet, header=None)
+            df = read_excel_raw(book, sheet_name=self.stock_sheet, header=None)
             if len(df) >= 3:
                 headers = [str(x).strip() if pd.notna(x) else "" for x in df.iloc[1].tolist()]
                 data = df.iloc[2:].copy().reset_index(drop=True)
@@ -88,7 +89,7 @@ class ISImporter:
                     raise ValueError("Не найдены обязательные колонки на листе Stock IS.")
 
                 stock = pd.DataFrame({
-                    'source_article': data.iloc[:, col_material].fillna('').map(_norm),
+                    'source_article': data.iloc[:, col_material].map(excel_text),
                     'source_product_name': data.iloc[:, col_description].fillna('').map(_norm),
                     'stock_qty': pd.to_numeric(data.iloc[:, col_volume], errors='coerce').fillna(0).clip(lower=0).astype(float),
                 })

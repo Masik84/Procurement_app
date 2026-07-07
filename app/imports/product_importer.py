@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from app.utils.excel_import import read_excel_raw
 from app.services.product_matching_service import ProductMatchingService
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
@@ -34,7 +35,7 @@ class ProductImporter:
         if not file_path.exists():
             raise FileNotFoundError(f"Файл не найден: {file_path}")
 
-        df = pd.read_excel(file_path, header=0)
+        df = read_excel_raw(file_path, header=0)
         if df.shape[1] < 5:
             raise ValueError(
                 "Файл должен содержать минимум 5 колонок: ID, Product name, Brand, Pack, is_excise."

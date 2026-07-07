@@ -8,6 +8,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.db.models import Product, ProductArticle
+from app.utils.excel_import import excel_text
 from app.utils.parsers import parse_loose_number
 from app.utils.text import (
     clean_multi_spaces,
@@ -30,6 +31,7 @@ class ProductMatchingService:
         self._normalized_products_cache: dict[str, Product] | None = None
         self._article_links_cache: dict[str, ProductArticle] | None = None
         self._name_links_cache: dict[str, ProductArticle] | None = None
+        self._normalized_name_links_cache: dict[str, ProductArticle] | None = None
 
     def _build_normalized_products_cache(self) -> dict[str, Product]:
         cache: dict[str, Product] = {}
@@ -54,7 +56,7 @@ class ProductMatchingService:
             .all()
         )
         for link in links:
-            key = clean_multi_spaces(link.article)
+            key = self.normalize_article_key(link.article)
             if key and key not in cache:
                 cache[key] = link
         return cache
@@ -73,13 +75,35 @@ class ProductMatchingService:
                 cache[key] = link
         return cache
 
+    def _build_normalized_name_links_cache(self) -> dict[str, ProductArticle]:
+        cache: dict[str, ProductArticle] = {}
+        links = (
+            self.session.query(ProductArticle)
+            .filter(ProductArticle.name.isnot(None), ProductArticle.name != "")
+            .order_by(ProductArticle.id.asc())
+            .all()
+        )
+        for link in links:
+            key = normalize_product_name(link.name)
+            if key and key not in cache:
+                cache[key] = link
+        return cache
+
     # =========================================================
     # Article helpers
     # =========================================================
 
     @staticmethod
     def article_token_normalize(value: object) -> str:
-        return clean_multi_spaces(value)
+        return ProductMatchingService.canonical_article_text(value)
+
+    @staticmethod
+    def canonical_article_text(value: object) -> str:
+        return excel_text(value) or ""
+
+    @classmethod
+    def normalize_article_key(cls, value: object) -> str:
+        return cls.canonical_article_text(value).casefold()
 
     @classmethod
     def split_article_tokens(cls, article_text: object) -> list[str]:
@@ -98,8 +122,8 @@ class ProductMatchingService:
             if not token:
                 continue
 
-            token_key = token.casefold()
-            if token_key not in seen:
+            token_key = cls.normalize_article_key(token)
+            if token_key and token_key not in seen:
                 seen.add(token_key)
                 result.append(token)
 
@@ -239,7 +263,7 @@ class ProductMatchingService:
         )
 
     def _get_article_link_by_exact_article(self, article: str) -> Optional[ProductArticle]:
-        key = clean_multi_spaces(article)
+        key = self.normalize_article_key(article)
         if not key:
             return None
         if self._article_links_cache is None:
@@ -253,6 +277,14 @@ class ProductMatchingService:
         if self._name_links_cache is None:
             self._name_links_cache = self._build_name_links_cache()
         return self._name_links_cache.get(key)
+
+    def _get_article_link_by_normalized_name(self, supplier_name: str) -> Optional[ProductArticle]:
+        key = normalize_product_name(supplier_name)
+        if not key:
+            return None
+        if self._normalized_name_links_cache is None:
+            self._normalized_name_links_cache = self._build_normalized_name_links_cache()
+        return self._normalized_name_links_cache.get(key)
 
     def find_by_normalized_product_name(self, source_name: object) -> Optional[Product]:
         target = normalize_product_name(source_name)
@@ -273,6 +305,25 @@ class ProductMatchingService:
 
         return first_product
 
+    def _find_product_by_name_candidate(self, candidate: object) -> Optional[Product]:
+        name = clean_multi_spaces(candidate)
+        if not name:
+            return None
+
+        link = self._get_article_link_by_exact_name(name)
+        if link and link.product:
+            return link.product
+
+        link = self._get_article_link_by_normalized_name(name)
+        if link and link.product:
+            return link.product
+
+        product = self.find_by_normalized_product_name(name)
+        if product:
+            return product
+
+        return None
+
     # =========================================================
     # Public matching methods
     # =========================================================
@@ -287,46 +338,43 @@ class ProductMatchingService:
         name = clean_multi_spaces(product_name)
         normalized_name = normalize_customer_product_name(name)
 
+        # 1) Highest priority: article from ProductArticle.
+        # Handles Excel numeric articles like 149610.0 and split articles like A/B.
         if article:
-            link = self._get_article_link_by_exact_article(article)
-            if link and link.product:
-                return link.product
+            product = self.find_product_by_split_articles(article)
+            if product:
+                return product
 
+        # 2) Product name as supplied by the customer/request.
+        # Match ProductArticle.name first, then Product.name.
+        name_candidates: list[object] = []
         if name:
-            link = self._get_article_link_by_exact_name(name)
-            if link and link.product:
-                return link.product
-
-            product = self.find_by_normalized_product_name(name)
-            if product:
-                return product
-
+            name_candidates.append(name)
         if normalized_name and normalized_name != name:
-            link = self._get_article_link_by_exact_name(normalized_name)
-            if link and link.product:
-                return link.product
+            name_candidates.append(normalized_name)
 
-            product = self.find_by_normalized_product_name(normalized_name)
+        seen_names: set[str] = set()
+        for candidate in name_candidates:
+            candidate_key = normalize_product_name(candidate)
+            if not candidate_key or candidate_key in seen_names:
+                continue
+            seen_names.add(candidate_key)
+
+            product = self._find_product_by_name_candidate(candidate)
             if product:
                 return product
 
-        name_l = self.build_name_with_pack_unit(name, pack, "L")
-        if name_l:
-            link = self._get_article_link_by_exact_name(name_l)
-            if link and link.product:
-                return link.product
+        # 3) Product name + pack, only after plain article/name matching failed.
+        for candidate in (
+            self.build_name_with_pack_unit(name, pack, "L"),
+            self.build_name_with_pack_unit(name, pack, "KG"),
+        ):
+            candidate_key = normalize_product_name(candidate)
+            if not candidate_key or candidate_key in seen_names:
+                continue
+            seen_names.add(candidate_key)
 
-            product = self.find_by_normalized_product_name(name_l)
-            if product:
-                return product
-
-        name_kg = self.build_name_with_pack_unit(name, pack, "KG")
-        if name_kg:
-            link = self._get_article_link_by_exact_name(name_kg)
-            if link and link.product:
-                return link.product
-
-            product = self.find_by_normalized_product_name(name_kg)
+            product = self._find_product_by_name_candidate(candidate)
             if product:
                 return product
 
@@ -346,12 +394,7 @@ class ProductMatchingService:
                 return product
 
         if name:
-            link = self._get_article_link_by_exact_name(name)
-            if link and link.product:
-                return link.product
-
-        if name:
-            product = self.find_by_normalized_product_name(name)
+            product = self._find_product_by_name_candidate(name)
             if product:
                 return product
 
@@ -387,20 +430,16 @@ class ProductMatchingService:
         name = clean_multi_spaces(source_product_name)
 
         if article:
-            link = self._get_article_link_by_exact_article(article)
-            if link and link.product:
-                return link.product
+            product = self.find_product_by_split_articles(article)
+            if product:
+                return product
 
         if name:
             exact = self._get_product_by_exact_name(name)
             if exact:
                 return exact
 
-            link = self._get_article_link_by_exact_name(name)
-            if link and link.product:
-                return link.product
-
-            product = self.find_by_normalized_product_name(name)
+            product = self._find_product_by_name_candidate(name)
             if product:
                 return product
 
@@ -540,7 +579,7 @@ class ProductMatchingService:
         article: object,
         supplier_name: object,
     ) -> Optional[ProductArticle]:
-        clean_article = clean_multi_spaces(article)
+        clean_article = self.canonical_article_text(article)
         clean_name = clean_multi_spaces(supplier_name)
 
         if not clean_article and not clean_name:
@@ -565,6 +604,10 @@ class ProductMatchingService:
         )
         self.session.add(row)
         self.session.flush()
+
+        self._article_links_cache = None
+        self._name_links_cache = None
+        self._normalized_name_links_cache = None
         return row
 
     def save_product_articles_by_split_articles(
@@ -600,7 +643,7 @@ class ProductMatchingService:
         source_article: object,
         source_name: object,
     ) -> None:
-        clean_article = clean_multi_spaces(source_article)
+        clean_article = self.canonical_article_text(source_article)
         clean_name = clean_multi_spaces(source_name)
 
         if clean_article:

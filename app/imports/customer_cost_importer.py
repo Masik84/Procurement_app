@@ -1,13 +1,15 @@
 from pathlib import Path
+
 import pandas as pd
 
-from app.utils.parsers import parse_loose_number
-from app.utils.text import clean_multi_spaces, normalize_customer_product_name
+from app.utils.excel_import import excel_text, read_excel_raw
 from app.utils.parsers import parse_loose_number, parse_flexible_date
+from app.utils.text import clean_multi_spaces, normalize_customer_product_name
 
 
 class CustomerCostImporter:
     sheet_name = "Запрос себестоимости"
+    supplier_article_col_index = 3
 
     def read_excel(self, file_path: str | Path) -> list[dict]:
         file_path = Path(file_path)
@@ -15,10 +17,15 @@ class CustomerCostImporter:
         if not file_path.exists():
             raise FileNotFoundError(f"Файл не найден: {file_path}")
 
+        read_excel_kwargs = {
+            "header": 0,
+            "converters": {self.supplier_article_col_index: excel_text},
+        }
+
         try:
-            df = pd.read_excel(file_path, sheet_name=self.sheet_name, header=0)
+            df = read_excel_raw(file_path, sheet_name=self.sheet_name, **read_excel_kwargs)
         except Exception:
-            df = pd.read_excel(file_path, sheet_name=0, header=0)
+            df = read_excel_raw(file_path, sheet_name=0, **read_excel_kwargs)
 
         if df.shape[1] < 11:
             raise ValueError("Файл customer cost должен содержать минимум 11 колонок.")
@@ -38,8 +45,9 @@ class CustomerCostImporter:
             "Comments",
         ]
 
-        for col in ["ManagerName", "CustomerName", "SupplierArticle", "ProductName", "PurchaseType", "PaymentTerms", "Comments"]:
+        for col in ["ManagerName", "CustomerName", "ProductName", "PurchaseType", "PaymentTerms", "Comments"]:
             df[col] = df[col].apply(clean_multi_spaces)
+        df["SupplierArticle"] = df["SupplierArticle"].apply(excel_text)
 
         df["ProductName"] = df["ProductName"].apply(lambda x: normalize_customer_product_name(x) or clean_multi_spaces(x))
         df["Pack"] = df["Pack"].apply(parse_loose_number)

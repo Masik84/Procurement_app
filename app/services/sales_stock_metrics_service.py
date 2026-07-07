@@ -9,7 +9,7 @@ from typing import Iterable
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from app.db.models import Product, SalesProductLink
+from app.db.models import FixedCosts, Product, SalesProductLink
 from app.services.product_matching_service import ProductMatchingService
 from app.utils.text import clean_multi_spaces
 
@@ -44,7 +44,7 @@ class SalesStockMetricsService:
     stored in `product_stock` during stock update.
     """
 
-    PURCHASE_STATUSES = ("Закуп", "Склад", "Транзит")
+    PURCHASE_STATUSES = ("Закуп", "Склад")
     SALES_STATUS = "Факт"
     PERIOD_PREV_YEAR = "prev.year"
     PERIOD_3_MONTHS = "3 mnth"
@@ -244,7 +244,7 @@ class SalesStockMetricsService:
     # ------------------------------------------------------------------
     # Sales DB reads
     # ------------------------------------------------------------------
-    def _read_lpc_rows(self) -> list[dict]:
+    def _read_lpc_rows(self, date_to: date | None = None) -> list[dict]:
         query = text(
             """
             SELECT
@@ -253,16 +253,17 @@ class SalesStockMetricsService:
                 MIN(p."Упаковка") AS sales_pack,
                 STRING_AGG(DISTINCT fd."Код"::text, ';') AS sales_codes,
                 SUM(CASE WHEN fd."Статус" = ANY(:purchase_statuses)
-                         THEN COALESCE(fd."Кол_во_л", 0) ELSE 0 END) AS purchase_qty,
+                         THEN COALESCE(fd."Кол_во_шт", 0) ELSE 0 END) AS purchase_qty,
                 SUM(CASE WHEN fd."Статус" = ANY(:purchase_statuses)
                          THEN COALESCE(fd."Себ_ть_поставки_партии", 0) ELSE 0 END) AS purchase_cost,
                 SUM(CASE WHEN fd."Статус" = :sales_status
-                         THEN COALESCE(fd."Кол_во_л", 0) ELSE 0 END) AS sales_qty,
+                         THEN -COALESCE(fd."Кол_во_фин", 0) ELSE 0 END) AS sales_qty,
                 SUM(CASE WHEN fd."Статус" = :sales_status
-                         THEN COALESCE(fd."Себ_ть_до_склада_партии", 0) ELSE 0 END) AS sales_cost
+                         THEN -COALESCE(fd."Себ_ть_до_склада_партии", 0) ELSE 0 END) AS sales_cost
             FROM full_data fd
             LEFT JOIN products p ON p."Код" = fd."Код"
             WHERE fd."Статус" = ANY(:all_statuses)
+              AND (:date_to IS NULL OR fd."Дата" <= :date_to)
             GROUP BY COALESCE(p."Продукт_упаковка", '')
             """
         )
@@ -270,6 +271,7 @@ class SalesStockMetricsService:
             "purchase_statuses": list(self.PURCHASE_STATUSES),
             "sales_status": self.SALES_STATUS,
             "all_statuses": list(self.PURCHASE_STATUSES) + [self.SALES_STATUS],
+            "date_to": date_to,
         }
         with self._sales_engine().connect() as conn:
             result = conn.execute(query, params).mappings().all()
@@ -307,14 +309,48 @@ class SalesStockMetricsService:
     # ------------------------------------------------------------------
     # Calculation
     # ------------------------------------------------------------------
+    def _vat_multiplier(self) -> Decimal:
+        fixed = self.session.query(FixedCosts).order_by(FixedCosts.id.asc()).first()
+        if fixed is None:
+            return Decimal("1")
+
+        vat = self._to_decimal(getattr(fixed, "vat", None))
+        if vat <= Decimal("-1"):
+            return Decimal("1")
+        return Decimal("1") + vat
+
+    def _pack_for_lpc_row(self, row: dict, product_id: int) -> Decimal:
+        pack = self._to_decimal(row.get("sales_pack"))
+        if pack > 0:
+            return pack
+
+        product = self.session.query(Product).filter(Product.id == product_id).first()
+        if product is None:
+            return Decimal("0")
+        return self._to_decimal(product.pack)
+
     @classmethod
-    def calc_lpc(cls, purchase_qty: Decimal, purchase_cost: Decimal, sales_qty: Decimal, sales_cost: Decimal) -> Decimal:
-        qty_diff = purchase_qty - sales_qty
-        if qty_diff != 0:
-            return (purchase_cost - sales_cost) / qty_diff
-        if purchase_qty != 0:
-            return purchase_cost / purchase_qty
-        return Decimal("0")
+    def calc_lpc(
+        cls,
+        purchase_qty: Decimal,
+        purchase_cost: Decimal,
+        sales_qty: Decimal,
+        sales_cost: Decimal,
+        pack: Decimal,
+        vat_multiplier: Decimal = Decimal("1"),
+    ) -> Decimal:
+        if pack <= 0:
+            return Decimal("0")
+
+        stock_qty = purchase_qty - sales_qty
+        if stock_qty != 0:
+            base_lpc = (purchase_cost - sales_cost) / stock_qty / pack
+        elif purchase_qty != 0:
+            base_lpc = purchase_cost / purchase_qty / pack
+        else:
+            return Decimal("0")
+
+        return base_lpc * vat_multiplier
 
     @classmethod
     def calc_uc3(cls, volume: Decimal, margin_c3: Decimal) -> Decimal:
@@ -326,7 +362,8 @@ class SalesStockMetricsService:
         links = self._link_map()
         metrics: dict[int, ProductStockMetrics] = {}
 
-        lpc_rows = self._merge_lpc_rows_by_normalized_name(self._read_lpc_rows())
+        vat_multiplier = self._vat_multiplier()
+        lpc_rows = self._merge_lpc_rows_by_normalized_name(self._read_lpc_rows(date_to=update_date))
         for row in lpc_rows:
             product_id = self._resolve_product_id(row, links)
             if not product_id:
@@ -337,6 +374,8 @@ class SalesStockMetricsService:
                 self._to_decimal(row.get("purchase_cost")),
                 self._to_decimal(row.get("sales_qty")),
                 self._to_decimal(row.get("sales_cost")),
+                self._pack_for_lpc_row(row, product_id),
+                vat_multiplier,
             )
 
         periods = self.build_periods(update_date)

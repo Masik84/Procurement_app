@@ -5,6 +5,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 
+from app.utils.excel_import import excel_text
 from app.utils.text import clean_multi_spaces
 
 
@@ -31,17 +32,7 @@ class TargetPriceImporter:
 
     @staticmethod
     def _clean_text(value: Any) -> str | None:
-        if value is None:
-            return None
-        text = clean_multi_spaces(str(value))
-        if not text or text.lower() == "nan":
-            return None
-        if text.endswith(".0"):
-            try:
-                return str(int(float(text)))
-            except Exception:
-                return text
-        return text
+        return excel_text(value, none_if_empty=True)
 
     def read_excel(self, file_path: str | Path) -> list[dict]:
         wb = load_workbook(file_path, data_only=True, read_only=True)
