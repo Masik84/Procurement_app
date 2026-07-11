@@ -15,7 +15,5 @@ alembic/versions/__pycache__/
 
 *.log
 
-app/ui/icon/
-app/ui/logo/
 
 templates/
