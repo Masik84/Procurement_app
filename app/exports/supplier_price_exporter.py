@@ -927,6 +927,10 @@ class SupplierPriceExporter:
                 stock=stock,
                 calc_row=calc_row,
             )
+            if target_price_l is not None and price_per_l is not None:
+                supplier_price_l = self._to_decimal(price_per_l)
+                if supplier_price_l > 0 and target_price_l > supplier_price_l:
+                    target_price_l = (supplier_price_l * Decimal("0.97")).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
 
             out_rows.append(
                 {

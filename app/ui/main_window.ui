@@ -17,7 +17,7 @@
    </size>
   </property>
   <property name="windowTitle">
-   <string notr="true">Phoenix Report Program</string>
+   <string notr="true">Phoenix Procurement App</string>
   </property>
   <property name="windowIcon">
    <iconset resource="resource.qrc">

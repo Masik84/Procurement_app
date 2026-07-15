@@ -27,7 +27,7 @@ class Ui_MainWindow(object):
             MainWindow.setObjectName(u"MainWindow")
         MainWindow.resize(1572, 950)
         MainWindow.setMinimumSize(QSize(1400, 820))
-        MainWindow.setWindowTitle(u"Phoenix Report Program")
+        MainWindow.setWindowTitle(u"Phoenix Procurement App")
         icon = QIcon()
         icon.addFile(u":/image/logo/\u043b\u043e\u0433\u043e_\u043a\u0430\u043f\u043b\u044f.png", QSize(), QIcon.Mode.Normal, QIcon.State.Off)
         MainWindow.setWindowIcon(icon)
