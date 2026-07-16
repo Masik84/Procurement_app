@@ -712,6 +712,66 @@ QLabel#label_msg {
              </widget>
             </item>
             <item>
+             <widget class="QFrame" name="frame_SuppPriceAge">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="frameShape">
+               <enum>QFrame::Shape::StyledPanel</enum>
+              </property>
+              <property name="frameShadow">
+               <enum>QFrame::Shadow::Raised</enum>
+              </property>
+              <layout class="QHBoxLayout" name="horizontalLayout_SuppPriceAge">
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="label_SuppPriceAge">
+                 <property name="text">
+                  <string>искл. Цены Постав-ов старше</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QSpinBox" name="spb_SuppPriceAge">
+                 <property name="minimumSize">
+                  <size>
+                   <width>90</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>90</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="label_SuppPriceAgeMonths">
+                 <property name="text">
+                  <string>мес.</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
              <spacer name="verticalSpacer">
               <property name="orientation">
                <enum>Qt::Orientation::Vertical</enum>
@@ -810,7 +870,7 @@ QLabel#label_msg {
                <string>Search</string>
               </property>
               <property name="icon">
-               <iconset resource="../resource.qrc">
+               <iconset>
                 <normaloff>:/icon/icon/search — копия — копия.svg</normaloff>:/icon/icon/search — копия — копия.svg</iconset>
               </property>
              </widget>
@@ -833,7 +893,7 @@ QLabel#label_msg {
                <string>Рассчитать</string>
               </property>
               <property name="icon">
-               <iconset resource="../resource.qrc">
+               <iconset>
                 <normaloff>:/icon/icon/airplay — копия — копия.svg</normaloff>:/icon/icon/airplay — копия — копия.svg</iconset>
               </property>
              </widget>
@@ -856,7 +916,7 @@ QLabel#label_msg {
                <string>Проверить продукты</string>
               </property>
               <property name="icon">
-               <iconset resource="../resource.qrc">
+               <iconset>
                 <normaloff>:/icon/icon/check-circle — копия — копия.svg</normaloff>:/icon/icon/check-circle — копия — копия.svg</iconset>
               </property>
              </widget>
@@ -879,7 +939,7 @@ QLabel#label_msg {
                <string>Сбросить все</string>
               </property>
               <property name="icon">
-               <iconset resource="../resource.qrc">
+               <iconset>
                 <normaloff>:/icon/icon/loader — копия — копия.svg</normaloff>:/icon/icon/loader — копия — копия.svg</iconset>
               </property>
              </widget>
@@ -1227,7 +1287,7 @@ QLabel#label_msg {
                         <string>Сохранить в Excel</string>
                        </property>
                        <property name="icon">
-                        <iconset resource="../resource.qrc">
+                        <iconset>
                          <normaloff>:/icon/icon/download — копия — копия.svg</normaloff>:/icon/icon/download — копия — копия.svg</iconset>
                        </property>
                       </widget>
@@ -1292,7 +1352,7 @@ QLabel#label_msg {
                      <string>Сохранить</string>
                     </property>
                     <property name="icon">
-                     <iconset resource="../resource.qrc">
+                     <iconset>
                       <normaloff>:/icon/icon/save — копия — копия.svg</normaloff>:/icon/icon/save — копия — копия.svg</iconset>
                     </property>
                    </widget>

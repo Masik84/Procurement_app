@@ -47,7 +47,7 @@ QLabel#label_filter_title {
 
 /* ===== INPUTS ===== */
 
-QLineEdit, QComboBox, QDateEdit {
+QLineEdit, QComboBox, QDateEdit, QSpinBox {
     border: 1px solid #f09d54;
     border-radius: 3px;
     padding: 2px;
@@ -399,6 +399,66 @@ QScrollBar::handle:vertical {
              </widget>
             </item>
             <item>
+             <widget class="QFrame" name="frame_SuppPriceAge">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="frameShape">
+               <enum>QFrame::Shape::StyledPanel</enum>
+              </property>
+              <property name="frameShadow">
+               <enum>QFrame::Shadow::Raised</enum>
+              </property>
+              <layout class="QHBoxLayout" name="horizontalLayout_SuppPriceAge">
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="label_SuppPriceAge">
+                 <property name="text">
+                  <string>искл.Цены Постав-ов старше</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QSpinBox" name="spb_SuppPriceAge">
+                 <property name="minimumSize">
+                  <size>
+                   <width>85</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>85</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="QLabel" name="label_SuppPriceAgeMonths">
+                 <property name="text">
+                  <string>мес.</string>
+                 </property>
+                </widget>
+               </item>
+              </layout>
+             </widget>
+            </item>
+            <item>
              <widget class="QCheckBox" name="cbx_ShowPrevPrice">
               <property name="text">
                <string>Показывать предыдущую цену</string>
@@ -568,7 +628,7 @@ QScrollBar::handle:vertical {
                <string>Сформировать отчет</string>
               </property>
               <property name="icon">
-               <iconset resource="../../../app_old/app/ui/resource.qrc">
+               <iconset>
                 <normaloff>:/icon/icon/layers — копия — копия.svg</normaloff>:/icon/icon/layers — копия — копия.svg</iconset>
               </property>
              </widget>
@@ -591,7 +651,7 @@ QScrollBar::handle:vertical {
                <string>Сбросить</string>
               </property>
               <property name="icon">
-               <iconset resource="../../../app_old/app/ui/resource.qrc">
+               <iconset>
                 <normaloff>:/icon/icon/loader — копия — копия.svg</normaloff>:/icon/icon/loader — копия — копия.svg</iconset>
               </property>
              </widget>
@@ -614,7 +674,7 @@ QScrollBar::handle:vertical {
                <string>Сохранить в Excel</string>
               </property>
               <property name="icon">
-               <iconset resource="../../../app_old/app/ui/resource.qrc">
+               <iconset>
                 <normaloff>:/icon/icon/download — копия — копия.svg</normaloff>:/icon/icon/download — копия — копия.svg</iconset>
               </property>
              </widget>
@@ -814,7 +874,7 @@ QScrollBar::handle:vertical {
   </layout>
  </widget>
  <resources>
-  <include location="../../../app_old/app/ui/resource.qrc"/>
+  <include location="../resource.qrc"/>
  </resources>
  <connections/>
 </ui>

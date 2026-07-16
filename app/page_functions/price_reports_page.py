@@ -36,6 +36,7 @@ from app.db.models import (
 from app.ui.table_style import *
 from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 from app.exports.price_report_exporter import PriceReportExporter
+from app.services.price_repository import PriceRepository
 from app.workers.excel_export_worker import ExcelExportWorker
 
 
@@ -143,6 +144,10 @@ class PriceReportsPage(QWidget):
         self.ui.radio_ByProduct.setChecked(True)
         self.ui.cbx_ShowPrevPrice.setChecked(False)
         self.ui.cbx_ShowPrevPrice.setEnabled(False)
+        if hasattr(self.ui, "spb_SuppPriceAge"):
+            self.ui.spb_SuppPriceAge.setMinimum(0)
+            self.ui.spb_SuppPriceAge.setMaximum(120)
+            self.ui.spb_SuppPriceAge.setValue(3)
         self._export_button_text = self.ui.btn_ExportExcel.text()
 
         self._refresh_filter_buttons()
@@ -189,6 +194,12 @@ class PriceReportsPage(QWidget):
     def on_name_search_changed(self):
         self._refresh_filter_buttons()
         self.clear_preview_table()
+
+    def get_supplier_price_age_months(self) -> int:
+        widget = getattr(self.ui, "spb_SuppPriceAge", None)
+        if widget is None:
+            return 3
+        return int(widget.value())
 
     def fill_suppliers(self):
         try:
@@ -440,17 +451,21 @@ class PriceReportsPage(QWidget):
         if not by_supplier or not supplier_id:
             return products
 
+        min_price_date = PriceRepository.supplier_price_cutoff_from_months(self.get_supplier_price_age_months())
         valid_product_ids = set()
-        current_ids = (
-            session.query(CurrentSupplierPrice.product_id)
-            .filter(CurrentSupplierPrice.supplier_id == supplier_id)
-            .all()
+        current_query = session.query(CurrentSupplierPrice.product_id).filter(
+            CurrentSupplierPrice.supplier_id == supplier_id,
+            CurrentSupplierPrice.price.isnot(None),
         )
-        history_ids = (
-            session.query(PriceHistory.product_id)
-            .filter(PriceHistory.supplier_id == supplier_id)
-            .all()
+        history_query = session.query(PriceHistory.product_id).filter(
+            PriceHistory.supplier_id == supplier_id,
+            PriceHistory.price.isnot(None),
         )
+        if min_price_date is not None:
+            current_query = current_query.filter(CurrentSupplierPrice.last_update >= min_price_date)
+            history_query = history_query.filter(PriceHistory.price_date >= min_price_date)
+        current_ids = current_query.all()
+        history_ids = history_query.all()
         valid_product_ids.update(row[0] for row in current_ids)
         valid_product_ids.update(row[0] for row in history_ids)
 
@@ -503,15 +518,16 @@ class PriceReportsPage(QWidget):
         try:
             self.clear_message()
             fx_rates = self._get_fx_rate_map()
+            min_price_date = PriceRepository.supplier_price_cutoff_from_months(self.get_supplier_price_age_months())
 
             if self.ui.radio_BySupplier.isChecked() and not self.ui.cbo_Supplier.currentData():
                 self.show_error_message("Выбери поставщика")
                 return
 
             if self.ui.radio_ByProduct.isChecked():
-                preview_headers, preview_rows, export_headers, export_rows = self._build_product_report(fx_rates)
+                preview_headers, preview_rows, export_headers, export_rows = self._build_product_report(fx_rates, min_price_date)
             else:
-                preview_headers, preview_rows, export_headers, export_rows = self._build_supplier_report(fx_rates)
+                preview_headers, preview_rows, export_headers, export_rows = self._build_supplier_report(fx_rates, min_price_date)
 
             self._preview_headers = preview_headers
             self._preview_rows = preview_rows
@@ -553,7 +569,7 @@ class PriceReportsPage(QWidget):
         products = self._apply_selected_filters_to_products(products)
         return self._sort_products(products)
 
-    def _build_product_report(self, fx_rates: Dict[str, Decimal]):
+    def _build_product_report(self, fx_rates: Dict[str, Decimal], min_price_date: Optional[datetime] = None):
         with self.get_session() as session:
             products = self._get_filtered_products(session)
             fixed_costs = session.query(FixedCosts).first()
@@ -570,6 +586,7 @@ class PriceReportsPage(QWidget):
                     fx_rates=fx_rates,
                     fixed_costs=fixed_costs,
                     include_supplier_without_rating=False,
+                    min_price_date=min_price_date,
                 )
                 product_export_data.append((product, stock, options))
                 if len(options) > max_export_suppliers:
@@ -584,7 +601,7 @@ class PriceReportsPage(QWidget):
 
             return preview_headers, preview_rows, export_headers, export_rows
 
-    def _build_supplier_report(self, fx_rates: Dict[str, Decimal]):
+    def _build_supplier_report(self, fx_rates: Dict[str, Decimal], min_price_date: Optional[datetime] = None):
         with self.get_session() as session:
             supplier_id = self.ui.cbo_Supplier.currentData()
             supplier = session.query(Supplier).filter(Supplier.id == supplier_id).first()
@@ -607,6 +624,7 @@ class PriceReportsPage(QWidget):
                     product=product,
                     fx_rates=fx_rates,
                     fixed_costs=fixed_costs,
+                    min_price_date=min_price_date,
                 )
                 if chosen is None or chosen.supplier_price is None:
                     continue
@@ -618,6 +636,7 @@ class PriceReportsPage(QWidget):
                     fixed_costs=fixed_costs,
                     exclude_supplier_id=supplier.id,
                     include_supplier_without_rating=False,
+                    min_price_date=min_price_date,
                 )
                 prev = self._get_previous_supplier_option(
                     session=session,
@@ -1171,6 +1190,8 @@ class PriceReportsPage(QWidget):
         self.ui.radio_ByProduct.setChecked(True)
         self.ui.cbo_Supplier.setCurrentIndex(0)
         self.ui.cbx_ShowPrevPrice.setChecked(False)
+        if hasattr(self.ui, "spb_SuppPriceAge"):
+            self.ui.spb_SuppPriceAge.setValue(3)
         if self._name_search_widget is not None:
             if hasattr(self._name_search_widget, "clear"):
                 self._name_search_widget.clear()
@@ -1181,15 +1202,21 @@ class PriceReportsPage(QWidget):
         self.clear_preview_table()
         self.show_message("Форма очищена")
 
-    def _get_latest_price_record(self, session, supplier_id: int, product_id: int):
-        current = (
-            session.query(CurrentSupplierPrice)
-            .filter(
-                CurrentSupplierPrice.supplier_id == supplier_id,
-                CurrentSupplierPrice.product_id == product_id,
-            )
-            .first()
+    def _get_latest_price_record(
+        self,
+        session,
+        supplier_id: int,
+        product_id: int,
+        min_price_date: Optional[datetime] = None,
+    ):
+        current_query = session.query(CurrentSupplierPrice).filter(
+            CurrentSupplierPrice.supplier_id == supplier_id,
+            CurrentSupplierPrice.product_id == product_id,
+            CurrentSupplierPrice.price.isnot(None),
         )
+        if min_price_date is not None:
+            current_query = current_query.filter(CurrentSupplierPrice.last_update >= min_price_date)
+        current = current_query.first()
         if current:
             return {
                 "price": self._to_decimal(current.price),
@@ -1197,15 +1224,14 @@ class PriceReportsPage(QWidget):
                 "currency": current.currency or "",
             }
 
-        history = (
-            session.query(PriceHistory)
-            .filter(
-                PriceHistory.supplier_id == supplier_id,
-                PriceHistory.product_id == product_id,
-            )
-            .order_by(PriceHistory.price_date.desc())
-            .first()
+        history_query = session.query(PriceHistory).filter(
+            PriceHistory.supplier_id == supplier_id,
+            PriceHistory.product_id == product_id,
+            PriceHistory.price.isnot(None),
         )
+        if min_price_date is not None:
+            history_query = history_query.filter(PriceHistory.price_date >= min_price_date)
+        history = history_query.order_by(PriceHistory.price_date.desc(), PriceHistory.id.desc()).first()
         if history:
             return {
                 "price": self._to_decimal(history.price),
@@ -1243,8 +1269,9 @@ class PriceReportsPage(QWidget):
         product: Product,
         fx_rates: Dict[str, Decimal],
         fixed_costs: Optional[FixedCosts],
+        min_price_date: Optional[datetime] = None,
     ) -> Optional[SupplierOption]:
-        latest = self._get_latest_price_record(session, supplier.id, product.id)
+        latest = self._get_latest_price_record(session, supplier.id, product.id, min_price_date)
         if not latest:
             return None
         cost_novo = self._calc_cost_novo(
@@ -1327,13 +1354,21 @@ class PriceReportsPage(QWidget):
         fixed_costs: Optional[FixedCosts],
         exclude_supplier_id: Optional[int] = None,
         include_supplier_without_rating: bool = False,
+        min_price_date: Optional[datetime] = None,
     ) -> List[SupplierOption]:
-        supplier_ids = set(
-            row[0] for row in session.query(CurrentSupplierPrice.supplier_id).filter(CurrentSupplierPrice.product_id == product.id).all()
+        current_query = session.query(CurrentSupplierPrice.supplier_id).filter(
+            CurrentSupplierPrice.product_id == product.id,
+            CurrentSupplierPrice.price.isnot(None),
         )
-        supplier_ids.update(
-            row[0] for row in session.query(PriceHistory.supplier_id).filter(PriceHistory.product_id == product.id).all()
+        history_query = session.query(PriceHistory.supplier_id).filter(
+            PriceHistory.product_id == product.id,
+            PriceHistory.price.isnot(None),
         )
+        if min_price_date is not None:
+            current_query = current_query.filter(CurrentSupplierPrice.last_update >= min_price_date)
+            history_query = history_query.filter(PriceHistory.price_date >= min_price_date)
+        supplier_ids = {row[0] for row in current_query.all()}
+        supplier_ids.update(row[0] for row in history_query.all())
         if exclude_supplier_id:
             supplier_ids.discard(exclude_supplier_id)
 
@@ -1351,6 +1386,7 @@ class PriceReportsPage(QWidget):
                 product=product,
                 fx_rates=fx_rates,
                 fixed_costs=fixed_costs,
+                min_price_date=min_price_date,
             )
             if option and option.supplier_price is not None:
                 options.append(option)

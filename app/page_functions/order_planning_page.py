@@ -181,6 +181,10 @@ class OrderPlanningPage(QWidget):
 
         self.ui.spin_QuickOrd.setValue(3)
         self.ui.spin_SafeStock.setValue(5)
+        if hasattr(self.ui, "spb_SuppPriceAge"):
+            self.ui.spb_SuppPriceAge.setMinimum(0)
+            self.ui.spb_SuppPriceAge.setMaximum(120)
+            self.ui.spb_SuppPriceAge.setValue(3)
         self.ui.lbl_CalcPeriod.setText("Текущий период расчета: -")
         self.ui.lbl_QuickVolResult.setText("0")
         self.ui.lbl_StandVolResult.setText("0")
@@ -205,6 +209,12 @@ class OrderPlanningPage(QWidget):
 
     def load_initial_data(self):
         self._refresh_filter_buttons(prune=True)
+
+    def get_supplier_price_age_months(self) -> int:
+        widget = getattr(self.ui, "spb_SuppPriceAge", None)
+        if widget is None:
+            return 3
+        return int(widget.value())
 
     # ------------------------------------------------------------------
     # Filters
@@ -721,6 +731,8 @@ class OrderPlanningPage(QWidget):
         self.ui.date_SalesTo.setDate(today)
         self.ui.spin_QuickOrd.setValue(3)
         self.ui.spin_SafeStock.setValue(5)
+        if hasattr(self.ui, "spb_SuppPriceAge"):
+            self.ui.spb_SuppPriceAge.setValue(3)
         self.ui.radio_VolNotNull.setChecked(False)
         self._base_rows = []
         self._rows = []
@@ -778,11 +790,16 @@ class OrderPlanningPage(QWidget):
             if not file_path:
                 return
             rows = [dict(row) for row in self._rows]
+            supplier_price_age_months = self.get_supplier_price_age_months()
 
             def do_export():
                 with self.get_session() as session:
                     exporter = OrderPlanningExporter(session)
-                    return exporter.export_report(display_rows=rows, output_path=file_path)
+                    return exporter.export_report(
+                        display_rows=rows,
+                        output_path=file_path,
+                        supplier_price_age_months=supplier_price_age_months,
+                    )
 
             def done(output_path):
                 QDesktopServices.openUrl(Path(output_path).as_uri())

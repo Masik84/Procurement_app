@@ -13,6 +13,7 @@ from app.db.models import CurrentSupplierPrice, PriceHistory, Product, ProductSt
 from app.services.cost_calculation_service import CostCalculationService
 from app.services.supplier_service import SupplierService
 from app.services.supplier_currency_cost_service import SupplierCurrencyCostService
+from app.services.price_repository import PriceRepository
 from app.exports.excel_column_format import apply_standard_worksheet_format, excel_value_by_header
 from app.utils.excel_fast_writer import write_excel_table
 from app.utils.output_headers import standardize_output_header
@@ -24,6 +25,7 @@ class OrderPlanningExporter:
         self.cost_calculation = CostCalculationService(session)
         self.supplier_service = SupplierService(session)
         self.currency_cost_service = SupplierCurrencyCostService(session)
+        self.price_repository = PriceRepository(session)
         self._xl_center = -4108
         self._xl_vcenter = -4160
 
@@ -155,42 +157,46 @@ class OrderPlanningExporter:
         except Exception:
             return None
 
-    def _get_supplier_options(self, product_id: int) -> list[dict]:
-        supplier_ids = set()
-        supplier_ids.update(row[0] for row in self.session.query(CurrentSupplierPrice.supplier_id).filter(CurrentSupplierPrice.product_id == product_id).all())
-        supplier_ids.update(row[0] for row in self.session.query(PriceHistory.supplier_id).filter(PriceHistory.product_id == product_id).all())
+    def _get_supplier_options(self, product_id: int, min_price_date=None) -> list[dict]:
+        current_query = self.session.query(CurrentSupplierPrice.supplier_id).filter(
+            CurrentSupplierPrice.product_id == product_id,
+            CurrentSupplierPrice.price.isnot(None),
+        )
+        history_query = self.session.query(PriceHistory.supplier_id).filter(
+            PriceHistory.product_id == product_id,
+            PriceHistory.price.isnot(None),
+        )
+        if min_price_date is not None:
+            current_query = current_query.filter(CurrentSupplierPrice.last_update >= min_price_date)
+            history_query = history_query.filter(PriceHistory.price_date >= min_price_date)
+
+        supplier_ids = {row[0] for row in current_query.all()}
+        supplier_ids.update(row[0] for row in history_query.all())
 
         options: list[dict] = []
         for supplier_id in supplier_ids:
             supplier = self.session.query(Supplier).filter(Supplier.id == supplier_id).first()
             if not supplier or not bool(getattr(supplier, "rating_calc", True)):
                 continue
-            current = self.session.query(CurrentSupplierPrice).filter(
-                CurrentSupplierPrice.supplier_id == supplier_id,
-                CurrentSupplierPrice.product_id == product_id,
-            ).first()
-            if current is not None:
-                option = self._calc_supplier_option(
-                    supplier,
-                    product_id,
-                    current.price,
-                    current.last_update,
-                    current.currency,
-                )
-            else:
-                history = self.session.query(PriceHistory).filter(
-                    PriceHistory.supplier_id == supplier_id,
-                    PriceHistory.product_id == product_id,
-                ).order_by(PriceHistory.price_date.desc()).first()
-                option = self._calc_supplier_option(
-                    supplier,
-                    product_id,
-                    history.price,
-                    history.price_date,
-                    history.currency,
-                ) if history else None
+
+            snapshot = self.price_repository.get_last_supplier_price_snapshot(
+                supplier_id=supplier_id,
+                product_id=product_id,
+                min_price_date=min_price_date,
+            )
+            if snapshot is None:
+                continue
+
+            option = self._calc_supplier_option(
+                supplier,
+                product_id,
+                snapshot.price,
+                snapshot.price_date,
+                snapshot.currency_code,
+            )
             if option and option["full_cost"] is not None:
                 options.append(option)
+
         options.sort(key=lambda x: (self._to_decimal(x["full_cost"]), str(x["supplier"]).lower()))
         return options
 
@@ -219,12 +225,13 @@ class OrderPlanningExporter:
             "Damaged",
         ]
 
-    def build_export_data(self, display_rows: list[dict]) -> tuple[list[str], list[list[object]]]:
+    def build_export_data(self, display_rows: list[dict], supplier_price_age_months: int = 3) -> tuple[list[str], list[list[object]]]:
+        min_price_date = PriceRepository.supplier_price_cutoff_from_months(supplier_price_age_months)
         max_suppliers = 0
         prepared = []
         for row in display_rows:
             product_id = row.get("product_id")
-            options = self._get_supplier_options(int(product_id)) if product_id else []
+            options = self._get_supplier_options(int(product_id), min_price_date=min_price_date) if product_id else []
             max_suppliers = max(max_suppliers, len(options))
             prepared.append((row, options))
 
@@ -270,7 +277,13 @@ class OrderPlanningExporter:
             rows.append(values)
         return headers, rows
 
-    def export_report(self, *, display_rows: list[dict], output_path: str | Path) -> Path:
+    def export_report(
+        self,
+        *,
+        display_rows: list[dict],
+        output_path: str | Path,
+        supplier_price_age_months: int = 3,
+    ) -> Path:
         output_path = Path(output_path)
         if output_path.suffix.lower() != ".xlsx":
             output_path = output_path.with_suffix(".xlsx")
@@ -282,7 +295,7 @@ class OrderPlanningExporter:
             except PermissionError:
                 raise PermissionError(f"Не удается перезаписать файл:\n{target_path}\n\nСкорее всего, он открыт в Excel. Закрой файл и попробуй снова.")
 
-        headers, rows = self.build_export_data(display_rows)
+        headers, rows = self.build_export_data(display_rows, supplier_price_age_months=supplier_price_age_months)
         excel = None
         wb = None
         try:
