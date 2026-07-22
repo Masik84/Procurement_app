@@ -105,6 +105,7 @@ class TargetPricesPage(QWidget):
             (self.ui.line_AgentFee, "Формат: 0,2500"),
             (self.ui.line_Reexport, "Формат: 3,5% / 0,24%"),
             (self.ui.line_FXMarkup, "Формат: 3,5% / 0,24%"),
+            (self.ui.line_FXMarkupAbs, "Формат: 1,5000"),
         ]:
             widget.setToolTip(tip)
             widget.installEventFilter(self)
@@ -122,6 +123,7 @@ class TargetPricesPage(QWidget):
         self.ui.line_AgentFee.editingFinished.connect(self.normalize_agent_fee)
         self.ui.line_Reexport.editingFinished.connect(self.normalize_reexport)
         self.ui.line_FXMarkup.editingFinished.connect(self.normalize_fx_markup)
+        self.ui.line_FXMarkupAbs.editingFinished.connect(self.normalize_fx_markup_abs)
         self.ui.btn_DownFile.clicked.connect(self.download_template)
         self.ui.btn_Import.clicked.connect(self.import_file)
         self.ui.btn_AddLine.clicked.connect(self.add_line)
@@ -151,7 +153,7 @@ class TargetPricesPage(QWidget):
             session.commit()
 
     def eventFilter(self, watched, event):
-        if watched in {self.ui.line_ExchangeRate, self.ui.line_Transport, self.ui.line_AgentFee, self.ui.line_Reexport, self.ui.line_FXMarkup}:
+        if watched in {self.ui.line_ExchangeRate, self.ui.line_Transport, self.ui.line_AgentFee, self.ui.line_Reexport, self.ui.line_FXMarkup, self.ui.line_FXMarkupAbs}:
             if event.type() in {QEvent.Enter, QEvent.FocusIn, QEvent.MouseButtonPress}:
                 QToolTip.showText(watched.mapToGlobal(QPoint(0, watched.height())), watched.toolTip(), watched)
         return super().eventFilter(watched, event)
@@ -250,6 +252,7 @@ class TargetPricesPage(QWidget):
         self.set_combo_text(self.ui.cbo_viaNovo, "через Ново")
         self.ui.line_Reexport.setText("0,0%")
         self.ui.line_FXMarkup.setText("0,0%")
+        self.ui.line_FXMarkupAbs.setText("0,0000")
         self.set_combo_text(self.ui.cbo_Customs, "да")
         self.set_combo_text(self.ui.cbo_Marking, "Феникс")
         self.set_combo_text(self.ui.cbo_History, "да")
@@ -266,6 +269,7 @@ class TargetPricesPage(QWidget):
             self.ui.line_AgentFee.clear()
             self.ui.line_Reexport.setText("0,0%")
             self.ui.line_FXMarkup.setText("0,0%")
+            self.ui.line_FXMarkupAbs.setText("0,0000")
             self.set_combo_text(self.ui.cbo_Currency, "-")
             self.set_combo_text(self.ui.cbo_viaNovo, "через Ново")
             self.set_combo_text(self.ui.cbo_Customs, "да")
@@ -300,6 +304,7 @@ class TargetPricesPage(QWidget):
         self.set_combo_text(self.ui.cbo_viaNovo, "через Ново" if data.is_via_novo else "в Мск")
         self.ui.line_Reexport.setText(self.format_percent(data.reexport_percent))
         self.ui.line_FXMarkup.setText(self.format_percent(data.fx_rate_markup))
+        self.ui.line_FXMarkupAbs.setText(self.format_number(data.fx_rate_markup_abs, 4))
         self.set_combo_text(self.ui.cbo_Customs, "да" if data.has_import_duty else "нет")
         self.set_combo_text(self.ui.cbo_Marking, "Поставщик" if data.marks_for_us else "Феникс")
 
@@ -325,7 +330,8 @@ class TargetPricesPage(QWidget):
             transport_cost_per_l=self.parse_decimal_field(self.ui.line_Transport, "Транспорт"),
             agent_fee=self.parse_decimal_field(self.ui.line_AgentFee, "Agent fee"),
             reexport_percent=self.parse_percent_field(self.ui.line_Reexport, "Реэкспорт"),
-            fx_rate_markup=self.parse_percent_field(self.ui.line_FXMarkup, "FX markup"),
+            fx_rate_markup=self.parse_percent_field(self.ui.line_FXMarkup, "FX markup %"),
+            fx_rate_markup_abs=self.parse_decimal_field(self.ui.line_FXMarkupAbs, "FX markup abs"),
             is_via_novo=self.ui.cbo_viaNovo.currentText() == "через Ново",
             has_import_duty=self.ui.cbo_Customs.currentText() == "да",
             rating_calc=True,
@@ -401,6 +407,7 @@ class TargetPricesPage(QWidget):
     def normalize_agent_fee(self): self._normalize_number_widget(self.ui.line_AgentFee, 4)
     def normalize_reexport(self): self._normalize_percent_widget(self.ui.line_Reexport)
     def normalize_fx_markup(self): self._normalize_percent_widget(self.ui.line_FXMarkup)
+    def normalize_fx_markup_abs(self): self._normalize_number_widget(self.ui.line_FXMarkupAbs, 4)
 
     def _normalize_number_widget(self, widget: QLineEdit, digits: int):
         text = clean_multi_spaces(widget.text())
@@ -491,7 +498,6 @@ class TargetPricesPage(QWidget):
                     self.table.setItem(row_index, 5, self.build_table_item(row_id, "new_pack", self._format_number_text(row.new_pack), False))
                     self.table.setCellWidget(row_index, 6, self.build_checkbox_widget(row_id, bool(row.new_is_excise) if row.new_is_excise is not None else False))
             self.table.resizeColumnsToContents()
-            self.table.resizeRowsToContents()
         finally:
             self._updating_table = False
 
@@ -873,7 +879,8 @@ class TargetPricesPage(QWidget):
             fx_rate = self.parse_decimal_field(self.ui.line_ExchangeRate, "Курс")
             transport = self.parse_decimal_field(self.ui.line_Transport, "Транспорт")
             reexport = self.parse_percent_field(self.ui.line_Reexport, "Реэкспорт")
-            fx_markup = self.parse_percent_field(self.ui.line_FXMarkup, "FX markup")
+            fx_markup = self.parse_percent_field(self.ui.line_FXMarkup, "FX markup %")
+            fx_markup_abs = self.parse_decimal_field(self.ui.line_FXMarkupAbs, "FX markup abs")
             has_customs = self.ui.cbo_Customs.currentText() == "да"
             via_novo = self.ui.cbo_viaNovo.currentText() == "через Ново"
 
@@ -892,6 +899,7 @@ class TargetPricesPage(QWidget):
                         transport=transport,
                         reexport=reexport,
                         fx_markup=fx_markup,
+                        fx_markup_abs=fx_markup_abs,
                         has_customs=has_customs,
                         via_novo=via_novo,
                         manual_full_costs=manual_full_costs,

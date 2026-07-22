@@ -142,6 +142,7 @@ class SupplierPricesPage(QWidget):
             self._setup_number_field(self.ui.line_AgentFee, "Формат: 0,2500")
         self._setup_number_field(self.ui.line_Reexport, "Формат: 3,5% / 0,24%")
         self._setup_number_field(self.ui.line_FXMarkup, "Формат: 3,5% / 0,24%")
+        self._setup_number_field(self.ui.line_FXMarkupAbs, "Формат: 1,5000")
 
     def setup_connections(self):
         self.table.cellDoubleClicked.connect(self.start_cell_edit)
@@ -166,6 +167,7 @@ class SupplierPricesPage(QWidget):
             self.ui.line_AgentFee.editingFinished.connect(self.normalize_agent_fee)
         self.ui.line_Reexport.editingFinished.connect(self.normalize_reexport)
         self.ui.line_FXMarkup.editingFinished.connect(self.normalize_fx_markup)
+        self.ui.line_FXMarkupAbs.editingFinished.connect(self.normalize_fx_markup_abs)
 
     def get_session(self):
         return SessionLocal()
@@ -196,6 +198,7 @@ class SupplierPricesPage(QWidget):
             *([self.ui.line_AgentFee] if hasattr(self.ui, "line_AgentFee") else []),
             self.ui.line_Reexport,
             self.ui.line_FXMarkup,
+            self.ui.line_FXMarkupAbs,
         }:
             if event.type() in {QEvent.Enter, QEvent.FocusIn, QEvent.MouseButtonPress}:
                 QToolTip.showText(
@@ -243,6 +246,7 @@ class SupplierPricesPage(QWidget):
         self.set_combo_text(self.ui.cbo_viaNovo, "через Ново")
         self.ui.line_Reexport.setText("0,0%")
         self.ui.line_FXMarkup.setText("0,0%")
+        self.ui.line_FXMarkupAbs.setText("0,0000")
         self.set_combo_text(self.ui.cbo_Customs, "да")
         self.set_combo_text(self.ui.cbo_Marking, "Феникс")
         self.set_combo_text(self.ui.cbo_History, "да")
@@ -463,6 +467,7 @@ class SupplierPricesPage(QWidget):
                 self.ui.line_AgentFee.clear()
             self.ui.line_Reexport.setText("0,0%")
             self.ui.line_FXMarkup.setText("0,0%")
+            self.ui.line_FXMarkupAbs.setText("0,0000")
             self.set_combo_text(self.ui.cbo_Currency, "-")
             self.set_combo_text(self.ui.cbo_viaNovo, "через Ново")
             self.set_combo_text(self.ui.cbo_Customs, "да")
@@ -505,6 +510,7 @@ class SupplierPricesPage(QWidget):
         self.set_combo_text(self.ui.cbo_viaNovo, "через Ново" if supplier_data.is_via_novo else "в Мск")
         self.ui.line_Reexport.setText(self.format_percent(supplier_data.reexport_percent))
         self.ui.line_FXMarkup.setText(self.format_percent(supplier_data.fx_rate_markup))
+        self.ui.line_FXMarkupAbs.setText(self.format_number(supplier_data.fx_rate_markup_abs, 4))
         self.set_combo_text(self.ui.cbo_Customs, "да" if supplier_data.has_import_duty else "нет")
         self.set_combo_text(self.ui.cbo_Marking, "Поставщик" if supplier_data.marks_for_us else "Феникс")
         self.set_combo_text(self.ui.cbo_Rating, "да" if supplier_data.rating_calc else "нет")
@@ -536,7 +542,8 @@ class SupplierPricesPage(QWidget):
             transport_cost_per_l=self.parse_decimal_field(self.ui.line_Transport, "Транспорт"),
             agent_fee=self.parse_decimal_field(self.ui.line_AgentFee, "Agent fee") if hasattr(self.ui, "line_AgentFee") else Decimal("0"),
             reexport_percent=self.parse_percent_field(self.ui.line_Reexport, "Реэкспорт"),
-            fx_rate_markup=self.parse_percent_field(self.ui.line_FXMarkup, "FX markup"),
+            fx_rate_markup=self.parse_percent_field(self.ui.line_FXMarkup, "FX markup %"),
+            fx_rate_markup_abs=self.parse_decimal_field(self.ui.line_FXMarkupAbs, "FX markup abs"),
             is_via_novo=self.ui.cbo_viaNovo.currentText() == "через Ново",
             has_import_duty=self.ui.cbo_Customs.currentText() == "да",
             rating_calc=self.ui.cbo_Rating.currentText() == "да",
@@ -625,6 +632,9 @@ class SupplierPricesPage(QWidget):
 
     def normalize_fx_markup(self):
         self._normalize_percent_widget(self.ui.line_FXMarkup)
+
+    def normalize_fx_markup_abs(self):
+        self._normalize_number_widget(self.ui.line_FXMarkupAbs, digits=4)
 
     def _normalize_number_widget(self, widget: QLineEdit, digits: int):
         text = clean_multi_spaces(widget.text())

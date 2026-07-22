@@ -22,6 +22,7 @@ class SupplierUpsertData:
     transport_cost_per_l: Decimal = Decimal("0")
     reexport_percent: Decimal = Decimal("0")
     fx_rate_markup: Decimal = Decimal("0")
+    fx_rate_markup_abs: Decimal = Decimal("0")
     agent_fee: Decimal = Decimal("0")
     is_via_novo: bool = False
     has_import_duty: bool = False
@@ -118,6 +119,7 @@ class SupplierService:
             transport_cost_per_l=Decimal(str(data.transport_cost_per_l)),
             reexport_percent=Decimal(str(data.reexport_percent)),
             fx_rate_markup=Decimal(str(data.fx_rate_markup)),
+            fx_rate_markup_abs=Decimal(str(data.fx_rate_markup_abs)),
             agent_fee=Decimal(str(data.agent_fee)),
             is_via_novo=bool(data.is_via_novo),
             has_import_duty=bool(data.has_import_duty),
@@ -156,6 +158,7 @@ class SupplierService:
             transport_cost_per_l=validated.transport_cost_per_l,
             reexport_percent=validated.reexport_percent,
             fx_rate_markup=validated.fx_rate_markup,
+            fx_rate_markup_abs=validated.fx_rate_markup_abs,
             agent_fee=validated.agent_fee,
             is_via_novo=validated.is_via_novo,
             has_import_duty=validated.has_import_duty,
@@ -180,6 +183,7 @@ class SupplierService:
         supplier.transport_cost_per_l = validated.transport_cost_per_l
         supplier.reexport_percent = validated.reexport_percent
         supplier.fx_rate_markup = validated.fx_rate_markup
+        supplier.fx_rate_markup_abs = validated.fx_rate_markup_abs
         supplier.agent_fee = validated.agent_fee
         supplier.is_via_novo = validated.is_via_novo
         supplier.has_import_duty = validated.has_import_duty
@@ -229,6 +233,7 @@ class SupplierService:
             transport_cost_per_l=supplier.transport_cost_per_l,
             reexport_percent=supplier.reexport_percent,
             fx_rate_markup=supplier.fx_rate_markup,
+            fx_rate_markup_abs=supplier.fx_rate_markup_abs,
             agent_fee=supplier.agent_fee,
             is_via_novo=bool(supplier.is_via_novo),
             has_import_duty=bool(supplier.has_import_duty),

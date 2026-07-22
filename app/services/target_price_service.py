@@ -257,6 +257,7 @@ class TargetPriceService:
             currency_code=calc.currency_code,
             fx_rate_used=safe(calc.fx_rate_used),
             fx_markup_used=safe(calc.fx_markup_used),
+            fx_markup_abs_used=safe(calc.fx_markup_abs_used),
             transport_used=safe(calc.transport_used),
             reexport_used=safe(calc.reexport_used),
             agent_fee_used=safe(calc.agent_fee_used),
@@ -354,6 +355,7 @@ class TargetPriceService:
                 currency_code=manual_supplier.base_currency or "USD",
                 fx_rate_used=Decimal("0"),
                 fx_markup_used=Decimal("0"),
+                fx_markup_abs_used=Decimal("0"),
                 transport_used=Decimal("0"),
                 reexport_used=Decimal("0"),
                 agent_fee_used=Decimal("0"),
@@ -427,6 +429,7 @@ class TargetPriceService:
         transport: object,
         reexport: object,
         fx_markup: object,
+        fx_markup_abs: object,
         has_customs: bool,
         via_novo: bool,
         agent_fee: object | None = None,
@@ -448,6 +451,8 @@ class TargetPriceService:
         d_transport = self._to_decimal(transport)
         d_reexport = self._to_decimal(reexport)
         d_fx_markup = self._to_decimal(fx_markup)
+        d_fx_markup_abs = self._to_decimal(fx_markup_abs)
+        d_effective_fx_rate = d_fx_rate * (Decimal("1") + d_fx_markup) + d_fx_markup_abs
         d_agent_fee = self._to_decimal(
             getattr(supplier, "agent_fee", None) if agent_fee is None else agent_fee
         )
@@ -478,7 +483,7 @@ class TargetPriceService:
         base = cost_novo_wvat / (Decimal("1") + d_vat)
         if supplier_is_rf:
             numerator = base - marking - (d_agent_fee * d_fx_rate)
-            denominator = (Decimal("1") + d_reexport) * customs_multiplier * d_fx_rate * (Decimal("1") + d_fx_markup)
+            denominator = (Decimal("1") + d_reexport) * customs_multiplier * d_effective_fx_rate
         else:
             numerator = (
                 base
@@ -493,8 +498,7 @@ class TargetPriceService:
                 (Decimal("1") + d_reexport)
                 * customs_multiplier
                 * (Decimal("1") + d_bank_fee)
-                * d_fx_rate
-                * (Decimal("1") + d_fx_markup)
+                * d_effective_fx_rate
             )
 
         if denominator == 0:
@@ -513,6 +517,7 @@ class TargetPriceService:
         transport: Decimal,
         reexport: Decimal,
         fx_markup: Decimal,
+        fx_markup_abs: Decimal,
         has_customs: bool,
         via_novo: bool,
         manual_full_costs: dict[int, Decimal] | None = None,
@@ -548,6 +553,7 @@ class TargetPriceService:
                 transport=transport,
                 reexport=reexport,
                 fx_markup=fx_markup,
+                fx_markup_abs=fx_markup_abs,
                 has_customs=has_customs,
                 via_novo=via_novo,
             )
@@ -569,6 +575,7 @@ class TargetPriceService:
                 full_cost_msk_source=option.full_cost_msk,
                 cost_novo_wvat=cost_novo_wvat,
                 fx_markup_used=fx_markup,
+                fx_markup_abs_used=fx_markup_abs,
                 transport_used=transport,
                 reexport_used=reexport,
                 agent_fee_used=self._to_decimal(getattr(self.session.query(Supplier).filter(Supplier.id == target_supplier_id).first(), "agent_fee", None)),

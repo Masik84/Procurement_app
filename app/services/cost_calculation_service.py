@@ -18,6 +18,7 @@ class CostCalculationResult:
     currency_code: str
     fx_rate_used: Decimal
     fx_markup_used: Decimal
+    fx_markup_abs_used: Decimal
     transport_used: Decimal
     reexport_used: Decimal
     agent_fee_used: Decimal
@@ -122,6 +123,7 @@ class CostCalculationService:
         reexport: Decimal,
         fx_rate: Decimal,
         fx_markup: Decimal,
+        fx_markup_abs: Decimal,
         has_customs: bool,
         agent_fee: Optional[Decimal] = None,
     ) -> Optional[float]:
@@ -137,6 +139,8 @@ class CostCalculationService:
         d_reexport = self._to_decimal(reexport)
         d_fx_rate = self._to_decimal(fx_rate)
         d_fx_markup = self._to_decimal(fx_markup)
+        d_fx_markup_abs = self._to_decimal(fx_markup_abs)
+        d_effective_fx_rate = d_fx_rate * (Decimal("1") + d_fx_markup) + d_fx_markup_abs
 
         d_customs_clearance = self._to_decimal(fixed.customs_clearance)
         d_additional_customs = self._to_decimal(fixed.additional_customs)
@@ -164,8 +168,7 @@ class CostCalculationService:
                 (d_price + d_transport)
                 * (Decimal("1") + d_reexport)
                 * customs_multiplier
-                * d_fx_rate
-                * (Decimal("1") + d_fx_markup)
+                * d_effective_fx_rate
             )
             base = base_before_add + d_marking + (d_agent_fee * d_fx_rate)
         else:
@@ -174,8 +177,7 @@ class CostCalculationService:
                 * (Decimal("1") + d_reexport)
                 * customs_multiplier
                 * (Decimal("1") + d_bank_fee)
-                * d_fx_rate
-                * (Decimal("1") + d_fx_markup)
+                * d_effective_fx_rate
             )
             base = base_before_add + d_additional_customs + d_marking + (d_agent_fee * d_fx_rate)
 
@@ -199,6 +201,7 @@ class CostCalculationService:
         reexport: Decimal,
         fx_rate: Decimal,
         fx_markup: Decimal,
+        fx_markup_abs: Decimal,
         has_customs: bool,
         via_novo: bool,
         agent_fee: Optional[Decimal] = None,
@@ -211,6 +214,7 @@ class CostCalculationService:
             reexport=reexport,
             fx_rate=fx_rate,
             fx_markup=fx_markup,
+            fx_markup_abs=fx_markup_abs,
             has_customs=has_customs,
             agent_fee=agent_fee,
         )
@@ -253,6 +257,7 @@ class CostCalculationService:
         transport: Optional[Decimal] = None,
         reexport: Optional[Decimal] = None,
         fx_markup: Optional[Decimal] = None,
+        fx_markup_abs: Optional[Decimal] = None,
         has_customs: Optional[bool] = None,
         via_novo: Optional[bool] = None,
         agent_fee: Optional[Decimal] = None,
@@ -269,6 +274,9 @@ class CostCalculationService:
         )
         fx_markup_used = self._to_decimal(
             supplier.fx_rate_markup if fx_markup is None else fx_markup
+        )
+        fx_markup_abs_used = self._to_decimal(
+            supplier.fx_rate_markup_abs if fx_markup_abs is None else fx_markup_abs
         )
         has_customs_used = bool(
             supplier.has_import_duty if has_customs is None else has_customs
@@ -288,6 +296,7 @@ class CostCalculationService:
             reexport=reexport_used,
             fx_rate=self._to_decimal(fx_rate),
             fx_markup=fx_markup_used,
+            fx_markup_abs=fx_markup_abs_used,
             has_customs=has_customs_used,
             agent_fee=agent_fee_used,
         )
@@ -302,6 +311,7 @@ class CostCalculationService:
             reexport=reexport_used,
             fx_rate=self._to_decimal(fx_rate),
             fx_markup=fx_markup_used,
+            fx_markup_abs=fx_markup_abs_used,
             has_customs=has_customs_used,
             via_novo=via_novo_used,
             agent_fee=agent_fee_used,
@@ -323,6 +333,7 @@ class CostCalculationService:
             currency_code=currency_code,
             fx_rate_used=self._to_decimal(fx_rate),
             fx_markup_used=fx_markup_used,
+            fx_markup_abs_used=fx_markup_abs_used,
             transport_used=transport_used,
             reexport_used=reexport_used,
             agent_fee_used=agent_fee_used,

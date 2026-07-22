@@ -579,6 +579,7 @@ class SupplierPriceExporter:
             transport = calc_row.transport_used
             reexport = calc_row.reexport_used
             fx_markup = calc_row.fx_markup_used
+            fx_markup_abs = calc_row.fx_markup_abs_used
             has_customs = bool(calc_row.has_customs_used)
             via_novo = bool(calc_row.via_novo_used)
             agent_fee = calc_row.agent_fee_used
@@ -590,6 +591,7 @@ class SupplierPriceExporter:
             transport = getattr(supplier, "transport_cost_per_l", None)
             reexport = getattr(supplier, "reexport_percent", None)
             fx_markup = getattr(supplier, "fx_rate_markup", None)
+            fx_markup_abs = getattr(supplier, "fx_rate_markup_abs", None)
             has_customs = bool(getattr(supplier, "has_import_duty", False))
             via_novo = bool(getattr(supplier, "is_via_novo", False))
             agent_fee = getattr(supplier, "agent_fee", None)
@@ -606,6 +608,7 @@ class SupplierPriceExporter:
                 transport=transport,
                 reexport=reexport,
                 fx_markup=fx_markup,
+                fx_markup_abs=fx_markup_abs,
                 has_customs=has_customs,
                 via_novo=via_novo,
                 agent_fee=agent_fee,
@@ -929,8 +932,11 @@ class SupplierPriceExporter:
             )
             if target_price_l is not None and price_per_l is not None:
                 supplier_price_l = self._to_decimal(price_per_l)
-                if supplier_price_l > 0 and target_price_l > supplier_price_l:
+                target_price_l = self._to_decimal(target_price_l)
+                if supplier_price_l.is_finite() and target_price_l.is_finite() and supplier_price_l > 0 and target_price_l > supplier_price_l:
                     target_price_l = (supplier_price_l * Decimal("0.97")).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+                elif not target_price_l.is_finite():
+                    target_price_l = None
 
             out_rows.append(
                 {

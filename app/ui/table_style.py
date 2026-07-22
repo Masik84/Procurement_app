@@ -14,6 +14,10 @@ def setup_data_table(table: QTableWidget, *, sorting: bool = True) -> None:
     header.setStretchLastSection(False)
 
     table.verticalHeader().setVisible(False)
+    table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
+    table.verticalHeader().setDefaultSectionSize(22)
+    table.verticalHeader().setMinimumSectionSize(22)
+    table.verticalHeader().setMaximumSectionSize(22)
     table.setSortingEnabled(sorting)
     table.setWordWrap(False)
     table.setTextElideMode(Qt.TextElideMode.ElideRight)

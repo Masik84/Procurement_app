@@ -169,7 +169,7 @@ def is_decimal_header(header: str) -> bool:
         is_decimal4_header(header)
         or is_money_header(header)
         or h in {
-            "fx markup", "transport", "re-export", "agent fee", "bank fee", "customs fee",
+            "fx markup %", "fx markup abs", "transport", "re-export", "agent fee", "bank fee", "customs fee",
             "additional customs", "storage", "move novo", "move msk", "marking",
             "ср.продажи мес", "safe stock (st), mnth", "safe stock (st+tr), mnth", "safe stock (+ord), mnth",
             "дистр цена", "промо цена", "к быстрому заказу, л", "к заказу, л",

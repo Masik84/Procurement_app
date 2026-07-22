@@ -87,7 +87,8 @@ class CustomerCostsReportsPage(QWidget):
         "FX rate",
         "Cost Novo with VAT",
         "Full Cost Msk",
-        "FX markup",
+        "FX markup %",
+        "FX markup abs",
         "Transport",
         "Re-export",
         "Agent fee",
@@ -496,6 +497,7 @@ class CustomerCostsReportsPage(QWidget):
             calc.cost_novo_wvat,
             calc.full_cost_msk,
             calc.fx_markup_used,
+            calc.fx_markup_abs_used,
             calc.transport_used,
             calc.reexport_used,
             calc.agent_fee_used,
@@ -551,6 +553,11 @@ class CustomerCostsReportsPage(QWidget):
                     item = build_table_item(value, editable=editable, align_left=header in {"Менеджер", "Клиент", "Customer Product Name", "Supplier", "Comments"})
                 if header in {"Дата", "Price date"} and isinstance(value, datetime):
                     item.setText(value.strftime("%d.%m.%Y"))
+                if header == "FX markup %" and value is not None:
+                    try:
+                        item.setText(f"{float(value) * 100:.2f}%".replace(".", ","))
+                    except (TypeError, ValueError):
+                        pass
                 if isinstance(value, bool):
                     item.setText("Да" if value else "Нет")
                 self.table.setItem(row_idx, col_idx, item)

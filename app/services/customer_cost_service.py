@@ -432,6 +432,7 @@ class CustomerCostService:
 
             fx_rate_used=safe(calc.fx_rate_used),
             fx_markup_used=safe(calc.fx_markup_used),
+            fx_markup_abs_used=safe(calc.fx_markup_abs_used),
             transport_used=safe(calc.transport_used),
             reexport_used=safe(calc.reexport_used),
             has_customs_used=calc.has_customs_used,
@@ -543,6 +544,7 @@ class CustomerCostService:
                 currency_code=option.currency_code,
                 fx_rate_used=option.fx_rate_used,
                 fx_markup_used=option.fx_markup_used,
+                fx_markup_abs_used=option.fx_markup_abs_used,
                 transport_used=option.transport_used,
                 reexport_used=option.reexport_used,
                 agent_fee_used=option.agent_fee_used if option.agent_fee_used is not None else Decimal("0"),

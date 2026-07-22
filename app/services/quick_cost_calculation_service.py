@@ -18,6 +18,7 @@ class QuickCostCalculationResult:
     transport_used: Decimal
     reexport_used: Decimal
     fx_markup_used: Decimal
+    fx_markup_abs_used: Decimal
     agent_fee_used: Decimal
 
     has_customs_used: bool
@@ -87,6 +88,7 @@ class QuickCostCalculationService:
         transport: Decimal,
         reexport: Decimal,
         fx_markup: Decimal,
+        fx_markup_abs: Decimal,
         has_customs: bool,
         via_novo: bool,
         supplier_is_rf: bool,
@@ -105,6 +107,8 @@ class QuickCostCalculationService:
         d_reexport = self._to_decimal(reexport)
         d_fx_rate = self._to_decimal(fx_rate)
         d_fx_markup = self._to_decimal(fx_markup)
+        d_fx_markup_abs = self._to_decimal(fx_markup_abs)
+        d_effective_fx_rate = d_fx_rate * (Decimal("1") + d_fx_markup) + d_fx_markup_abs
 
         if d_fx_rate == Decimal("0"):
             raise ValueError("Поле 'Курс' не может быть равно 0.")
@@ -136,8 +140,7 @@ class QuickCostCalculationService:
                 (d_price + d_transport)
                 * (Decimal("1") + d_reexport)
                 * customs_multiplier
-                * d_fx_rate
-                * (Decimal("1") + d_fx_markup)
+                * d_effective_fx_rate
             )
             base = base_before_add + d_marking + (d_agent_fee * d_fx_rate)
         else:
@@ -146,8 +149,7 @@ class QuickCostCalculationService:
                 * (Decimal("1") + d_reexport)
                 * customs_multiplier
                 * (Decimal("1") + d_bank_fee)
-                * d_fx_rate
-                * (Decimal("1") + d_fx_markup)
+                * d_effective_fx_rate
             )
             base = base_before_add + d_additional_customs + d_marking + (d_agent_fee * d_fx_rate)
 
@@ -180,6 +182,7 @@ class QuickCostCalculationService:
             transport_used=d_transport,
             reexport_used=d_reexport,
             fx_markup_used=d_fx_markup,
+            fx_markup_abs_used=d_fx_markup_abs,
             agent_fee_used=d_agent_fee,
             has_customs_used=has_customs,
             via_novo_used=via_novo,

@@ -63,6 +63,7 @@ class QuickCostCalcPage(QWidget):
         self._setup_number_field(self.ui.line_AgentFee, "Формат: 2,6500")
         self._setup_number_field(self.ui.line_Reexport, "Формат: 3,5% / 0,24%")
         self._setup_number_field(self.ui.line_FXMarkup, "Формат: 3,5% / 0,24%")
+        self._setup_number_field(self.ui.line_FXMarkupAbs, "Формат: 1,5000")
         self._setup_number_field(self.ui.line_Price, "Формат: 125,4500")
 
     def setup_connections(self):
@@ -74,6 +75,7 @@ class QuickCostCalcPage(QWidget):
         self.ui.line_AgentFee.editingFinished.connect(self.normalize_agent_fee)
         self.ui.line_Reexport.editingFinished.connect(self.normalize_reexport)
         self.ui.line_FXMarkup.editingFinished.connect(self.normalize_fx_markup)
+        self.ui.line_FXMarkupAbs.editingFinished.connect(self.normalize_fx_markup_abs)
         self.ui.line_Price.editingFinished.connect(self.normalize_price)
 
         self.ui.btn_Calc.clicked.connect(self.calculate_costs)
@@ -90,6 +92,7 @@ class QuickCostCalcPage(QWidget):
             self.ui.line_AgentFee,
             self.ui.line_Reexport,
             self.ui.line_FXMarkup,
+            self.ui.line_FXMarkupAbs,
             self.ui.line_Price,
         }
         if watched in watched_fields:
@@ -140,6 +143,7 @@ class QuickCostCalcPage(QWidget):
         self.ui.line_AgentFee.clear()
         self.ui.line_Reexport.setText("0,0%")
         self.ui.line_FXMarkup.setText("0,0%")
+        self.ui.line_FXMarkupAbs.setText("0,0000")
         self.ui.line_Price.clear()
         self.ui.line_CostNovo.clear()
         self.ui.line_FullCost.clear()
@@ -224,6 +228,7 @@ class QuickCostCalcPage(QWidget):
             self.ui.line_AgentFee.clear()
             self.ui.line_Reexport.setText("0,0%")
             self.ui.line_FXMarkup.setText("0,0%")
+            self.ui.line_FXMarkupAbs.setText("0,0000")
             return
 
         with self.get_session() as session:
@@ -251,6 +256,7 @@ class QuickCostCalcPage(QWidget):
         self.set_combo_text(self.ui.cbo_viaNovo, "через Ново" if supplier.is_via_novo else "в Мск")
         self.ui.line_Reexport.setText(self.format_percent(supplier.reexport_percent))
         self.ui.line_FXMarkup.setText(self.format_percent(supplier.fx_rate_markup))
+        self.ui.line_FXMarkupAbs.setText(self.format_number(supplier.fx_rate_markup_abs, 4))
         self.set_combo_text(self.ui.cbo_Customs, "да" if supplier.has_import_duty else "нет")
         self.set_combo_text(self.ui.cbo_SupplierRF, "да" if supplier.is_rf else "нет")
         self.set_combo_text(self.ui.cbo_Marking, "Поставщик" if supplier.marks_for_us else "Феникс")
@@ -330,6 +336,9 @@ class QuickCostCalcPage(QWidget):
     def normalize_fx_markup(self):
         self._normalize_percent_widget(self.ui.line_FXMarkup)
 
+    def normalize_fx_markup_abs(self):
+        self._normalize_number_widget(self.ui.line_FXMarkupAbs, digits=4)
+
     def _normalize_number_widget(self, widget, digits: int):
         text = clean_multi_spaces(widget.text())
         if not text:
@@ -384,7 +393,8 @@ class QuickCostCalcPage(QWidget):
             transport = self.parse_decimal_field(self.ui.line_Transport, "Транспорт")
             agent_fee = self.parse_decimal_field(self.ui.line_AgentFee, "Agent fee")
             reexport = self.parse_percent_field(self.ui.line_Reexport, "Реэкспорт")
-            fx_markup = self.parse_percent_field(self.ui.line_FXMarkup, "FX markup")
+            fx_markup = self.parse_percent_field(self.ui.line_FXMarkup, "FX markup %")
+            fx_markup_abs = self.parse_decimal_field(self.ui.line_FXMarkupAbs, "FX markup abs")
 
             pack_type_name = clean_multi_spaces(self.ui.line_PackType.currentText())
             has_customs = self.ui.cbo_Customs.currentText() == "да"
@@ -404,6 +414,7 @@ class QuickCostCalcPage(QWidget):
                     agent_fee=agent_fee,
                     reexport=reexport,
                     fx_markup=fx_markup,
+                    fx_markup_abs=fx_markup_abs,
                     has_customs=has_customs,
                     via_novo=via_novo,
                     supplier_is_rf=supplier_is_rf,

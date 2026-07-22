@@ -467,7 +467,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="12" column="0">
+               <item row="13" column="0">
                 <widget class="QLabel" name="label_16">
                  <property name="text">
                   <string>Agent Fee</string>
@@ -528,7 +528,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="14" column="1">
+               <item row="15" column="1">
                 <widget class="QComboBox" name="cbo_Marking">
                  <property name="minimumSize">
                   <size>
@@ -554,7 +554,7 @@ QLabel#label_msg {
                  </item>
                 </widget>
                </item>
-               <item row="12" column="1">
+               <item row="13" column="1">
                 <widget class="QLineEdit" name="line_AgentFee"/>
                </item>
                <item row="10" column="0">
@@ -584,7 +584,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="15" column="0">
+               <item row="16" column="0">
                 <widget class="QLabel" name="label_11">
                  <property name="minimumSize">
                   <size>
@@ -611,7 +611,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="14" column="0">
+               <item row="15" column="0">
                 <widget class="QLabel" name="label_3">
                  <property name="minimumSize">
                   <size>
@@ -638,7 +638,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="15" column="1">
+               <item row="16" column="1">
                 <widget class="QComboBox" name="cbo_History">
                  <property name="minimumSize">
                   <size>
@@ -727,7 +727,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="13" column="0">
+               <item row="14" column="0">
                 <widget class="QLabel" name="label_9">
                  <property name="minimumSize">
                   <size>
@@ -916,7 +916,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="13" column="1">
+               <item row="14" column="1">
                 <widget class="QComboBox" name="cbo_Customs">
                  <property name="minimumSize">
                   <size>
@@ -1029,6 +1029,50 @@ QLabel#label_msg {
                    <string>да</string>
                   </property>
                  </item>
+                </widget>
+               </item>
+              
+               <item row="12" column="0">
+                <widget class="QLabel" name="label_FXMarkupAbs">
+                 <property name="minimumSize">
+                  <size>
+                   <width>90</width>
+                   <height>0</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>90</width>
+                   <height>16777215</height>
+                  </size>
+                 </property>
+                 <property name="font">
+                  <font>
+                   <family>Tahoma</family>
+                   <pointsize>10</pointsize>
+                   <italic>false</italic>
+                   <bold>false</bold>
+                  </font>
+                 </property>
+                 <property name="text">
+                  <string>FX Markup abs</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="12" column="1">
+                <widget class="QLineEdit" name="line_FXMarkupAbs">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>16777215</width>
+                   <height>25</height>
+                  </size>
+                 </property>
                 </widget>
                </item>
               </layout>

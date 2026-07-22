@@ -157,11 +157,12 @@ class CustomerCostReportExporter:
                 ws.Range(f"{letter}1").Interior.Color = self._rgb(0, 176, 240)
 
         cost_headers = [
-            "Supplier Price, L", "Cost Novo with VAT", "Full Cost Msk", "FX markup", "Transport",
+            "Supplier Price, L", "Cost Novo with VAT", "Full Cost Msk", "FX markup abs", "Transport",
             "Re-export", "Agent fee", "Bank fee", "Customs fee", "Additional customs",
             "Storage", "Move Novo", "Move Msk", "Marking",
         ]
         self._format_columns_by_headers(ws, header_map, cost_headers, '# ##0,00;[Red]-# ##0,00;"-"')
+        self._format_columns_by_headers(ws, header_map, ["FX markup %"], "0,0#%")
         self._format_columns_by_headers(ws, header_map, ["FX rate"], "# ##0")
         self._format_columns_by_headers(ws, header_map, ["Qty, pcs", "Volume, L"], '# ##0,00;[Red]-# ##0,00;"-"')
         self._format_columns_by_headers(ws, header_map, ["Дата", "Price date"], "ДД.ММ.ГГ;@")

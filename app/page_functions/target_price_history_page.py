@@ -93,7 +93,8 @@ class TargetPriceHistoryPage(QWidget):
         "Currency (donor)",
         "FX rate (donor)",
         "Price date",
-        "FX markup",
+        "FX markup %",
+        "FX markup abs",
         "Transport",
         "Re-export",
         "Agent fee",
@@ -522,6 +523,7 @@ class TargetPriceHistoryPage(QWidget):
             self._calc_attr(calc, "donor_fx_rate_used"),
             calc.price_date_used,
             calc.fx_markup_used,
+            calc.fx_markup_abs_used,
             calc.transport_used,
             calc.reexport_used,
             calc.agent_fee_used,
@@ -594,6 +596,11 @@ class TargetPriceHistoryPage(QWidget):
             return str(prepared)
         if base in INTEGER_NUMERIC_HEADERS:
             return "" if prepared == "" else str(prepared)
+        if base == "FX markup %":
+            try:
+                return f"{float(prepared) * 100:.2f}%".replace(".", ",")
+            except (TypeError, ValueError):
+                return str(prepared)
         if base in NUMERIC_HEADERS:
             if prepared == "":
                 return ""

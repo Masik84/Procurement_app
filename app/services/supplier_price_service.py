@@ -572,6 +572,7 @@ class SupplierPriceService:
                 currency_code=calc_result.currency_code,
                 fx_rate_used=calc_result.fx_rate_used,
                 fx_markup_used=calc_result.fx_markup_used,
+                fx_markup_abs_used=calc_result.fx_markup_abs_used,
                 transport_used=calc_result.transport_used,
                 reexport_used=calc_result.reexport_used,
                 agent_fee_used=calc_result.agent_fee_used,

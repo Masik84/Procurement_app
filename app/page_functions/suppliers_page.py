@@ -63,6 +63,7 @@ class SuppliersPage(QWidget):
             "transport_cost_per_l",
             "reexport_percent",
             "fx_rate_markup",
+            "fx_rate_markup_abs",
             "agent_fee",
             "is_via_novo",
             "has_import_duty",
@@ -78,7 +79,8 @@ class SuppliersPage(QWidget):
             "Base currency",
             "Transport cost per L",
             "Reexport percent",
-            "FX rate markup",
+            "FX markup %",
+            "FX markup abs",
             "Agent fee",
             "Via Novo",
             "Import duty",
@@ -93,6 +95,7 @@ class SuppliersPage(QWidget):
             "transport_cost_per_l",
             "reexport_percent",
             "fx_rate_markup",
+            "fx_rate_markup_abs",
             "agent_fee",
         }
         self.bool_columns = {
@@ -271,7 +274,11 @@ class SuppliersPage(QWidget):
             ),
             fx_rate_markup=self._to_percent_decimal(
                 changes.get("fx_rate_markup", 0),
-                "FX rate markup",
+                "FX markup %",
+            ),
+            fx_rate_markup_abs=self._to_decimal(
+                changes.get("fx_rate_markup_abs", 0),
+                "FX markup abs",
             ),
             agent_fee=self._to_decimal(
                 changes.get("agent_fee", 0),
@@ -327,7 +334,13 @@ class SuppliersPage(QWidget):
         if "fx_rate_markup" in changes:
             supplier.fx_rate_markup = self._to_percent_decimal(
                 changes["fx_rate_markup"],
-                "FX rate markup",
+                "FX markup %",
+            )
+
+        if "fx_rate_markup_abs" in changes:
+            supplier.fx_rate_markup_abs = self._to_decimal(
+                changes["fx_rate_markup_abs"],
+                "FX markup abs",
             )
 
         if "agent_fee" in changes:
@@ -440,6 +453,7 @@ class SuppliersPage(QWidget):
                     "transport_cost_per_l": row.transport_cost_per_l,
                     "reexport_percent": row.reexport_percent,
                     "fx_rate_markup": row.fx_rate_markup,
+                    "fx_rate_markup_abs": row.fx_rate_markup_abs,
                     "agent_fee": row.agent_fee,
                     "is_via_novo": bool(row.is_via_novo),
                     "has_import_duty": bool(row.has_import_duty),
@@ -601,6 +615,7 @@ class SuppliersPage(QWidget):
             "transport_cost_per_l": "0",
             "reexport_percent": "0",
             "fx_rate_markup": "0",
+            "fx_rate_markup_abs": "0",
             "agent_fee": "0",
             "is_via_novo": False,
             "has_import_duty": False,
@@ -616,6 +631,7 @@ class SuppliersPage(QWidget):
             "transport_cost_per_l": "0",
             "reexport_percent": "0",
             "fx_rate_markup": "0",
+            "fx_rate_markup_abs": "0",
             "agent_fee": "0",
             "is_via_novo": False,
             "has_import_duty": False,

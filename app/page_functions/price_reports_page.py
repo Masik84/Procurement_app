@@ -1445,6 +1445,8 @@ class PriceReportsPage(QWidget):
 
         reexport = self._to_decimal(getattr(supplier, "reexport_percent", None), Decimal("0"))
         fx_markup = self._to_decimal(getattr(supplier, "fx_rate_markup", None), Decimal("0"))
+        fx_markup_abs = self._to_decimal(getattr(supplier, "fx_rate_markup_abs", None), Decimal("0"))
+        effective_fx_rate = fx_rate * (Decimal("1") + fx_markup) + fx_markup_abs
 
         customs_clearance = self._fixed_cost(fixed_costs, "customs_clearance")
         additional_customs = self._fixed_cost(fixed_costs, "additional_customs")
@@ -1466,8 +1468,7 @@ class PriceReportsPage(QWidget):
                 (supplier_price + transport)
                 * (Decimal("1") + reexport)
                 * customs_multiplier
-                * fx_rate
-                * (Decimal("1") + fx_markup)
+                * effective_fx_rate
             )
             base = base_before_add + marking + (agent_fee * fx_rate)
         else:
@@ -1476,8 +1477,7 @@ class PriceReportsPage(QWidget):
                 * (Decimal("1") + reexport)
                 * customs_multiplier
                 * (Decimal("1") + bank_fee)
-                * fx_rate
-                * (Decimal("1") + fx_markup)
+                * effective_fx_rate
             )
             base = base_before_add + additional_customs + marking + (agent_fee * fx_rate)
             base = base + customs_fee + (excise if bool(getattr(product, "is_excise", False)) else Decimal("0")) + eco_fee

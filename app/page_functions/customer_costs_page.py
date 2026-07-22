@@ -428,7 +428,6 @@ class CustomerCostsPage(QWidget):
                     )
 
             self.table.resizeColumnsToContents()
-            self.table.resizeRowsToContents()
         finally:
             self._updating_table = False
 
