@@ -248,7 +248,7 @@ class PriceReportExporter:
         header_map = self._header_map(headers)
         ws.Rows(1).RowHeight = 45
 
-        self._color_header_range(ws, header_map, "Brand", "Pack", self._rgb(205, 205, 205))
+        self._color_header_range(ws, header_map, "Brand", "Категория ABC", self._rgb(205, 205, 205))
         self._color_header_range(ws, header_map, "Дистр цена", "curr Landed cost", self._rgb(192, 0, 0), self._rgb(255, 255, 255))
         self._color_header_range(ws, header_map, "Stock", "Purchase Order", self._rgb(33, 92, 152), self._rgb(255, 255, 255))
         self._color_header_range(ws, header_map, "Order IS", "Stock IS", self._rgb(192, 0, 0), self._rgb(255, 255, 255))
@@ -269,6 +269,7 @@ class PriceReportExporter:
         self._set_width_by_header(ws, header_map, "Brand", 13.00)
         self._set_width_by_header(ws, header_map, "Product Name", 31.14)
         self._set_width_by_header(ws, header_map, "Pack", 8.43)
+        self._set_width_by_header(ws, header_map, "Категория ABC", 12.0)
         self._set_width_by_header(ws, header_map, "Дистр цена", 8.43)
         self._set_width_by_header(ws, header_map, "Промо цена", 8.43)
         self._set_width_by_header(ws, header_map, "curr LPC", 8.43)
@@ -280,7 +281,7 @@ class PriceReportExporter:
         self._format_fx_headers(ws, header_map)
 
         ws.Range(f"A1:{self._excel_column_letter(len(headers))}1").AutoFilter(1)
-        self._freeze(ws, split_column=7)
+        self._freeze(ws, split_column=8)
 
     def _format_supplier_report(self, ws, headers: Sequence[str], rows_count: int) -> None:
         header_map = self._header_map(headers)
@@ -313,6 +314,7 @@ class PriceReportExporter:
 
         self._set_width_by_header(ws, header_map, "Our Product Name", 31.14)
         self._set_width_by_header(ws, header_map, "Pack", 8.43)
+        self._set_width_by_header(ws, header_map, "Категория ABC", 12.0)
         for header in ("Price, L", "Price, pack"):
             self._set_width_by_header(ws, header_map, header, 9.14 if header == "Price, L" else 13.00)
         for header in ("Currency", "Cost Novo with VAT", "Full Cost Msk", "Price, L (prev)", "Cost Novo with VAT (prev)", "Full Cost Msk (prev)", "Currency Best1", "Currency Best2"):

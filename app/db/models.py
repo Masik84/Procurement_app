@@ -28,6 +28,7 @@ class Product(Base):
     name = Column(String(500), nullable=False, unique=True, index=True)
     family = Column(String(500), nullable=True, index=True)
     pack = Column(Numeric, nullable=False)
+    abc_category = Column(String(50), nullable=False, default="-")
     is_excise = Column(Boolean, nullable=False, default=False)
 
     articles = relationship("ProductArticle", back_populates="product", passive_deletes=True)
@@ -527,6 +528,7 @@ class TempStockImport(Base):
     source_product_name = Column(String(500), nullable=True)
     source_origin = Column(String(255), nullable=True)
     source_brand_group = Column(String(255), nullable=True)
+    abc_category = Column(String(50), nullable=False, default="-")
 
     lpc = Column(Numeric, nullable=True)
     landed_cost = Column(Numeric, nullable=True)
@@ -571,7 +573,9 @@ class TempSupplierOrdersImport(Base):
     import_row_no = Column(Integer, nullable=True)
 
     source_article = Column(String(255), nullable=True)
+    source_our_product_name = Column(String(500), nullable=True)
     source_product_name = Column(String(500), nullable=True)
+    abc_category = Column(String(50), nullable=False, default="-")
 
     order_qty = Column(Numeric, nullable=False, default=0)
 

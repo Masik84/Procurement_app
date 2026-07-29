@@ -136,6 +136,7 @@ class ProductSearchExporter:
                 "Product name",
                 "Brand",
                 "Pack",
+                "Категория ABC",
                 "Excise duty",
             ]
 
@@ -146,6 +147,7 @@ class ProductSearchExporter:
                     "Product name": row.get("product_name"),
                     "Brand": row.get("brand"),
                     "Pack": row.get("pack"),
+                    "Категория ABC": row.get("abc_category") or "-",
                     "Excise duty": row.get("is_excise"),
                 }
                 return excel_value_by_header(str(header), self._safe_value(values_by_header.get(header)))

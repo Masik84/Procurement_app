@@ -174,6 +174,7 @@ class CustomerCostReportExporter:
             "Customer Product Name": 31.14,
             "Our Product Name": 31.14,
             "Pack": 8.43,
+            "Категория ABC": 12.0,
             "Qty, pcs": 10.0,
             "Volume, L": 10.0,
             "Supplier": 16.14,

@@ -626,6 +626,23 @@ class ProductSearchPage(QWidget):
         except Exception as e:
             self.show_error_message(str(e))
 
+    def _prepare_export_rows(self, rows: list[TempProductSearchImport]) -> list[dict]:
+        data: list[dict] = []
+        for row in rows:
+            product = row.selected_product
+            data.append(
+                {
+                    "source_article": row.source_article or "",
+                    "source_product_name": row.source_product_name or "",
+                    "product_name": product.name if product else (row.new_product_name or ""),
+                    "brand": product.brand if product else (row.new_brand or ""),
+                    "pack": product.pack if product else row.new_pack,
+                    "abc_category": (product.abc_category or "-") if product else "-",
+                    "is_excise": product.is_excise if product else row.new_is_excise,
+                }
+            )
+        return data
+
     def _build_export_rows(self) -> list[dict]:
         with self.get_session() as session:
             rows = (
@@ -638,21 +655,7 @@ class ProductSearchPage(QWidget):
                 .order_by(TempProductSearchImport.import_row_no.asc(), TempProductSearchImport.id.asc())
                 .all()
             )
-
-            data: list[dict] = []
-            for row in rows:
-                product = row.selected_product
-                data.append(
-                    {
-                        "source_article": row.source_article or "",
-                        "source_product_name": row.source_product_name or "",
-                        "product_name": product.name if product else (row.new_product_name or ""),
-                        "brand": product.brand if product else (row.new_brand or ""),
-                        "pack": product.pack if product else row.new_pack,
-                        "is_excise": product.is_excise if product else row.new_is_excise,
-                    }
-                )
-            return data
+            return self._prepare_export_rows(rows)
 
 
     def _save_pending_temp_changes(self):
@@ -788,7 +791,19 @@ class ProductSearchPage(QWidget):
             self.show_message("Нет изменений")
             return
 
+        save_to_excel = False
+        if not save_to_db_only:
+            answer = QMessageBox.question(
+                self,
+                "Сохранение",
+                "Сохранить в Excel?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            save_to_excel = answer == QMessageBox.Yes
+
         try:
+            export_rows: list[dict] = []
             with self.get_session() as session:
                 service = ProductSearchService(session)
 
@@ -831,48 +846,67 @@ class ProductSearchPage(QWidget):
                     service.validate_new_products_before_save(self.batch_id, self.imported_by)
                     service.create_products_from_temp(self.batch_id, self.imported_by)
                     service.create_or_update_product_articles(self.batch_id, self.imported_by)
+                    session.flush()
+
+                    if save_to_excel:
+                        rows_for_export = (
+                            session.query(TempProductSearchImport)
+                            .options(joinedload(TempProductSearchImport.selected_product))
+                            .filter(
+                                TempProductSearchImport.batch_id == self.batch_id,
+                                TempProductSearchImport.imported_by == self.imported_by,
+                            )
+                            .order_by(TempProductSearchImport.import_row_no.asc(), TempProductSearchImport.id.asc())
+                            .all()
+                        )
+                        export_rows = self._prepare_export_rows(rows_for_export)
+
                     service.delete_temp_rows_for_user(self.imported_by)
 
                 session.commit()
 
             if not save_to_db_only:
-                save_path, _ = QFileDialog.getSaveFileName(
-                    self,
-                    "Сохранить итоговый файл",
-                    str(BASE_DIR / f"ProductSearch_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"),
-                    "Excel files (*.xlsx)",
-                )
-                if not save_path:
-                    self.show_message("Данные сохранены в БД. Сохранение файла отменено")
-                else:
-                    if not save_path.lower().endswith(".xlsx"):
-                        save_path += ".xlsx"
-
-                    rows = self._build_export_rows()
-
-                    def do_export():
-                        exporter = ProductSearchExporter()
-                        return exporter.export_result(save_path, rows)
-
-                    def error(text):
-                        if "Permission" in str(text):
-                            self.show_popup_error(
-                                "Не удалось сохранить файл.\n\n"
-                                "Скорее всего, файл уже открыт в Excel.\n"
-                                "Закрой файл и попробуй снова."
-                            )
-                        else:
-                            self.show_popup_error(f"Ошибка при сохранении файла: {text}")
-
-                    if not start_excel_export(
+                if save_to_excel:
+                    save_path, _ = QFileDialog.getSaveFileName(
                         self,
-                        do_export,
-                        on_finished=lambda _output: self.show_message("Данные сохранены"),
-                        on_error=error,
-                    ):
-                        self.show_message("Excel файл уже формируется. Можно продолжать работать в программе.")
+                        "Сохранить итоговый файл",
+                        str(BASE_DIR / f"ProductSearch_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"),
+                        "Excel files (*.xlsx)",
+                    )
+                    if not save_path:
+                        self.show_message("Данные сохранены в БД. Сохранение файла отменено")
                     else:
-                        self.show_message("Excel файл формируется в фоновом режиме. Можно продолжать работать в программе.")
+                        if not save_path.lower().endswith(".xlsx"):
+                            save_path += ".xlsx"
+
+                        if not export_rows:
+                            self.show_message("Данные сохранены в БД. Нет данных для выгрузки")
+                        else:
+                            def do_export():
+                                exporter = ProductSearchExporter()
+                                return exporter.export_result(save_path, export_rows)
+
+                            def error(text):
+                                if "Permission" in str(text):
+                                    self.show_popup_error(
+                                        "Не удалось сохранить файл.\n\n"
+                                        "Скорее всего, файл уже открыт в Excel.\n"
+                                        "Закрой файл и попробуй снова."
+                                    )
+                                else:
+                                    self.show_popup_error(f"Ошибка при сохранении файла: {text}")
+
+                            if not start_excel_export(
+                                self,
+                                do_export,
+                                on_finished=lambda _output: self.show_message("Данные сохранены"),
+                                on_error=error,
+                            ):
+                                self.show_message("Excel файл уже формируется. Можно продолжать работать в программе.")
+                            else:
+                                self.show_message("Excel файл формируется в фоновом режиме. Можно продолжать работать в программе.")
+                else:
+                    self.show_message("Данные сохранены в БД")
 
             self._pending_changes.clear()
             self._pending_deletes.clear()

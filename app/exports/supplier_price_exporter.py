@@ -405,7 +405,7 @@ class SupplierPriceExporter:
     def _apply_calculated_export_formats_by_header(self, ws, headers: list[str]) -> None:
         header_map = self._header_map(headers)
 
-        text_headers = ["Supplier Article"]
+        text_headers = ["Supplier Article", "Категория ABC"]
         price_decimal_headers = ["Price, L", "Price, pack", "Price, L (prev)", "Target price, L"]
         rub_headers = [
             "Cost Novo with VAT",
@@ -457,6 +457,7 @@ class SupplierPriceExporter:
 
         for header in ("Supplier Product Name", "Our Product Name"):
             self._set_width_by_header(ws, header_map, header, 31.14)
+        self._set_width_by_header(ws, header_map, "Категория ABC", 12.0)
         for header in ("Qty, pcs", "Volume, L", "Volume to take", "Volume PY", "Volume 3 mnth"):
             self._set_width_by_header(ws, header_map, header, 10.50)
         for header in ("uC3", "Target price, L", "uC3 PY", "uC3 3 mnth"):
@@ -944,6 +945,7 @@ class SupplierPriceExporter:
                     "Supplier Product Name": temp_row.product_name or "",
                     "Our Product Name": product.name if product else "",
                     "Pack": self._excel_value(pack_value),
+                    "Категория ABC": (product.abc_category or "-") if product else "-",
                     "Qty, pcs": self._excel_value(temp_row.qty_pcs),
                     "Volume, L": self._excel_value(temp_row.volume_l),
                     "Price, L": self._excel_value(price_per_l),
@@ -1094,6 +1096,7 @@ class SupplierPriceExporter:
                 "Supplier Product Name",
                 "Our Product Name",
                 "Pack",
+                "Категория ABC",
                 "Qty, pcs",
                 "Volume, L",
                 "Volume to take",
@@ -1229,7 +1232,7 @@ class SupplierPriceExporter:
                 window = excel.ActiveWindow
                 window.FreezePanes = False
                 window.SplitRow = 1
-                window.SplitColumn = 6  # freeze after column F, start visible moving part from G
+                window.SplitColumn = 7  # category inserted after Pack; keep the same semantic frozen block
                 window.ScrollRow = 1
                 window.ScrollColumn = 1
                 window.Zoom = 85

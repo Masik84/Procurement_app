@@ -42,6 +42,7 @@ class ProductOption:
     brand: str
     family: str
     pack: Decimal | None
+    abc_category: str
 
 
 def load_ui(ui_path: Path):
@@ -78,6 +79,7 @@ class CustomerCostsReportsPage(QWidget):
         "Customer Product Name",
         "Our Product Name",
         "Pack",
+        "Категория ABC",
         "Qty, pcs",
         "Volume, L",
         "Supplier",
@@ -471,7 +473,7 @@ class CustomerCostsReportsPage(QWidget):
         with self.get_session() as session:
             products = session.query(Product).order_by(Product.name.asc()).all()
         self._product_options = [
-            ProductOption(p.id, p.name or "", p.brand or "", p.family or "", p.pack)
+            ProductOption(p.id, p.name or "", p.brand or "", p.family or "", p.pack, p.abc_category or "-")
             for p in products
         ]
         self._product_by_id = {p.id: p for p in self._product_options}
@@ -487,6 +489,7 @@ class CustomerCostsReportsPage(QWidget):
             self._get_customer_product_name(calc),
             product.name if product else "",
             calc.pack,
+            (product.abc_category or "-") if product else "-",
             calc.qty_pcs,
             calc.volume_l,
             supplier.name if supplier else "",
@@ -634,6 +637,9 @@ class CustomerCostsReportsPage(QWidget):
             pack_item = self.table.item(row, self.HEADERS.index("Pack"))
             if pack_item:
                 pack_item.setText(str(option.pack or "").replace(".", ","))
+            abc_item = self.table.item(row, self.HEADERS.index("Категория ABC"))
+            if abc_item:
+                abc_item.setText(option.abc_category or "-")
 
         self.table.resizeColumnsToContents()
         self.table.setSortingEnabled(sorting_enabled)

@@ -15,6 +15,7 @@ from app.db.models import Product, ProductArticle, ProductStock, TempIsImport, T
 from app.services.product_matching_service import ProductMatchingService
 from app.services.sales_stock_metrics_service import ProductStockMetrics, SalesStockMetricsService
 from app.services.temp_cleanup_service import TempCleanupService
+from app.utils.text import clean_multi_spaces
 
 
 class ProductStockService:
@@ -109,6 +110,7 @@ class ProductStockService:
                 source_product_name=r.get("source_product_name"),
                 source_origin=r.get("source_origin"),
                 source_brand_group=r.get("source_brand_group"),
+                abc_category=clean_multi_spaces(r.get("abc_category")) or "-",
                 lpc=r.get("lpc"),
                 landed_cost=r.get("landed_cost"),
                 distr_price=r.get("distr_price"),
@@ -145,7 +147,9 @@ class ProductStockService:
                 import_date=now,
                 import_row_no=r.get("import_row_no"),
                 source_article=r.get("source_article"),
+                source_our_product_name=r.get("source_our_product_name"),
                 source_product_name=r.get("source_product_name"),
+                abc_category=clean_multi_spaces(r.get("abc_category")) or "-",
                 order_qty=r.get("order_qty") or 0,
                 selected_product_id=None,
                 new_product_name=None,
@@ -294,7 +298,10 @@ class ProductStockService:
 
         matched = 0
         for row in rows:
-            product = self.product_matching.find_stock_product(source_article=row.source_article, source_product_name=row.source_product_name)
+            product = self.product_matching.find_stock_product(
+                source_article=row.source_article,
+                source_product_name=row.source_product_name,
+            )
             if product is not None:
                 row.selected_product_id = product.id
                 matched += 1
@@ -310,7 +317,12 @@ class ProductStockService:
 
         matched = 0
         for row in rows:
-            product = self.product_matching.find_stock_product(source_article=row.source_article, source_product_name=row.source_product_name)
+            product = self.product_matching.find_by_normalized_product_name(row.source_our_product_name)
+            if product is None:
+                product = self.product_matching.find_stock_product(
+                    source_article=row.source_article,
+                    source_product_name=row.source_product_name,
+                )
             if product is not None:
                 row.selected_product_id = product.id
                 matched += 1
@@ -398,6 +410,38 @@ class ProductStockService:
     def _is_origin_ru(self, value: object) -> bool:
         s = str(value or "").strip().upper()
         return s in {"RU", "РОССИЯ", "RUSSIA"} or s.startswith("RU")
+
+
+    def _abc_category_by_product(self, batch_id: str, imported_by: str, product_id: int) -> str:
+        rows = self.session.query(TempStockImport.abc_category).filter(
+            TempStockImport.batch_id == batch_id,
+            TempStockImport.imported_by == imported_by,
+            TempStockImport.selected_product_id == product_id,
+        ).order_by(TempStockImport.import_row_no.asc(), TempStockImport.id.asc()).all()
+
+        for (value,) in rows:
+            category = clean_multi_spaces(value)
+            if category and category != "-":
+                return category
+        return "-"
+
+    def _supplier_orders_abc_category_by_product(
+        self,
+        batch_id: str,
+        imported_by: str,
+        product_id: int,
+    ) -> str:
+        rows = self.session.query(TempSupplierOrdersImport.abc_category).filter(
+            TempSupplierOrdersImport.batch_id == batch_id,
+            TempSupplierOrdersImport.imported_by == imported_by,
+            TempSupplierOrdersImport.selected_product_id == product_id,
+        ).order_by(TempSupplierOrdersImport.import_row_no.asc(), TempSupplierOrdersImport.id.asc()).all()
+
+        for (value,) in rows:
+            category = clean_multi_spaces(value)
+            if category and category != "-":
+                return category
+        return "-"
 
     def _min_price_by_product(self, batch_id: str, imported_by: str, product_id: int, field_name: str) -> Decimal:
         rows = self.session.query(TempStockImport).filter(
@@ -538,6 +582,10 @@ class ProductStockService:
         except Exception as exc:
             raise ValueError(f"Не удалось рассчитать LPC/uC3 по БД продаж: {exc}") from exc
 
+        # ABC category is refreshed from the same stock file. Products absent from
+        # the current file must explicitly receive "-".
+        self.session.query(Product).update({Product.abc_category: "-"}, synchronize_session=False)
+
         self.session.query(ProductStock).update({
             ProductStock.stock_qty: 0,
             ProductStock.transit_qty: 0,
@@ -599,6 +647,9 @@ class ProductStockService:
             uc3_3m = metric.uc3_3m if metric else Decimal("0")
 
             product = self.session.query(Product).filter(Product.id == product_id).first()
+            abc_category = self._abc_category_by_product(batch_id, imported_by, product_id)
+            if product is not None:
+                product.abc_category = abc_category
             p_name = product.name if product else ""
 
             stock = self.session.query(ProductStock).filter(ProductStock.product_id == product_id).first()
@@ -646,6 +697,10 @@ class ProductStockService:
                 stock.uc3_3m = uc3_3m
             saved += 1
 
+        # SessionLocal uses autoflush=False. Flush newly created ProductStock rows
+        # before the metrics pass, otherwise the following query cannot see them
+        # and may create a second row with the same product_id.
+        self.session.flush()
         self._apply_sales_metrics_to_product_stock(sales_metrics, now)
         self.session.flush()
         if saved == 0:
@@ -687,6 +742,17 @@ class ProductStockService:
         saved = 0
         for product_id, order_val in grouped.items():
             product = products.get(product_id)
+            if product is not None:
+                abc_category = self._supplier_orders_abc_category_by_product(
+                    batch_id=batch_id,
+                    imported_by=imported_by,
+                    product_id=product_id,
+                )
+                # Заказы поставщиков используются только для перепроверки ABC.
+                # Пустая ячейка импорта нормализуется в "-" и не должна
+                # стирать категорию, ранее загруженную из файла остатков.
+                if abc_category and abc_category != "-":
+                    product.abc_category = abc_category
             p_name = product.name if product else ''
             stock = stocks.get(product_id)
             if stock is None:

@@ -509,6 +509,7 @@ class OrderPlanningService:
                 "family": family or "",
                 "product_name": product.name if product else item.get("product_name", ""),
                 "pack": pack,
+                "abc_category": (product.abc_category or "-") if product else "-",
                 "avg_sales_month": self._round4(avg_sales),
                 "safe_stock_st_month": safe_st_month,
                 "safe_stock_st_tr_month": safe_st_tr_month,

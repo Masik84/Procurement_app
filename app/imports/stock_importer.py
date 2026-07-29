@@ -22,10 +22,6 @@ def _norm_header(v: object) -> str:
     return _norm(v).upper()
 
 
-def _header_contains(header: str, token: str) -> bool:
-    return _norm_header(token) in _norm_header(header)
-
-
 def _find_header_index(columns: list[str], exact: str, *contains: str) -> int:
     exact_norm = _norm_header(exact)
     for i, col in enumerate(columns):
@@ -49,6 +45,41 @@ def is_excluded_brand(brand: object) -> bool:
     return normalize_product_name(raw) in EXCLUDED_BRANDS
 
 
+# Точное распределение колонок складского блока листа Stock&Price.
+# Сопоставление выполняется без учёта регистра и с нормализацией обычных/неразрывных пробелов,
+# но по полному названию колонки: никакие другие колонки в остатки не включаются.
+STOCK_COLUMN_TO_FIELD = {
+    "Свободный сток (Новороссийск)": "stock_qty",
+    "Свободный сток Чехов": "stock_qty",
+    "Уценка (Ново)": "markdown_qty",
+    "Уценка Чехов кат. А": "markdown_qty",
+    "Уценка Чехов кат. А1": "markdown_qty",
+    "Уценка Чехов кат. Б": "markdown_qty",
+    "Уценка Чехов кат. С": "markdown_qty",
+    "E-com Чехов": "reserve_ecomm_qty",
+    "Переборка (Чехов)": "stock_qty",
+    "Резерв (Новороссийск)": "reserve_qty",
+    "Резерв (Чехов)": "reserve_qty",
+    "Тендер (Чехов)": "stock_qty",
+    "Чужая маркировка": "stock_qty",
+    "Балашиха свободный сток": "stock_qty",
+    "Уценка Балашиха кат. А": "markdown_qty",
+    "Уценка Балашиха кат. Б": "markdown_qty",
+    "Уценка Балашиха кат. С": "markdown_qty",
+    "Балашиха резерв": "reserve_qty",
+    "Калининград свободный сток": "stock_qty",
+    "Уценка Калининград кат. А": "markdown_qty",
+    "Уценка Калининград кат. Б": "markdown_qty",
+    "Уценка Калининград кат. С": "markdown_qty",
+    "Калининград резерв": "reserve_qty",
+    "Проблема с КМ Чехов": "stock_qty",
+    "Проблема с КМ Балашиха": "stock_qty",
+    "Чужая маркировка Ново": "stock_qty",
+    "Перемещения Ново-Чехов": "stock_qty",
+    "Перемещения Мск-Клд": "stock_qty",
+}
+
+
 class StockImporter:
     sheet_name = "Stock&Price"
 
@@ -65,7 +96,12 @@ class StockImporter:
         if len(df) < 5:
             return []
 
-        headers = [str(x).strip() if pd.notna(x) else "" for x in df.iloc[0].tolist()]
+        # Рабочие названия колонок находятся в 4-й строке Excel.
+        # Именно её используем для основных данных, ABC и складского блока.
+        # Первая строка нужна только для двух ценовых колонок, потому что в
+        # 4-й строке несколько колонок имеют одинаковое имя "Цена/л c НДС".
+        top_headers = [str(x).strip() if pd.notna(x) else "" for x in df.iloc[0].tolist()]
+        headers = [str(x).strip() if pd.notna(x) else "" for x in df.iloc[3].tolist()]
         data = df.iloc[4:].copy().reset_index(drop=True)
         data.columns = headers
 
@@ -82,9 +118,10 @@ class StockImporter:
         col_origin = _find_header_index(headers, "Страна происхождения", "СТРАНА", "ПРОИСХ")
         col_lpc = _find_header_index(headers, "LPC", "LPC")
         col_landed = _find_header_index(headers, "Landed Cost+VAT/L", "LANDED", "VAT")
-        col_distr = _find_header_index(headers, "Цена Дистр ", "ЦЕНА", "ДИСТР")
-        col_promo = _find_header_index(headers, "Цена Промо", "ЦЕНА", "ПРОМО")
+        col_distr = _find_header_index(top_headers, "Цена Дистр", "ЦЕНА", "ДИСТР")
+        col_promo = _find_header_index(top_headers, "Цена Промо", "ЦЕНА", "ПРОМО")
         col_brand_group = _find_header_index(headers, "Группа бренда", "ГРУППА", "БРЕНДА")
+        col_abc_category = _find_header_index(headers, "Категория ABC", "КАТЕГОРИЯ", "ABC")
         col_transit = _find_header_index(headers, "Общий Транзит, л", "ОБЩИЙ", "ТРАНЗИТ", "Л")
         col_stock_start = _find_header_index(
             headers,
@@ -93,61 +130,44 @@ class StockImporter:
             "СТОК",
             "НОВОРОССИЙСК",
         )
-        required = [
-            col_brand, col_prod, col_article, col_sku, col_origin,
-            col_lpc, col_landed, col_distr, col_promo,
-            col_brand_group, col_transit, col_stock_start,
-        ]
-        if any(x < 0 for x in required):
-            raise ValueError("Не найдены обязательные колонки в листе Stock&Price.")
+        required = {
+            "Бренд": col_brand,
+            "Английское наименование продукта": col_prod,
+            "Code 1C": col_article,
+            "SKU": col_sku,
+            "Страна происхождения": col_origin,
+            "LPC": col_lpc,
+            "Landed Cost+VAT/L": col_landed,
+            "Цена Дистр": col_distr,
+            "Цена Промо": col_promo,
+            "Группа бренда": col_brand_group,
+            "Категория ABC": col_abc_category,
+            "Общий Транзит, л": col_transit,
+            "Свободный сток (Новороссийск)": col_stock_start,
+        }
+        missing = [name for name, index in required.items() if index < 0]
+        if missing:
+            raise ValueError(
+                "Не найдены обязательные колонки в листе Stock&Price: "
+                + ", ".join(missing)
+            )
         if col_transit <= col_stock_start:
             raise ValueError("Некорректный диапазон колонок остатков: 'Общий Транзит, л' должен быть правее 'Свободный сток (Новороссийск)'.")
 
-        # Остатки ищем по названиям колонок, но только в безопасном диапазоне:
-        # от "Свободный сток (Новороссийск)" до колонки "Общий Транзит, л".
-        # Так колонки могут сдвигаться, но мы не захватываем заказы клиентов и другие блоки справа.
-        # Важно: работаем с индексами колонок, а не с data.loc[:, names], потому что в Excel
-        # бывают повторяющиеся/пустые заголовки, и pandas тогда может подтянуть лишние колонки.
-        stock_col_indexes = list(range(col_stock_start, col_transit))
-
-        # В оригинальном файле нет отдельной строки с типами колонок.
-        # Поэтому раскладываем складской блок по РЕАЛЬНЫМ названиям колонок.
-        # Free Stock / Stock = все складские колонки, которые по бизнес-логике являются "сток":
-        #   Свободный сток, Переборка, Чужая маркировка, своб.остаток, Проблема с КМ, Перемещения.
-        # Отдельно считаем: Уценка, Резерв, E-com.
-        # Заказы клиентов внутри диапазона до "Общий Транзит, л" специально игнорируем.
-        markdown_indexes: list[int] = []
-        reserve_indexes: list[int] = []
-        reserve_ecomm_indexes: list[int] = []
-        plain_stock_indexes: list[int] = []
-
-        for i in stock_col_indexes:
-            h_norm = _norm_header(headers[i])
-            if not h_norm:
-                continue
-
-            if _header_contains(h_norm, "УЦЕНКА") or _header_contains(h_norm, "БРАК"):
-                markdown_indexes.append(i)
-                continue
-
-            if _header_contains(h_norm, "E-COM") or _header_contains(h_norm, "ECOM"):
-                reserve_ecomm_indexes.append(i)
-                continue
-
-            if _header_contains(h_norm, "РЕЗЕРВ"):
-                reserve_indexes.append(i)
-                continue
-
-            is_free_stock = (
-                (_header_contains(h_norm, "СВОБОДНЫЙ") and _header_contains(h_norm, "СТОК"))
-                or (_header_contains(h_norm, "СВОБ") and _header_contains(h_norm, "ОСТАТОК"))
-                or _header_contains(h_norm, "ПЕРЕБОРКА")
-                or (_header_contains(h_norm, "ЧУЖАЯ") and _header_contains(h_norm, "МАРКИРОВ"))
-                or (_header_contains(h_norm, "ПРОБЛЕМА") and _header_contains(h_norm, "КМ"))
-                or _header_contains(h_norm, "ПЕРЕМЕЩЕНИ")
-            )
-            if is_free_stock:
-                plain_stock_indexes.append(i)
+        # Анализируем только складской блок от "Свободный сток (Новороссийск)"
+        # до "Общий Транзит, л" и берём только явно перечисленные выше колонки.
+        # Работаем с индексами, потому что в Excel могут встречаться повторяющиеся заголовки.
+        stock_indexes_by_field = {
+            "stock_qty": [],
+            "markdown_qty": [],
+            "reserve_qty": [],
+            "reserve_ecomm_qty": [],
+        }
+        normalized_column_map = {_norm_header(column_name): field_name for column_name, field_name in STOCK_COLUMN_TO_FIELD.items()}
+        for i in range(col_stock_start, col_transit):
+            field_name = normalized_column_map.get(_norm_header(headers[i]))
+            if field_name:
+                stock_indexes_by_field[field_name].append(i)
 
         compact = pd.DataFrame({
             "source_brand": data.iloc[:, col_brand].map(_norm),
@@ -156,6 +176,7 @@ class StockImporter:
             "source_sku": data.iloc[:, col_sku].map(excel_text),
             "source_origin": data.iloc[:, col_origin].map(_norm),
             "source_brand_group": data.iloc[:, col_brand_group].map(_norm),
+            "abc_category": data.iloc[:, col_abc_category].map(_norm).replace("", "-"),
             "lpc": self._series_to_number(data.iloc[:, col_lpc]),
             "landed_cost": self._series_to_number(data.iloc[:, col_landed]),
             "distr_price": self._series_to_number(data.iloc[:, col_distr]),
@@ -168,10 +189,10 @@ class StockImporter:
                 return pd.Series(0.0, index=data.index)
             return data.iloc[:, indexes].apply(pd.to_numeric, errors="coerce").fillna(0.0).sum(axis=1)
 
-        compact["stock_qty"] = sum_columns_by_index(plain_stock_indexes)
-        compact["markdown_qty"] = sum_columns_by_index(markdown_indexes)
-        compact["reserve_qty"] = sum_columns_by_index(reserve_indexes)
-        compact["reserve_ecomm_qty"] = sum_columns_by_index(reserve_ecomm_indexes)
+        compact["stock_qty"] = sum_columns_by_index(stock_indexes_by_field["stock_qty"])
+        compact["markdown_qty"] = sum_columns_by_index(stock_indexes_by_field["markdown_qty"])
+        compact["reserve_qty"] = sum_columns_by_index(stock_indexes_by_field["reserve_qty"])
+        compact["reserve_ecomm_qty"] = sum_columns_by_index(stock_indexes_by_field["reserve_ecomm_qty"])
 
         compact["total_qty"] = (
             compact["stock_qty"] + compact["markdown_qty"] + compact["reserve_qty"] + compact["reserve_ecomm_qty"] + compact["transit_qty"]
@@ -191,6 +212,7 @@ class StockImporter:
                 "source_product_name": rec["source_product_name"] or None,
                 "source_origin": rec["source_origin"] or None,
                 "source_brand_group": rec["source_brand_group"] or None,
+                "abc_category": rec["abc_category"] or "-",
                 "lpc": float(rec["lpc"] or 0),
                 "landed_cost": float(rec["landed_cost"] or 0),
                 "distr_price": float(rec["distr_price"] or 0),

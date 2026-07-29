@@ -66,12 +66,16 @@ class ProductMatchingService:
         links = (
             self.session.query(ProductArticle)
             .filter(ProductArticle.name.isnot(None), ProductArticle.name != "")
-            .order_by(ProductArticle.id.asc())
+            .order_by(ProductArticle.id.desc())
             .all()
         )
         for link in links:
             key = clean_multi_spaces(link.name).upper()
-            if key and key not in cache:
+            if not key:
+                continue
+
+            current = cache.get(key)
+            if current is None or (current.article and not link.article):
                 cache[key] = link
         return cache
 
@@ -80,12 +84,16 @@ class ProductMatchingService:
         links = (
             self.session.query(ProductArticle)
             .filter(ProductArticle.name.isnot(None), ProductArticle.name != "")
-            .order_by(ProductArticle.id.asc())
+            .order_by(ProductArticle.id.desc())
             .all()
         )
         for link in links:
             key = normalize_product_name(link.name)
-            if key and key not in cache:
+            if not key:
+                continue
+
+            current = cache.get(key)
+            if current is None or (current.article and not link.article):
                 cache[key] = link
         return cache
 
@@ -584,6 +592,37 @@ class ProductMatchingService:
 
         if not clean_article and not clean_name:
             return None
+
+        # Without Supplier Article, Supplier Product Name is the mapping key.
+        # The latest manual selection must replace an older mapping instead of
+        # leaving several ambiguous aliases for the same supplier spelling.
+        if not clean_article and clean_name:
+            name_key = normalize_product_name(clean_name)
+            name_links = (
+                self.session.query(ProductArticle)
+                .filter(
+                    (ProductArticle.article.is_(None)) | (ProductArticle.article == ""),
+                    ProductArticle.name.isnot(None),
+                    ProductArticle.name != "",
+                )
+                .order_by(ProductArticle.id.desc())
+                .all()
+            )
+            same_name_links = [link for link in name_links if normalize_product_name(link.name) == name_key]
+
+            if same_name_links:
+                current = same_name_links[0]
+                current.product_id = product_id
+                current.name = clean_name
+
+                for duplicate in same_name_links[1:]:
+                    self.session.delete(duplicate)
+
+                self.session.flush()
+                self._article_links_cache = None
+                self._name_links_cache = None
+                self._normalized_name_links_cache = None
+                return current
 
         existing = (
             self.session.query(ProductArticle)

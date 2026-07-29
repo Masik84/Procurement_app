@@ -1105,7 +1105,10 @@ class SupplierPricesPage(QWidget):
         else:
             self._pending_changes[row_id][column_name] = value or None
 
-        if column_name in {"supplier_article", "product_name"}:
+        if column_name in {"supplier_article", "product_name"} and "selected_product_id" not in self._pending_changes[row_id]:
+            # Если продукт был выбран вручную в этой строке, не сбрасываем его
+            # при последующем редактировании Supplier Article / Supplier Product Name.
+            # Это позволяет сохранить новую связку написания поставщика с нашим продуктом.
             self._pending_changes[row_id]["selected_product_id"] = None
 
     def refresh_current_product_combo(self):

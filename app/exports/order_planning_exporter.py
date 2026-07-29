@@ -205,6 +205,7 @@ class OrderPlanningExporter:
             "Brand",
             "Product Name",
             "Pack",
+            "Категория ABC",
             "Ср.Продажи мес",
             "Safe Stock (st), mnth",
             "Safe Stock (st+tr), mnth",
@@ -251,6 +252,7 @@ class OrderPlanningExporter:
                 row.get("brand", ""),
                 row.get("product_name", ""),
                 row.get("pack"),
+                row.get("abc_category") or "-",
                 row.get("avg_sales_month"),
                 row.get("safe_stock_st_month"),
                 row.get("safe_stock_st_tr_month"),
@@ -315,7 +317,7 @@ class OrderPlanningExporter:
                 ),
             )
 
-            apply_standard_worksheet_format(ws, headers, freeze_cell="L2", zoom=85)
+            apply_standard_worksheet_format(ws, headers, freeze_cell="M2", zoom=85)
 
             wb.SaveAs(str(target_path))
             return target_path

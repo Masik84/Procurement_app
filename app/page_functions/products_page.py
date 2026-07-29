@@ -75,10 +75,10 @@ class ProductsPage(QWidget):
         self._excel_export_thread = None
         self._excel_export_worker = None
 
-        self.columns = ["id", "name", "brand", "pack", "is_excise", "family"]
-        self.headers = ["id", "Product name", "Brand", "Pack", "Excise duty", "Product Family"]
+        self.columns = ["id", "name", "brand", "pack", "abc_category", "is_excise", "family"]
+        self.headers = ["id", "Product name", "Brand", "Pack", "Категория ABC", "Excise duty", "Product Family"]
         self.header_to_column = dict(zip(self.headers, self.columns))
-        self.text_columns = {"name", "brand", "family"}
+        self.text_columns = {"name", "brand", "family", "abc_category"}
 
         self.setup_ui()
         self.setup_connections()
@@ -646,6 +646,7 @@ class ProductsPage(QWidget):
                     "name": row.name,
                     "brand": row.brand,
                     "pack": row.pack,
+                    "abc_category": row.abc_category or "-",
                     "is_excise": bool(row.is_excise),
                     "family": row.family,
                 })
@@ -781,6 +782,7 @@ class ProductsPage(QWidget):
                     "name": imported["name"],
                     "brand": imported["brand"],
                     "pack": imported["pack"],
+                    "abc_category": (existing.abc_category or "-") if existing is not None else "-",
                     "is_excise": imported["is_excise"],
                     "family": imported["family"],
                 }
@@ -801,6 +803,7 @@ class ProductsPage(QWidget):
                     "name": imported["name"],
                     "brand": imported["brand"],
                     "pack": imported["pack"],
+                    "abc_category": (existing.abc_category or "-") if existing is not None else "-",
                     "is_excise": imported["is_excise"],
                     "family": imported["family"],
                 }
@@ -884,6 +887,7 @@ class ProductsPage(QWidget):
                 "Product name",
                 "Brand",
                 "Pack",
+                "Категория ABC",
                 "Excise duty",
                 "Product Family",
             ]
@@ -903,6 +907,8 @@ class ProductsPage(QWidget):
                         except Exception:
                             return str(pack)
                     return ""
+                if header == "Категория ABC":
+                    return row.get("abc_category", "-") or "-"
                 if header == "Excise duty":
                     return "Да" if bool(row.get("is_excise")) else "Нет"
                 if header == "Product Family":
@@ -914,7 +920,7 @@ class ProductsPage(QWidget):
             ws.Cells.Font.Name = "Aptos Narrow"
             ws.Cells.Font.Size = 11
 
-            header_range = ws.Range("A1:F1")
+            header_range = ws.Range("A1:G1")
             header_range.Font.Name = "Aptos Narrow"
             header_range.Font.Size = 11
             header_range.Font.Bold = True
@@ -926,7 +932,7 @@ class ProductsPage(QWidget):
             ws.Rows(1).EntireRow.AutoFit()
 
             try:
-                ws.Range("A1:F1").AutoFilter(1)
+                ws.Range("A1:G1").AutoFilter(1)
             except Exception:
                 pass
 
@@ -934,8 +940,9 @@ class ProductsPage(QWidget):
             ws.Columns("B:B").ColumnWidth = 30
             ws.Columns("C:C").ColumnWidth = 24
             ws.Columns("D:D").ColumnWidth = 12
-            ws.Columns("E:E").ColumnWidth = 14
-            ws.Columns("F:F").ColumnWidth = 24
+            ws.Columns("E:E").ColumnWidth = 12
+            ws.Columns("F:F").ColumnWidth = 14
+            ws.Columns("G:G").ColumnWidth = 24
 
             # if rows:
             #     ws.Range(f"D2:D{len(rows) + 1}").NumberFormat = "General"
@@ -1047,7 +1054,7 @@ class ProductsPage(QWidget):
 
         item = QTableWidgetItem(item_text)
 
-        if col_name == "id":
+        if col_name in {"id", "abc_category"}:
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             item.setTextAlignment(Qt.AlignCenter)
             return item
@@ -1152,6 +1159,7 @@ class ProductsPage(QWidget):
             "name": "",
             "brand": brand_value,
             "pack": "",
+            "abc_category": "-",
             "is_excise": False,
             "family": family_value,
         }
@@ -1160,6 +1168,7 @@ class ProductsPage(QWidget):
             "name": "",
             "brand": brand_value,
             "pack": "",
+            "abc_category": "-",
             "is_excise": False,
             "family": family_value,
         }

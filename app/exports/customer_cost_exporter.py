@@ -165,12 +165,13 @@ class CustomerCostExporter:
                 ws.Cells(1, col_index).Value = header
 
             self._apply_header_common(ws, len(headers))
-            self._apply_kam_layout(ws)
+            self._apply_kam_layout(ws, headers)
 
             try:
                 excel.ActiveWindow.Zoom = 85
                 ws.Activate()
-                ws.Range("L2").Select()
+                cost_col = self._excel_column_letter(headers.index("Кост руб л с НДС") + 1)
+                ws.Range(f"{cost_col}2").Select()
                 excel.ActiveWindow.FreezePanes = True
             except Exception:
                 pass
@@ -190,35 +191,65 @@ class CustomerCostExporter:
                 pass
             pythoncom.CoUninitialize()
 
-    def _apply_kam_layout(self, ws):
-        ws.Range("A1:K1").Interior.Color = self._rgb(205, 205, 205)
-        ws.Range("L1:L1").Interior.Color = self._rgb(0, 176, 240)
-        ws.Range("M1:O1").Interior.Color = self._rgb(146, 208, 80)
+    def _apply_kam_layout(self, ws, headers: list[str]):
+        header_map = {str(header): idx + 1 for idx, header in enumerate(headers)}
 
-        self._set_number_format_safe(ws.Columns("A:A"), "ДД.ММ.ГГ;@")
-        self._set_number_format_safe(ws.Columns("B:C"), "@")
-        self._set_number_format_safe(ws.Columns("D:D"), "@")
-        self._set_number_format_safe(ws.Columns("F:F"), "General")
-        self._set_number_format_safe(ws.Columns("G:H"), '#,##0;[Red]-#,##0;"-"')
-        self._set_number_format_safe(ws.Columns("L:L"), '# ##0 ₽')
+        def col(header: str) -> str | None:
+            idx = header_map.get(header)
+            return self._excel_column_letter(idx) if idx else None
 
-        ws.Columns("A:A").ColumnWidth = 8.00
-        ws.Columns("B:B").ColumnWidth = 13.00
-        ws.Columns("C:C").ColumnWidth = 13.00
-        ws.Columns("D:D").ColumnWidth = 12.57
-        ws.Columns("E:E").ColumnWidth = 35.00
-        ws.Columns("F:F").ColumnWidth = 7.29
-        ws.Columns("G:G").ColumnWidth = 7.29
-        ws.Columns("H:H").ColumnWidth = 7.29
-        ws.Columns("I:I").ColumnWidth = 12.00
-        ws.Columns("J:J").ColumnWidth = 10.00
-        ws.Columns("K:K").ColumnWidth = 10.00
-        ws.Columns("L:L").ColumnWidth = 10.86
-        ws.Columns("M:M").ColumnWidth = 16.71
-        ws.Columns("N:N").ColumnWidth = 7.86
-        ws.Columns("O:O").ColumnWidth = 8.71
+        def color_range(first_header: str, last_header: str, color: int) -> None:
+            first = header_map.get(first_header)
+            last = header_map.get(last_header)
+            if first and last:
+                ws.Range(
+                    f"{self._excel_column_letter(first)}1:{self._excel_column_letter(last)}1"
+                ).Interior.Color = color
 
-        ws.Range("A1:O1").AutoFilter(1)
+        color_range("Дата", "Комментарии", self._rgb(205, 205, 205))
+        color_range("Кост руб л с НДС", "Кост руб л с НДС", self._rgb(0, 176, 240))
+        color_range("Поставщик", "Курс", self._rgb(146, 208, 80))
+
+        formats = {
+            "Дата": "ДД.ММ.ГГ;@",
+            "Менеджер": "@",
+            "Клиент": "@",
+            "Код продукта": "@",
+            "Категория ABC": "@",
+            "Количество": '#,##0;[Red]-#,##0;"-"',
+            "Объем л": '#,##0;[Red]-#,##0;"-"',
+            "Кост руб л с НДС": '# ##0 ₽',
+        }
+        for header, fmt in formats.items():
+            letter = col(header)
+            if letter:
+                self._set_number_format_safe(ws.Columns(f"{letter}:{letter}"), fmt)
+
+        widths = {
+            "Дата": 8.00,
+            "Менеджер": 13.00,
+            "Клиент": 13.00,
+            "Код продукта": 12.57,
+            "Название продукта": 35.00,
+            "Фасовка": 7.29,
+            "Категория ABC": 12.00,
+            "Количество": 7.29,
+            "Объем л": 7.29,
+            "Вид закупки": 12.00,
+            "Условия оплаты": 10.00,
+            "Комментарии": 10.00,
+            "Кост руб л с НДС": 10.86,
+            "Поставщик": 16.71,
+            "Валюта": 7.86,
+            "Курс": 8.71,
+        }
+        for header, width in widths.items():
+            letter = col(header)
+            if letter:
+                ws.Columns(f"{letter}:{letter}").ColumnWidth = width
+
+        last_col = self._excel_column_letter(len(headers))
+        ws.Range(f"A1:{last_col}1").AutoFilter(1)
 
     def _collect_export_rows(self, batch_id: str, imported_by: str) -> tuple[list[dict], int]:
         rows = self.session.query(TempCustomerCostImport).filter(
@@ -245,6 +276,7 @@ class CustomerCostExporter:
 
             max_opt = max(max_opt, len(options))
 
+            product = row.selected_product
             data = {
                 "Дата": row.request_date,
                 "Менеджер": row.manager_name,
@@ -252,6 +284,7 @@ class CustomerCostExporter:
                 "Код продукта": row.supplier_article,
                 "Название продукта": row.product_name,
                 "Фасовка": row.pack,
+                "Категория ABC": (product.abc_category or "-") if product else "-",
                 "Количество": row.qty_pcs,
                 "Объем л": row.volume_l,
                 "Вид закупки": row.purchase_type,
@@ -295,6 +328,7 @@ class CustomerCostExporter:
             "Код продукта",
             "Название продукта",
             "Фасовка",
+            "Категория ABC",
             "Количество",
             "Объем л",
             "Вид закупки",
@@ -360,9 +394,20 @@ class CustomerCostExporter:
 
                 start_col += 6
 
-            self._set_number_format_safe(ws.Columns("A:A"), "ДД.ММ.ГГ;@")
-            self._set_number_format_safe(ws.Columns("B:C"), "@")
-            self._set_number_format_safe(ws.Columns("D:D"), "@")
+            base_header_map = {str(header): idx + 1 for idx, header in enumerate(base_headers)}
+            for header, fmt in {
+                "Дата": "ДД.ММ.ГГ;@",
+                "Менеджер": "@",
+                "Клиент": "@",
+                "Код продукта": "@",
+                "Категория ABC": "@",
+                "Количество": '# ##0;[Red]-# ##0;"-"',
+                "Объем л": '# ##0;[Red]-# ##0;"-"',
+            }.items():
+                idx = base_header_map.get(header)
+                if idx:
+                    letter = self._excel_column_letter(idx)
+                    self._set_number_format_safe(ws.Columns(f"{letter}:{letter}"), fmt)
 
             start_col = len(base_headers) + 1
             for _ in range(1, max_opt + 1):
@@ -381,14 +426,25 @@ class CustomerCostExporter:
 
                 start_col += 6
 
-            ws.Columns("A:A").ColumnWidth = 11.00
-            ws.Columns("B:B").ColumnWidth = 16.14
-            ws.Columns("C:C").ColumnWidth = 18.14
-            ws.Columns("D:D").ColumnWidth = 16.00
-            ws.Columns("E:E").ColumnWidth = 31.14
-            ws.Columns("F:H").ColumnWidth = 10.50
-            ws.Columns("I:J").ColumnWidth = 18.00
-            ws.Columns("K:K").ColumnWidth = 24.00
+            base_widths = {
+                "Дата": 11.00,
+                "Менеджер": 16.14,
+                "Клиент": 18.14,
+                "Код продукта": 16.00,
+                "Название продукта": 31.14,
+                "Фасовка": 10.50,
+                "Категория ABC": 12.00,
+                "Количество": 10.50,
+                "Объем л": 10.50,
+                "Вид закупки": 18.00,
+                "Условия оплаты": 18.00,
+                "Комментарии": 24.00,
+            }
+            for header, width in base_widths.items():
+                idx = base_header_map.get(header)
+                if idx:
+                    letter = self._excel_column_letter(idx)
+                    ws.Columns(f"{letter}:{letter}").ColumnWidth = width
 
             start_col = len(base_headers) + 1
             for _ in range(1, max_opt + 1):
@@ -454,6 +510,7 @@ class CustomerCostExporter:
                     TempCustomerCostOption.id == row.selected_option_id
                 ).first()
 
+            product = row.selected_product
             out_rows.append({
                 "Дата": row.request_date,
                 "Менеджер": row.manager_name,
@@ -461,6 +518,7 @@ class CustomerCostExporter:
                 "Код продукта": row.supplier_article,
                 "Название продукта": row.product_name,
                 "Фасовка": row.pack,
+                "Категория ABC": (product.abc_category or "-") if product else "-",
                 "Количество": row.qty_pcs,
                 "Объем л": row.volume_l,
                 "Вид закупки": row.purchase_type,
@@ -496,6 +554,7 @@ class CustomerCostExporter:
             "Код продукта",
             "Название продукта",
             "Фасовка",
+            "Категория ABC",
             "Количество",
             "Объем л",
             "Вид закупки",
@@ -534,12 +593,13 @@ class CustomerCostExporter:
 
             self._apply_header_common(ws, len(headers))
 
-            self._apply_kam_layout(ws)
+            self._apply_kam_layout(ws, headers)
 
             try:
                 excel.ActiveWindow.Zoom = 85
                 ws.Activate()
-                ws.Range("L2").Select()
+                cost_col = self._excel_column_letter(headers.index("Кост руб л с НДС") + 1)
+                ws.Range(f"{cost_col}2").Select()
                 excel.ActiveWindow.FreezePanes = True
             except Exception:
                 pass

@@ -171,6 +171,7 @@ class TargetPriceExporter:
                 "Supplier Product Name": row.supplier_product_name,
                 "Our Product Name": product.name if product else "",
                 "Pack": product.pack if product else None,
+                "Категория ABC": (product.abc_category or "-") if product else "-",
                 "Target Price, L": row.target_price_l,
                 "Target Price, pack": row.target_price_pack,
                 "Currency": row.currency_code,
@@ -181,7 +182,7 @@ class TargetPriceExporter:
 
     def export_final(self, batch_id: str, imported_by: str, file_path: str | Path) -> Path:
         headers = [
-            "Supplier Article", "Supplier Product Name", "Our Product Name", "Pack",
+            "Supplier Article", "Supplier Product Name", "Our Product Name", "Pack", "Категория ABC",
             "Target Price, L", "Target Price, pack", "Currency", "FX rate", "fin.Supplier for calc",
         ]
         rows = self._collect_final_rows(batch_id, imported_by)

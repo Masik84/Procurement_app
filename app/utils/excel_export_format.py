@@ -112,7 +112,7 @@ def is_text_header(header: str) -> bool:
         "id", "менеджер", "клиент", "customer product name", "our product name",
         "supplier", "supplier article", "supplier product name", "currency", "comments", "has customs", "via novo",
         "excise duty", "final supplier", "product name", "manager name", "customer name",
-        "article", "brand", "family",
+        "article", "brand", "family", "категория abc",
     }
 
 

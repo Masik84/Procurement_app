@@ -65,6 +65,7 @@ COLUMN_DEFS: dict[str, list[ColumnDef]] = {
         ColumnDef("source_article", "Source article", editable=True),
         ColumnDef("source_sku", "SKU", editable=True),
         ColumnDef("source_product_name", "Source product", editable=True),
+        ColumnDef("abc_category", "Категория ABC", editable=True),
         ColumnDef("stock_qty", "Stock qty", editable=True),
         ColumnDef("transit_qty", "Transit qty", editable=True),
         ColumnDef("markdown_qty", "Markdown qty", editable=True),
@@ -84,6 +85,7 @@ COLUMN_DEFS: dict[str, list[ColumnDef]] = {
         ColumnDef("selected_product_id", "Our product", kind="product_combo"),
         ColumnDef("source_article", "Source article", editable=True),
         ColumnDef("source_product_name", "Source product", editable=True),
+        ColumnDef("abc_category", "Категория ABC", editable=True),
         ColumnDef("order_qty", "Order qty", editable=True),
         ColumnDef("new_product_name", "Product name (new)", editable=True),
         ColumnDef("new_brand", "Brand (new)", kind="brand_combo"),
@@ -337,6 +339,7 @@ class ProductStockPage(QWidget):
         if isinstance(row, TempStockImport):
             base.update({
                 "source_sku": row.source_sku,
+                "abc_category": row.abc_category,
                 "stock_qty": row.stock_qty,
                 "transit_qty": row.transit_qty,
                 "markdown_qty": row.markdown_qty,
@@ -350,6 +353,7 @@ class ProductStockPage(QWidget):
             })
         elif isinstance(row, TempSupplierOrdersImport):
             base.update({
+                "abc_category": row.abc_category,
                 "order_qty": row.order_qty,
             })
         elif isinstance(row, TempIsImport):
@@ -414,6 +418,8 @@ class ProductStockPage(QWidget):
             elif col.key == "source_sku":
                 self.table.setColumnWidth(col_index, 95)
             elif col.key == "source_product_name":
+                self.table.setColumnWidth(col_index, 110)
+            elif col.key == "abc_category":
                 self.table.setColumnWidth(col_index, 110)
 
     def display_table(self, data: list[dict[str, Any]]):

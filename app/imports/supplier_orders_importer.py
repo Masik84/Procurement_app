@@ -52,10 +52,15 @@ class SupplierOrdersImporter:
         col_brand = _find_header_index(headers, "Brand", "BRAND")
         col_supplier1 = _find_header_index(headers, "Supplier 1", "SUPPLIER")
         col_article = _find_header_index(headers, "Артикул", "АРТИКУЛ")
-        col_prod = _find_header_index(headers, "Назв на англ", "НАЗВ", "АНГЛ")
+        col_our_product = _find_header_index(headers, "Продукт + упаковка", "ПРОДУКТ", "УПАКОВКА")
+        col_abc_category = _find_header_index(headers, "ABC")
+        col_prod = _find_header_index(headers, "Product name Назв на англ", "НАЗВ", "АНГЛ")
         col_qty = _find_header_index(headers, "Кол-во, л", "КОЛ", "Л")
 
-        required = [col_status, col_brand, col_supplier1, col_article, col_prod, col_qty]
+        required = [
+            col_status, col_brand, col_supplier1, col_article, col_our_product,
+            col_abc_category, col_prod, col_qty,
+        ]
         if any(x < 0 for x in required):
             raise ValueError("Не найдены обязательные колонки в листе Закупки в пути.")
 
@@ -64,12 +69,19 @@ class SupplierOrdersImporter:
             'brand': data.iloc[:, col_brand].fillna('').map(_norm),
             'supplier1': data.iloc[:, col_supplier1].fillna('').map(_norm),
             'article': data.iloc[:, col_article].map(excel_text),
+            'our_product_name': data.iloc[:, col_our_product].fillna('').map(_norm),
+            'abc_category': data.iloc[:, col_abc_category].fillna('').map(_norm).replace('', '-'),
             'product_name': data.iloc[:, col_prod].fillna('').map(_norm),
             'order_qty': pd.to_numeric(data.iloc[:, col_qty], errors='coerce').fillna(0).astype(float),
         })
         df2['import_row_no'] = df2.index + 3
 
-        non_empty_mask = (df2['status'] != '') | (df2['article'] != '') | (df2['product_name'] != '')
+        non_empty_mask = (
+            (df2['status'] != '')
+            | (df2['article'] != '')
+            | (df2['our_product_name'] != '')
+            | (df2['product_name'] != '')
+        )
         df2 = df2.loc[non_empty_mask]
         if df2.empty:
             return []
@@ -96,6 +108,8 @@ class SupplierOrdersImporter:
             .agg(
                 import_row_no=('import_row_no', 'min'),
                 source_article=('article', lambda s: next((x for x in s if x), '')),
+                source_our_product_name=('our_product_name', lambda s: next((x for x in s if x), '')),
+                abc_category=('abc_category', lambda s: next((x for x in s if x and x != '-'), '-')),
                 source_product_name=('product_name', lambda s: next((x for x in s if x), '')),
                 order_qty=('order_qty', 'sum'),
             )
@@ -107,6 +121,8 @@ class SupplierOrdersImporter:
             rows.append({
                 'import_row_no': int(rec['import_row_no']),
                 'source_article': rec['source_article'] or None,
+                'source_our_product_name': rec['source_our_product_name'] or None,
+                'abc_category': rec['abc_category'] or '-',
                 'source_product_name': rec['source_product_name'] or None,
                 'order_qty': float(rec['order_qty'] or 0),
             })

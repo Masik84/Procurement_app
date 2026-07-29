@@ -665,6 +665,7 @@ class PriceReportsPage(QWidget):
             "Brand",
             "Product Name",
             "Pack",
+            "Категория ABC",
             "Дистр цена",
             "Промо цена",
             "curr LPC",
@@ -693,6 +694,7 @@ class PriceReportsPage(QWidget):
         headers = [
             "Our Product Name",
             "Pack",
+            "Категория ABC",
             "last update",
             "Price, L",
             "Price, pack",
@@ -748,6 +750,7 @@ class PriceReportsPage(QWidget):
             product.brand or "",
             product.name or "",
             self._display_pack(product.pack),
+            product.abc_category or "-",
             self._decimal_or_empty(getattr(stock, "distr_price", None)),
             self._decimal_or_empty(getattr(stock, "promo_price", None)),
             self._decimal_or_empty(getattr(stock, "lpc", None)),
@@ -793,6 +796,7 @@ class PriceReportsPage(QWidget):
         row: List[object] = [
             product.name or "",
             self._display_pack(product.pack),
+            product.abc_category or "-",
             self._date_or_empty(chosen.price_date),
             self._decimal_or_empty(chosen.supplier_price),
             self._decimal_or_empty(self._pack_price(chosen.supplier_price, product.pack)),

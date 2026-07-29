@@ -126,6 +126,7 @@ TEXT_LEFT_HEADERS = {
     "Comments",
     "Brand",
     "Product Name",
+    "Категория ABC",
 }
 
 HEADER_WIDTHS = {
@@ -135,6 +136,7 @@ HEADER_WIDTHS = {
     "Customer Product Name": 31.14,
     "Our Product Name": 31.14,
     "Pack": 8.43,
+    "Категория ABC": 12.0,
     "Qty, pcs": 10.0,
     "Volume, L": 10.0,
     "Volume to take": 10.0,
