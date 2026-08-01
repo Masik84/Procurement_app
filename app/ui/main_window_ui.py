@@ -483,6 +483,45 @@ class Ui_MainWindow(object):
 
         self.horizontalLayout.addItem(self.horizontalSpacer_2)
 
+        self.frame_TableScale = QFrame(self.search_widget)
+        self.frame_TableScale.setObjectName(u"frame_TableScale")
+        self.frame_TableScale.setMinimumSize(QSize(94, 28))
+        self.frame_TableScale.setMaximumSize(QSize(94, 28))
+        self.frame_TableScale.setStyleSheet(u"background-color: transparent; border: none;")
+        self.frame_TableScale.setFrameShape(QFrame.Shape.NoFrame)
+        self.horizontalLayout_TableScale = QHBoxLayout(self.frame_TableScale)
+        self.horizontalLayout_TableScale.setSpacing(4)
+        self.horizontalLayout_TableScale.setObjectName(u"horizontalLayout_TableScale")
+        self.horizontalLayout_TableScale.setContentsMargins(0, 0, 0, 0)
+        self.tableScaleMinusBtn = QPushButton(self.frame_TableScale)
+        self.tableScaleMinusBtn.setObjectName(u"tableScaleMinusBtn")
+        self.tableScaleMinusBtn.setMinimumSize(QSize(22, 22))
+        self.tableScaleMinusBtn.setMaximumSize(QSize(22, 22))
+        self.tableScaleMinusBtn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.tableScaleMinusBtn.setStyleSheet(u"QPushButton { border: 1px solid #f09d54; border-radius: 11px; background-color: #f8f8f2; color: #f28223; font: 14pt \"Tahoma\"; padding: 0px; } QPushButton:hover { background-color: #f09d54; color: #ffffff; } QPushButton:pressed { background-color: #f28223; border: 1px solid #f28223; color: #ffffff; } QPushButton:disabled { border: 1px solid #d6b89d; color: #b9a18d; background-color: #f8f8f2; }")
+
+        self.horizontalLayout_TableScale.addWidget(self.tableScaleMinusBtn)
+
+        self.tableScaleLabel = QLabel(self.frame_TableScale)
+        self.tableScaleLabel.setObjectName(u"tableScaleLabel")
+        self.tableScaleLabel.setMinimumSize(QSize(38, 22))
+        self.tableScaleLabel.setMaximumSize(QSize(38, 22))
+        self.tableScaleLabel.setStyleSheet(u"background-color: transparent; border: none; color: #777777; font: 10pt \"Tahoma\";")
+        self.tableScaleLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.horizontalLayout_TableScale.addWidget(self.tableScaleLabel)
+
+        self.tableScalePlusBtn = QPushButton(self.frame_TableScale)
+        self.tableScalePlusBtn.setObjectName(u"tableScalePlusBtn")
+        self.tableScalePlusBtn.setMinimumSize(QSize(22, 22))
+        self.tableScalePlusBtn.setMaximumSize(QSize(22, 22))
+        self.tableScalePlusBtn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.tableScalePlusBtn.setStyleSheet(u"QPushButton { border: 1px solid #f09d54; border-radius: 11px; background-color: #f8f8f2; color: #f28223; font: 14pt \"Tahoma\"; padding: 0px; } QPushButton:hover { background-color: #f09d54; color: #ffffff; } QPushButton:pressed { background-color: #f28223; border: 1px solid #f28223; color: #ffffff; } QPushButton:disabled { border: 1px solid #d6b89d; color: #b9a18d; background-color: #f8f8f2; }")
+
+        self.horizontalLayout_TableScale.addWidget(self.tableScalePlusBtn)
+
+        self.horizontalLayout.addWidget(self.frame_TableScale)
+
         self.frame_AppBtn = QFrame(self.search_widget)
         self.frame_AppBtn.setObjectName(u"frame_AppBtn")
         self.frame_AppBtn.setStyleSheet(u"")
@@ -626,6 +665,12 @@ class Ui_MainWindow(object):
         self.toggleButton.setText("")
         self.label.setText("")
         self.label_prog_name.setText(QCoreApplication.translate("MainWindow", u"Phoenix Lubricants Procurement Program", None))
+        self.tableScaleMinusBtn.setToolTip(QCoreApplication.translate("MainWindow", u"Уменьшить масштаб таблиц", None))
+        self.tableScaleMinusBtn.setText(QCoreApplication.translate("MainWindow", u"−", None))
+        self.tableScaleLabel.setToolTip(QCoreApplication.translate("MainWindow", u"Масштаб таблиц. Двойной щелчок возвращает 90%", None))
+        self.tableScaleLabel.setText(QCoreApplication.translate("MainWindow", u"90%", None))
+        self.tableScalePlusBtn.setToolTip(QCoreApplication.translate("MainWindow", u"Увеличить масштаб таблиц", None))
+        self.tableScalePlusBtn.setText(QCoreApplication.translate("MainWindow", u"+", None))
         self.minimizeAppBtn.setText("")
         self.maximizeRestoreAppBtn.setText("")
         self.closeAppBtn.setText("")

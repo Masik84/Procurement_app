@@ -3,6 +3,8 @@ from decimal import Decimal
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 
+from app.ui.table_scale import register_table_for_scaling
+
 
 def setup_data_table(table: QTableWidget, *, sorting: bool = True) -> None:
     table.setSelectionBehavior(QTableWidget.SelectItems)
@@ -25,7 +27,8 @@ def setup_data_table(table: QTableWidget, *, sorting: bool = True) -> None:
     table.setCornerButtonEnabled(False)
 
     table.resizeColumnsToContents()
-    
+    register_table_for_scaling(table)
+
 
 def format_table_value(value) -> str:
     if value is None:

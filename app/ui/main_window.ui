@@ -61,6 +61,44 @@ QTabWidget {
 }
 #frame_AppBtn {background-color: transparent}
 
+#frame_TableScale {
+	background-color: transparent;
+	border: none;
+}
+
+#tableScaleMinusBtn, #tableScalePlusBtn {
+	border: 1px solid #f09d54;
+	border-radius: 11px;
+	background-color: #f8f8f2;
+	color: #f28223;
+	font: 14pt &quot;Tahoma&quot;;
+	padding: 0px;
+}
+
+#tableScaleMinusBtn:hover, #tableScalePlusBtn:hover {
+	background-color: #f09d54;
+	color: #ffffff;
+}
+
+#tableScaleMinusBtn:pressed, #tableScalePlusBtn:pressed {
+	background-color: #f28223;
+	border: 1px solid #f28223;
+	color: #ffffff;
+}
+
+#tableScaleMinusBtn:disabled, #tableScalePlusBtn:disabled {
+	border: 1px solid #d6b89d;
+	color: #b9a18d;
+	background-color: #f8f8f2;
+}
+
+#tableScaleLabel {
+	background-color: transparent;
+	border: none;
+	color: #777777;
+	font: 10pt &quot;Tahoma&quot;;
+}
+
 #bottomWidget {
 	background-color: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1, stop:0 rgba(244, 113, 32, 255), stop:1 rgba(243, 143, 61, 255));
 }
@@ -972,6 +1010,117 @@ QTabBar::tab:hover:!selected {
               </size>
              </property>
             </spacer>
+           </item>
+           <item>
+            <widget class="QFrame" name="frame_TableScale">
+             <property name="minimumSize">
+              <size>
+               <width>94</width>
+               <height>28</height>
+              </size>
+             </property>
+             <property name="maximumSize">
+              <size>
+               <width>94</width>
+               <height>28</height>
+              </size>
+             </property>
+             <property name="frameShape">
+              <enum>QFrame::Shape::NoFrame</enum>
+             </property>
+             <layout class="QHBoxLayout" name="horizontalLayout_TableScale">
+              <property name="spacing">
+               <number>4</number>
+              </property>
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+              <item>
+               <widget class="QPushButton" name="tableScaleMinusBtn">
+                <property name="minimumSize">
+                 <size>
+                  <width>22</width>
+                  <height>22</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>22</width>
+                  <height>22</height>
+                 </size>
+                </property>
+                <property name="focusPolicy">
+                 <enum>Qt::FocusPolicy::NoFocus</enum>
+                </property>
+                <property name="toolTip">
+                 <string>Уменьшить масштаб таблиц</string>
+                </property>
+                <property name="text">
+                 <string>−</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QLabel" name="tableScaleLabel">
+                <property name="minimumSize">
+                 <size>
+                  <width>38</width>
+                  <height>22</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>38</width>
+                  <height>22</height>
+                 </size>
+                </property>
+                <property name="toolTip">
+                 <string>Масштаб таблиц. Двойной щелчок возвращает 90%</string>
+                </property>
+                <property name="text">
+                 <string>90%</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignmentFlag::AlignCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QPushButton" name="tableScalePlusBtn">
+                <property name="minimumSize">
+                 <size>
+                  <width>22</width>
+                  <height>22</height>
+                 </size>
+                </property>
+                <property name="maximumSize">
+                 <size>
+                  <width>22</width>
+                  <height>22</height>
+                 </size>
+                </property>
+                <property name="focusPolicy">
+                 <enum>Qt::FocusPolicy::NoFocus</enum>
+                </property>
+                <property name="toolTip">
+                 <string>Увеличить масштаб таблиц</string>
+                </property>
+                <property name="text">
+                 <string>+</string>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
            </item>
            <item>
             <widget class="QFrame" name="frame_AppBtn">

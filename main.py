@@ -22,6 +22,13 @@ from PySide6.QtWidgets import (
 
 from app.ui import resource_rc  # noqa: F401
 from app.ui.main_window_ui import Ui_MainWindow
+from app.ui.table_scale import (
+    DEFAULT_TABLE_SCALE,
+    MAX_TABLE_SCALE,
+    MIN_TABLE_SCALE,
+    get_table_scale_manager,
+    initialise_table_scale_manager,
+)
 
 # ВАЖНО: страницы не импортируем при старте программы.
 # Импорт тяжелых страниц (pandas/openpyxl/win32com и т.д.) делаем только при первом открытии раздела.
@@ -93,6 +100,16 @@ class MyWindow(QMainWindow):
         self.ui.maximizeRestoreAppBtn.clicked.connect(lambda: self.maximize_restore())
         self.ui.closeAppBtn.clicked.connect(lambda: self.close())
         self.ui.toggleButton.clicked.connect(lambda: self.toggleMenu())
+
+        self.table_scale_manager = get_table_scale_manager()
+        if self.table_scale_manager is None:
+            self.table_scale_manager = initialise_table_scale_manager(QApplication.instance())
+
+        self.ui.tableScaleMinusBtn.clicked.connect(self.table_scale_manager.decrease)
+        self.ui.tableScalePlusBtn.clicked.connect(self.table_scale_manager.increase)
+        self.table_scale_manager.scale_changed.connect(self._update_table_scale_controls)
+        self.ui.tableScaleLabel.installEventFilter(self)
+        self._update_table_scale_controls(self.table_scale_manager.scale_percent)
 
         self.ui.search_widget.mouseMoveEvent = self.MoveWindow
 
@@ -174,6 +191,15 @@ class MyWindow(QMainWindow):
         for button in self.menu_btns_list.keys():
             button.clicked.connect(self.show_selected_window)
 
+    def _update_table_scale_controls(self, value: int):
+        self.ui.tableScaleLabel.setText(f"{value}%")
+        self.ui.tableScaleMinusBtn.setEnabled(value > MIN_TABLE_SCALE)
+        self.ui.tableScalePlusBtn.setEnabled(value < MAX_TABLE_SCALE)
+        self.ui.tableScaleLabel.setToolTip(
+            f"Масштаб таблиц: {value}%. "
+            f"Двойной щелчок возвращает {DEFAULT_TABLE_SCALE}%"
+        )
+
     def _create_shadow_effect(self):
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(17)
@@ -200,6 +226,7 @@ class MyWindow(QMainWindow):
                 if PAGE_STYLESHEET:
                     page.setStyleSheet(PAGE_STYLESHEET)
             self.setup_all_compact_comboboxes(page)
+            self.table_scale_manager.register_tables(page)
             cur_index = self.ui.tabWidget.addTab(page, title)
             self.ui.tabWidget.setCurrentIndex(cur_index)
             self.ui.tabWidget.setVisible(True)
@@ -223,6 +250,7 @@ class MyWindow(QMainWindow):
                 if PAGE_STYLESHEET:
                     page.setStyleSheet(PAGE_STYLESHEET)
             self.setup_all_compact_comboboxes(page)
+            self.table_scale_manager.register_tables(page)
             cur_index = self.ui.tabWidget.addTab(page, title)
             self.ui.tabWidget.setCurrentIndex(cur_index)
             self.ui.tabWidget.setVisible(True)
@@ -338,6 +366,10 @@ class MyWindow(QMainWindow):
         self.setGeometry(geo)
 
     def eventFilter(self, obj, event):
+        if obj is self.ui.tableScaleLabel and event.type() == QEvent.MouseButtonDblClick:
+            self.table_scale_manager.reset()
+            return True
+
         if event.type() == QEvent.MouseMove and not self.isMaximized():
             try:
                 global_pos = event.globalPosition().toPoint()
@@ -435,6 +467,7 @@ if __name__ == "__main__":
     os.environ["QT_QPA_PLATFORM"] = "windows"
 
     app = QApplication(sys.argv)
+    initialise_table_scale_manager(app)
 
     style_path = Path(__file__).resolve().parent / "app" / "ui" / "styles" / "app_styles.qss"
     PAGE_STYLESHEET = style_path.read_text(encoding="utf-8") if style_path.exists() else ""
