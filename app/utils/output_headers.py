@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Iterable
 
+from app.utils.excel_format_rules import FORMATS, set_number_format_safe
+
 # Only user-visible GUI/Excel header text is standardized here.
 # Do not use this for DB column names or business/internal identifiers.
 OUTPUT_HEADER_RENAMES: dict[str, str] = {
@@ -18,87 +20,87 @@ OUTPUT_HEADER_RENAMES: dict[str, str] = {
 # Common Excel specs approved in Book1.xlsx. Keys are final visible headers.
 HEADER_SPECS = {
     "Article": ((205, 205, 205), None, '@'),
-    "Best full Price, L": ((0, 176, 240), None, '# ##0 ₽;[Red]-# ##0 ₽;"-"'),
-    "Best full Price, L 2": ((146, 207, 80), None, '# ##0 ₽;[Red]-# ##0 ₽;"-"'),
+    "Best full Price, L": ((0, 176, 240), None, FORMATS.MONEY_RUB),
+    "Best full Price, L 2": ((146, 207, 80), None, FORMATS.MONEY_RUB),
     "Best Suppl": ((0, 176, 240), None, None),
     "Best Suppl 2": ((146, 207, 80), None, None),
     "Brand": ((205, 205, 205), None, None),
-    "Cost Novo with VAT": ((205, 205, 205), None, '# ##0 ₽;[Red]-# ##0 ₽;"-"'),
-    "Cost Novo with VAT (prev)": ((166, 166, 166), None, '# ##0 ₽;[Red]-# ##0 ₽;"-"'),
-    "curr Landed cost": ((192, 0, 0), "white", '# ##0 ₽;[Red]-# ##0 ₽;"-"'),
-    "curr LPC": ((192, 0, 0), "white", '# ##0 ₽;[Red]-# ##0 ₽;"-"'),
+    "Cost Novo with VAT": ((205, 205, 205), None, FORMATS.MONEY_RUB),
+    "Cost Novo with VAT (prev)": ((166, 166, 166), None, FORMATS.MONEY_RUB),
+    "curr Landed cost": ((192, 0, 0), "white", FORMATS.MONEY_RUB),
+    "curr LPC": ((192, 0, 0), "white", FORMATS.MONEY_RUB),
     "Currency": ((205, 205, 205), None, None),
     "Currency Best1": ((0, 176, 240), None, None),
     "Currency Best2": ((146, 207, 80), None, None),
-    "Damaged": ((33, 92, 152), None, '# ##0;[Red]-# ##0;"-"'),
+    "Damaged": ((33, 92, 152), None, FORMATS.INTEGER),
     "Excise duty": ((205, 205, 205), None, None),
     "fin.Supplier for calc": ((205, 205, 205), None, None),
-    "Full Cost Msk": ((205, 205, 205), None, '# ##0 ₽;[Red]-# ##0 ₽;"-"'),
-    "uC3": ((0, 176, 240), None, '# ##0 ₽;[Red]-# ##0 ₽;"-"'),
-    "Full Cost Msk (prev)": ((166, 166, 166), None, '# ##0 ₽;[Red]-# ##0 ₽;"-"'),
-    "FX rate": ((205, 205, 205), None, '# ##0,0;[Red]-# ##0,0;"-"'),
-    "FX rate Best1": ((0, 176, 240), None, '# ##0,0;[Red]-# ##0,0;"-"'),
-    "FX rate Best2": ((146, 207, 80), None, '# ##0,0;[Red]-# ##0,0;"-"'),
+    "Full Cost Msk": ((205, 205, 205), None, FORMATS.MONEY_RUB),
+    "uC3": ((0, 176, 240), None, FORMATS.MONEY_RUB),
+    "Full Cost Msk (prev)": ((166, 166, 166), None, FORMATS.MONEY_RUB),
+    "FX rate": ((205, 205, 205), None, FORMATS.DECIMAL_1),
+    "FX rate Best1": ((0, 176, 240), None, FORMATS.DECIMAL_1),
+    "FX rate Best2": ((146, 207, 80), None, FORMATS.DECIMAL_1),
     "ID": ((205, 205, 205), None, None),
     "is_excise": ((205, 205, 205), None, None),
-    "last update": ((205, 205, 205), None, 'ДД.ММ.ГГ;@'),
-    "last update (prev)": ((166, 166, 166), None, 'ДД.ММ.ГГ;@'),
-    "last update Best1": ((0, 176, 240), None, 'ДД.ММ.ГГ;@'),
-    "last update Best2": ((146, 207, 80), None, 'ДД.ММ.ГГ;@'),
+    "last update": ((205, 205, 205), None, FORMATS.DATE),
+    "last update (prev)": ((166, 166, 166), None, FORMATS.DATE),
+    "last update Best1": ((0, 176, 240), None, FORMATS.DATE),
+    "last update Best2": ((146, 207, 80), None, FORMATS.DATE),
     "Material": ((205, 205, 205), None, None),
     "Material number": ((205, 205, 205), None, '@'),
-    "Order IS": ((192, 0, 0), "white", '# ##0;[Red]-# ##0;"-"'),
+    "Order IS": ((192, 0, 0), "white", FORMATS.INTEGER),
     "Our Product Name": ((205, 205, 205), None, None),
     "Pack": ((205, 205, 205), None, None),
     "Категория ABC": ((205, 205, 205), None, "@"),
-    "Price, pack": ((205, 205, 205), None, '# ##0,00;[Red]-# ##0,00;"-"'),
-    "Price": ((205, 205, 205), None, '# ##0,00;[Red]-# ##0,00;"-"'),
-    "Price, L": ((205, 205, 205), None, '# ##0,00;[Red]-# ##0,00;"-"'),
-    "Price, L (prev)": ((166, 166, 166), None, '# ##0,00;[Red]-# ##0,00;"-"'),
-    "Price date": ((205, 205, 205), None, 'ДД.ММ.ГГ;@'),
+    "Price, pack": ((205, 205, 205), None, FORMATS.DECIMAL_2),
+    "Price": ((205, 205, 205), None, FORMATS.DECIMAL_2),
+    "Price, L": ((205, 205, 205), None, FORMATS.DECIMAL_2),
+    "Price, L (prev)": ((166, 166, 166), None, FORMATS.DECIMAL_2),
+    "Price date": ((205, 205, 205), None, FORMATS.DATE),
     "Product name": ((205, 205, 205), None, None),
     "Product name (variant)": ((205, 205, 205), None, None),
-    "Purchase Order": ((33, 92, 152), None, '# ##0;[Red]-# ##0;"-"'),
-    "Qty, pcs": ((205, 205, 205), None, '# ##0;[Red]-# ##0;"-"'),
-    "Reserve cust": ((33, 92, 152), None, '# ##0;[Red]-# ##0;"-"'),
-    "Reserve E-Comm": ((33, 92, 152), None, '# ##0;[Red]-# ##0;"-"'),
-    "Stock": ((33, 92, 152), None, '# ##0;[Red]-# ##0;"-"'),
-    "Stock IS": ((192, 0, 0), "white", '# ##0;[Red]-# ##0;"-"'),
+    "Purchase Order": ((33, 92, 152), None, FORMATS.INTEGER),
+    "Qty, pcs": ((205, 205, 205), None, FORMATS.INTEGER),
+    "Reserve cust": ((33, 92, 152), None, FORMATS.INTEGER),
+    "Reserve E-Comm": ((33, 92, 152), None, FORMATS.INTEGER),
+    "Stock": ((33, 92, 152), None, FORMATS.INTEGER),
+    "Stock IS": ((192, 0, 0), "white", FORMATS.INTEGER),
     "Supplier Article": ((205, 205, 205), None, '@'),
     "Supplier name": ((205, 205, 205), None, None),
     "Supplier Product Name": ((205, 205, 205), None, None),
-    "Target Price, L": ((205, 205, 205), None, '# ##0,00;[Red]-# ##0,00;"-"'),
-    "Target Price, pack": ((205, 205, 205), None, '# ##0,00;[Red]-# ##0,00;"-"'),
-    "Transit": ((33, 92, 152), None, '# ##0;[Red]-# ##0;"-"'),
-    "Volume, L": ((205, 205, 205), None, '# ##0;[Red]-# ##0;"-"'),
-    "Volume to take": ((205, 205, 205), None, '# ##0;[Red]-# ##0;"-"'),
+    "Target Price, L": ((205, 205, 205), None, FORMATS.DECIMAL_2),
+    "Target Price, pack": ((205, 205, 205), None, FORMATS.DECIMAL_2),
+    "Transit": ((33, 92, 152), None, FORMATS.INTEGER),
+    "Volume, L": ((205, 205, 205), None, FORMATS.INTEGER),
+    "Volume to take": ((205, 205, 205), None, FORMATS.INTEGER),
     "Валюта": ((146, 207, 80), None, None),
     "Вид закупки": ((205, 205, 205), None, None),
-    "Дата": ((205, 205, 205), None, 'ДД.ММ.ГГ;@'),
-    "Дистр цена": ((192, 0, 0), "white", '# ##0 ₽;[Red]-# ##0 ₽;"-"'),
+    "Дата": ((205, 205, 205), None, FORMATS.DATE),
+    "Дистр цена": ((192, 0, 0), "white", FORMATS.MONEY_RUB),
     "Клиент": ((205, 205, 205), None, None),
     "Код продукта": ((205, 205, 205), None, '@'),
-    "Количество": ((205, 205, 205), None, '# ##0;[Red]-# ##0;"-"'),
+    "Количество": ((205, 205, 205), None, FORMATS.INTEGER),
     "Комментарии": ((205, 205, 205), None, None),
-    "Кост руб л с НДС": ((0, 176, 240), None, '# ##0 ₽;[Red]-# ##0 ₽;"-"'),
-    "Курс": ((146, 207, 80), None, '# ##0;[Red]-# ##0;"-"'),
+    "Кост руб л с НДС": ((0, 176, 240), None, FORMATS.MONEY_RUB),
+    "Курс": ((146, 207, 80), None, FORMATS.INTEGER),
     "Менеджер": ((205, 205, 205), None, None),
     "Название продукта": ((205, 205, 205), None, None),
-    "Объем л": ((205, 205, 205), None, '# ##0;[Red]-# ##0;"-"'),
+    "Объем л": ((205, 205, 205), None, FORMATS.INTEGER),
     "Поставщик": ((146, 207, 80), None, None),
-    "Промо цена": ((192, 0, 0), "white", '# ##0 ₽;[Red]-# ##0 ₽;"-"'),
-    "Ср.Продажи мес": ((160, 43, 147), "white", '# ##0;[Red]-# ##0;"-"'),
+    "Промо цена": ((192, 0, 0), "white", FORMATS.MONEY_RUB),
+    "Ср.Продажи мес": ((160, 43, 147), "white", FORMATS.INTEGER),
     "Условия оплаты": ((205, 205, 205), None, None),
-    "Фасовка": ((205, 205, 205), None, '# ##0;[Red]-# ##0;"-"'),
-    "к Быстрому заказу, л": ((160, 43, 147), "white", '# ##0;[Red]-# ##0;"-"'),
-    "к Заказу, л": ((160, 43, 147), "white", '# ##0;[Red]-# ##0;"-"'),
+    "Фасовка": ((205, 205, 205), None, FORMATS.INTEGER),
+    "к Быстрому заказу, л": ((160, 43, 147), "white", FORMATS.INTEGER),
+    "к Заказу, л": ((160, 43, 147), "white", FORMATS.INTEGER),
 }
 
 _INTEGER_HEADERS = {
     "Qty, pcs", "Volume, L", "StockQty", "TransitQty", "MarkdownQty",
     "ReserveQty", "ReserveECommQty", "OrderQty", "ConfirmedQty", "RemainsQty", "LPC",
 }
-INTEGER_FORMAT = '# ##0;[Red]-# ##0;"-"'
+INTEGER_FORMAT = FORMATS.INTEGER
 
 
 def standardize_output_header(header: object) -> str:
@@ -130,24 +132,13 @@ def excel_spec(header: object):
     if b in _INTEGER_HEADERS:
         return ((205, 205, 205), None, INTEGER_FORMAT)
     if b.startswith("FX rate"):
-        return ((205, 205, 205), None, '# ##0,0;[Red]-# ##0,0;"-"')
+        return ((205, 205, 205), None, FORMATS.DECIMAL_1)
     return None
 
 
 def rgb_to_excel(rgb: tuple[int, int, int]) -> int:
     r, g, b = rgb
     return int(r) + int(g) * 256 + int(b) * 65536
-
-
-def set_number_format_safe(target, fmt: str | None) -> None:
-    if not fmt:
-        return
-    for attr in ("NumberFormatLocal", "NumberFormat"):
-        try:
-            setattr(target, attr, fmt)
-            return
-        except Exception:
-            pass
 
 
 def apply_header_style_and_formats(ws, headers: list[str], column_letter_func) -> None:
@@ -169,4 +160,5 @@ def apply_header_style_and_formats(ws, headers: list[str], column_letter_func) -
                 cell.Font.ColorIndex = -4105
         except Exception:
             pass
-        set_number_format_safe(ws.Columns(f"{letter}:{letter}"), number_format)
+        if number_format:
+            set_number_format_safe(ws.Columns(f"{letter}:{letter}"), number_format)

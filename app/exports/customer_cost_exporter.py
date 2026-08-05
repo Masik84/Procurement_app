@@ -10,6 +10,7 @@ import win32com.client as win32
 from sqlalchemy.orm import Session
 
 from app.utils.excel_fast_writer import write_excel_table
+from app.utils.excel_format_rules import FORMATS, set_number_format_safe
 
 from app.db.models import TempCustomerCostImport, TempCustomerCostOption
 
@@ -91,33 +92,6 @@ class CustomerCostExporter:
         header_range.HorizontalAlignment = self._xl_center
         header_range.VerticalAlignment = self._xl_vcenter
         ws.Rows(1).EntireRow.AutoFit()
-
-    @staticmethod
-    def _excel_invariant_number_format(format_code: str | None) -> str | None:
-        if not format_code:
-            return format_code
-        return (
-            str(format_code)
-            .replace("ДД", "dd")
-            .replace("ММ", "mm")
-            .replace("ГГ", "yy")
-            .replace(",0000", ".0000")
-            .replace(",00", ".00")
-            .replace(",0", ".0")
-        )
-
-    def _set_number_format_safe(self, target, format_code: str):
-        for attr, fmt in (
-            ("NumberFormatLocal", format_code),
-            ("NumberFormat", self._excel_invariant_number_format(format_code) or format_code),
-            ("NumberFormat", format_code),
-            ("NumberFormat", "General"),
-        ):
-            try:
-                setattr(target, attr, fmt)
-                return
-            except Exception:
-                pass
 
     def export_template(self, file_path: str | Path) -> Path:
         file_path = Path(file_path)
@@ -211,19 +185,19 @@ class CustomerCostExporter:
         color_range("Поставщик", "Курс", self._rgb(146, 208, 80))
 
         formats = {
-            "Дата": "ДД.ММ.ГГ;@",
+            "Дата": FORMATS.DATE,
             "Менеджер": "@",
             "Клиент": "@",
             "Код продукта": "@",
             "Категория ABC": "@",
-            "Количество": '#,##0;[Red]-#,##0;"-"',
-            "Объем л": '#,##0;[Red]-#,##0;"-"',
-            "Кост руб л с НДС": '# ##0 ₽',
+            "Количество": FORMATS.INTEGER,
+            "Объем л": FORMATS.INTEGER,
+            "Кост руб л с НДС": FORMATS.MONEY_RUB_SIMPLE,
         }
         for header, fmt in formats.items():
             letter = col(header)
             if letter:
-                self._set_number_format_safe(ws.Columns(f"{letter}:{letter}"), fmt)
+                set_number_format_safe(ws.Columns(f"{letter}:{letter}"), fmt)
 
         widths = {
             "Дата": 8.00,
@@ -396,18 +370,18 @@ class CustomerCostExporter:
 
             base_header_map = {str(header): idx + 1 for idx, header in enumerate(base_headers)}
             for header, fmt in {
-                "Дата": "ДД.ММ.ГГ;@",
+                "Дата": FORMATS.DATE,
                 "Менеджер": "@",
                 "Клиент": "@",
                 "Код продукта": "@",
                 "Категория ABC": "@",
-                "Количество": '# ##0;[Red]-# ##0;"-"',
-                "Объем л": '# ##0;[Red]-# ##0;"-"',
+                "Количество": FORMATS.INTEGER,
+                "Объем л": FORMATS.INTEGER,
             }.items():
                 idx = base_header_map.get(header)
                 if idx:
                     letter = self._excel_column_letter(idx)
-                    self._set_number_format_safe(ws.Columns(f"{letter}:{letter}"), fmt)
+                    set_number_format_safe(ws.Columns(f"{letter}:{letter}"), fmt)
 
             start_col = len(base_headers) + 1
             for _ in range(1, max_opt + 1):
@@ -418,11 +392,11 @@ class CustomerCostExporter:
                 c5 = self._excel_column_letter(start_col + 4)
                 c6 = self._excel_column_letter(start_col + 5)
 
-                self._set_number_format_safe(ws.Columns(f"{c1}:{c2}"), '# ##0 ₽')
-                self._set_number_format_safe(ws.Columns(f"{c3}:{c3}"), "@")
-                self._set_number_format_safe(ws.Columns(f"{c4}:{c4}"), "ДД.ММ.ГГ;@")
-                self._set_number_format_safe(ws.Columns(f"{c5}:{c5}"), "# ##0")
-                self._set_number_format_safe(ws.Columns(f"{c6}:{c6}"), "@")
+                set_number_format_safe(ws.Columns(f"{c1}:{c2}"), FORMATS.MONEY_RUB_SIMPLE)
+                set_number_format_safe(ws.Columns(f"{c3}:{c3}"), FORMATS.TEXT)
+                set_number_format_safe(ws.Columns(f"{c4}:{c4}"), FORMATS.DATE)
+                set_number_format_safe(ws.Columns(f"{c5}:{c5}"), FORMATS.FX_INTEGER)
+                set_number_format_safe(ws.Columns(f"{c6}:{c6}"), FORMATS.TEXT)
 
                 start_col += 6
 

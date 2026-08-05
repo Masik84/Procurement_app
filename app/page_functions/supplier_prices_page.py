@@ -299,17 +299,20 @@ class SupplierPricesPage(QWidget):
         )
 
     def ask_order_planning_months_for_export(self):
-        quick_months, ok = QInputDialog.getInt(
-            self,
-            "Быстрый заказ",
-            "Кол-во месяцев к Быстрому заказу:",
-            value=3,
-            minValue=0,
-            maxValue=120,
-            step=1,
-        )
-        if not ok:
-            return None, None
+        # Быстрый заказ временно скрыт только в CostCalc_. Оставляем диалог
+        # рядом с рабочим кодом, чтобы его можно было быстро вернуть.
+        # quick_months, ok = QInputDialog.getInt(
+        #     self,
+        #     "Быстрый заказ",
+        #     "Кол-во месяцев к Быстрому заказу:",
+        #     value=3,
+        #     minValue=0,
+        #     maxValue=120,
+        #     step=1,
+        # )
+        # if not ok:
+        #     return None, None
+        quick_months = None
 
         safe_months, ok = QInputDialog.getInt(
             self,
@@ -323,7 +326,7 @@ class SupplierPricesPage(QWidget):
         if not ok:
             return None, None
 
-        return int(quick_months), int(safe_months)
+        return quick_months, int(safe_months)
 
     def export_calculated_excel(
         self,
@@ -1457,6 +1460,5 @@ class SupplierPricesPage(QWidget):
 
         if msg.clickedButton() == copy_btn:
             QApplication.clipboard().setText(text)
-
 
 

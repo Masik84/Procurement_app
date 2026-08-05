@@ -9,6 +9,7 @@ import pythoncom
 import win32com.client as win32
 
 from app.utils.excel_fast_writer import write_excel_table
+from app.utils.excel_format_rules import FORMATS, set_number_format_safe
 
 
 class CustomerCostReportExporter:
@@ -62,40 +63,6 @@ class CustomerCostReportExporter:
         excel.DisplayAlerts = False
         return excel
 
-    @staticmethod
-    def _excel_invariant_number_format(format_code: str | None) -> str | None:
-        if not format_code:
-            return format_code
-        return (
-            str(format_code)
-            .replace("ДД", "dd")
-            .replace("ММ", "mm")
-            .replace("ГГ", "yy")
-            .replace(",0000", ".0000")
-            .replace(",00", ".00")
-            .replace(",0", ".0")
-        )
-
-    def _set_number_format_safe(self, target, format_en: str, format_local: str | None = None) -> None:
-        candidates = []
-        if format_local:
-            candidates.append(("NumberFormatLocal", format_local))
-        if format_en:
-            candidates.append(("NumberFormat", format_en))
-        invariant_local = self._excel_invariant_number_format(format_local)
-        if invariant_local and invariant_local != format_en:
-            candidates.append(("NumberFormat", invariant_local))
-        if format_local and format_local != format_en:
-            candidates.append(("NumberFormat", format_local))
-        candidates.append(("NumberFormat", "General"))
-
-        for attr, fmt in candidates:
-            try:
-                setattr(target, attr, fmt)
-                return
-            except Exception:
-                pass
-
     def _apply_header_common(self, ws, headers_count: int) -> None:
         ws.Cells.Font.Name = "Aptos Narrow"
         ws.Cells.Font.Size = 11
@@ -138,7 +105,7 @@ class CustomerCostReportExporter:
         for header in headers:
             letter = self._col(header_map, header)
             if letter:
-                self._set_number_format_safe(ws.Columns(f"{letter}:{letter}"), "General", format_local)
+                set_number_format_safe(ws.Columns(f"{letter}:{letter}"), "General", format_local)
 
     def _format_report(self, ws, headers: Sequence[str], rows_count: int) -> None:
         header_map = self._header_map(headers)
@@ -161,11 +128,11 @@ class CustomerCostReportExporter:
             "Re-export", "Agent fee", "Bank fee", "Customs fee", "Additional customs",
             "Storage", "Move Novo", "Move Msk", "Marking",
         ]
-        self._format_columns_by_headers(ws, header_map, cost_headers, '# ##0,00;[Red]-# ##0,00;"-"')
-        self._format_columns_by_headers(ws, header_map, ["FX markup %"], "0,0#%")
-        self._format_columns_by_headers(ws, header_map, ["FX rate"], "# ##0")
-        self._format_columns_by_headers(ws, header_map, ["Qty, pcs", "Volume, L"], '# ##0,00;[Red]-# ##0,00;"-"')
-        self._format_columns_by_headers(ws, header_map, ["Дата", "Price date"], "ДД.ММ.ГГ;@")
+        self._format_columns_by_headers(ws, header_map, cost_headers, FORMATS.DECIMAL_2)
+        self._format_columns_by_headers(ws, header_map, ["FX markup %"], FORMATS.PERCENT_FLEX)
+        self._format_columns_by_headers(ws, header_map, ["FX rate"], FORMATS.FX_INTEGER)
+        self._format_columns_by_headers(ws, header_map, ["Qty, pcs", "Volume, L"], FORMATS.DECIMAL_2)
+        self._format_columns_by_headers(ws, header_map, ["Дата", "Price date"], FORMATS.DATE)
 
         widths = {
             "Дата": 11.0,

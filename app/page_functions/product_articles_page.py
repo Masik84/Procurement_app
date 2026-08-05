@@ -26,6 +26,7 @@ from app.exports.product_article_exporter import ProductArticleExporter
 from app.workers.excel_export_worker import start_excel_export
 from app.utils.output_headers import display_headers, standardize_output_header
 from app.utils.excel_fast_writer import write_excel_table
+from app.utils.excel_format_rules import FORMATS, set_number_format_safe
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -846,7 +847,7 @@ class ProductArticlesPage(QWidget):
             ws.Columns("C:C").ColumnWidth = 22
             ws.Columns("D:D").ColumnWidth = 34
 
-            ws.Columns("C:C").NumberFormat = "@"
+            set_number_format_safe(ws.Columns("C:C"), FORMATS.TEXT)
 
             wb.SaveAs(str(Path(file_path).resolve()))
 

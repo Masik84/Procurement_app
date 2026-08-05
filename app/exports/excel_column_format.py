@@ -4,6 +4,8 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from app.utils.excel_format_rules import FORMATS, set_number_format_safe
+
 
 DEFAULT_FONT_NAME = "Aptos Narrow"
 DEFAULT_FONT_SIZE = 11
@@ -211,49 +213,49 @@ HEADER_WIDTHS = {
 # Number formats are local Excel format strings for Russian locale. They are
 # intentionally mapped by header name so all exports can reuse the same rules.
 NUMBER_FORMATS_LOCAL = {
-    "Дата": "ДД.ММ.ГГ;@",
-    "Price date": "ДД.ММ.ГГ;@",
-    "last update": "ДД.ММ.ГГ;@",
-    "last update (prev)": "ДД.ММ.ГГ;@",
-    "last update Best1": "ДД.ММ.ГГ;@",
-    "last update Best2": "ДД.ММ.ГГ;@",
-    "FX rate": "# ##0,0###",
-    "FX rate (donor)": "# ##0,0###",
-    "FX markup %": "0,0#%",
-    "FX markup abs": "# ##0,00##;[Red]-# ##0,00##;0",
-    "Qty, pcs": "# ##0,00##;[Red]-# ##0,00##;0",
-    "Volume, L": "# ##0,00##;[Red]-# ##0,00##;0",
-    "Volume to take": "# ##0,00##;[Red]-# ##0,00##;0",
-    "Ср.Продажи мес": "# ##0,00",
-    "Safe Stock (st), mnth": "# ##0,00",
-    "Safe Stock (st+tr), mnth": "# ##0,00",
-    "Safe Stock (+ord), mnth": "# ##0,00",
-    "к Быстрому Заказу, шт": '# ##0;[Red]-# ##0;"-"',
-    "к Быстрому Заказу, л": '# ##0;[Red]-# ##0;"-"',
-    "к Заказу, шт": '# ##0;[Red]-# ##0;"-"',
-    "к Заказу, л": '# ##0;[Red]-# ##0;"-"',
-    "Дистр цена": "# ##0 ₽",
-    "Промо цена": "# ##0 ₽",
-    "Cost Novo with VAT": '# ##0 ₽;[Red]-# ##0 ₽;"-"',
-    "Full Cost Msk": '# ##0 ₽;[Red]-# ##0 ₽;"-"',
-    "uC3": '# ##0 ₽;[Red]-# ##0 ₽;"-"',
-    "curr LPC": '# ##0 ₽;[Red]-# ##0 ₽;"-"',
-    "curr Landed cost": '# ##0 ₽;[Red]-# ##0 ₽;"-"',
-    "Best full Price, L": '# ##0 ₽;[Red]-# ##0 ₽;"-"',
-    "Best full Price, L 2": '# ##0 ₽;[Red]-# ##0 ₽;"-"',
-    "FX rate Best1": "# ##0",
-    "FX rate Best2": "# ##0",
-    "Stock": '# ##0;[Red]-# ##0;"-"',
-    "Transit": '# ##0;[Red]-# ##0;"-"',
-    "Purchase Order": '# ##0;[Red]-# ##0;"-"',
-    "Order IS": '# ##0;[Red]-# ##0;"-"',
-    "Stock IS": '# ##0;[Red]-# ##0;"-"',
-    "Reserve cust": '# ##0;[Red]-# ##0;"-"',
-    "Reserve E-Comm": '# ##0;[Red]-# ##0;"-"',
-    "Damaged": '# ##0;[Red]-# ##0;"-"',
+    "Дата": FORMATS.DATE,
+    "Price date": FORMATS.DATE,
+    "last update": FORMATS.DATE,
+    "last update (prev)": FORMATS.DATE,
+    "last update Best1": FORMATS.DATE,
+    "last update Best2": FORMATS.DATE,
+    "FX rate": FORMATS.FX_FLEX,
+    "FX rate (donor)": FORMATS.FX_FLEX,
+    "FX markup %": FORMATS.PERCENT_FLEX,
+    "FX markup abs": FORMATS.DECIMAL_FLEX,
+    "Qty, pcs": FORMATS.DECIMAL_FLEX,
+    "Volume, L": FORMATS.DECIMAL_FLEX,
+    "Volume to take": FORMATS.DECIMAL_FLEX,
+    "Ср.Продажи мес": FORMATS.DECIMAL_2_PLAIN,
+    "Safe Stock (st), mnth": FORMATS.DECIMAL_2_PLAIN,
+    "Safe Stock (st+tr), mnth": FORMATS.DECIMAL_2_PLAIN,
+    "Safe Stock (+ord), mnth": FORMATS.DECIMAL_2_PLAIN,
+    "к Быстрому Заказу, шт": FORMATS.INTEGER,
+    "к Быстрому Заказу, л": FORMATS.INTEGER,
+    "к Заказу, шт": FORMATS.INTEGER,
+    "к Заказу, л": FORMATS.INTEGER,
+    "Дистр цена": FORMATS.MONEY_RUB_SIMPLE,
+    "Промо цена": FORMATS.MONEY_RUB_SIMPLE,
+    "Cost Novo with VAT": FORMATS.MONEY_RUB,
+    "Full Cost Msk": FORMATS.MONEY_RUB,
+    "uC3": FORMATS.MONEY_RUB,
+    "curr LPC": FORMATS.MONEY_RUB,
+    "curr Landed cost": FORMATS.MONEY_RUB,
+    "Best full Price, L": FORMATS.MONEY_RUB,
+    "Best full Price, L 2": FORMATS.MONEY_RUB,
+    "FX rate Best1": FORMATS.FX_INTEGER,
+    "FX rate Best2": FORMATS.FX_INTEGER,
+    "Stock": FORMATS.INTEGER,
+    "Transit": FORMATS.INTEGER,
+    "Purchase Order": FORMATS.INTEGER,
+    "Order IS": FORMATS.INTEGER,
+    "Stock IS": FORMATS.INTEGER,
+    "Reserve cust": FORMATS.INTEGER,
+    "Reserve E-Comm": FORMATS.INTEGER,
+    "Damaged": FORMATS.INTEGER,
 }
 
-DEFAULT_NUMERIC_FORMAT_LOCAL = "# ##0,00##;[Red]-# ##0,00##;0"
+DEFAULT_NUMERIC_FORMAT_LOCAL = FORMATS.DECIMAL_FLEX
 
 HEADER_FILL_COLORS = {
     "Supplier": rgb(146, 208, 80),
@@ -439,16 +441,6 @@ def excel_column_letter(col_num: int) -> str:
     return result
 
 
-def set_number_format_safe(target: Any, format_code: str) -> None:
-    try:
-        target.NumberFormat = format_code
-    except Exception:
-        try:
-            target.NumberFormatLocal = format_code
-        except Exception:
-            pass
-
-
 def apply_standard_worksheet_format(ws: Any, headers: list[str], *, freeze_cell: str = "D2", zoom: int = 85) -> None:
     xl_center = -4108
     xl_left = -4131
@@ -567,9 +559,9 @@ def apply_target_price_calculated_worksheet_format(ws: Any, headers: list[str], 
             green,
         )
 
-        _format_header_column(ws, headers, f"Cost Novo with VAT_{option_idx}", number_format="# ##0 ₽;[Red]-# ##0 ₽;\"-\"", width=9.0)
-        _format_header_column(ws, headers, f"Full Cost Msk_{option_idx}", number_format="# ##0 ₽;[Red]-# ##0 ₽;\"-\"", width=9.0)
-        _format_header_column(ws, headers, f"Supplier_{option_idx}", number_format="@", width=16.14)
-        _format_header_column(ws, headers, f"last update_{option_idx}", number_format="ДД.ММ.ГГ;@", width=9.43)
-        _format_header_column(ws, headers, f"Currency_{option_idx}", number_format="@", width=8.14)
+        _format_header_column(ws, headers, f"Cost Novo with VAT_{option_idx}", number_format=FORMATS.MONEY_RUB, width=9.0)
+        _format_header_column(ws, headers, f"Full Cost Msk_{option_idx}", number_format=FORMATS.MONEY_RUB, width=9.0)
+        _format_header_column(ws, headers, f"Supplier_{option_idx}", number_format=FORMATS.TEXT, width=16.14)
+        _format_header_column(ws, headers, f"last update_{option_idx}", number_format=FORMATS.DATE, width=9.43)
+        _format_header_column(ws, headers, f"Currency_{option_idx}", number_format=FORMATS.TEXT, width=8.14)
         option_idx += 1

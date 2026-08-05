@@ -7,6 +7,7 @@ import win32com.client as win32
 
 from app.exports.excel_column_format import apply_standard_worksheet_format, excel_value_by_header
 from app.utils.excel_fast_writer import write_excel_table
+from app.utils.excel_format_rules import FORMATS, set_number_format_safe
 
 
 class ProductSearchExporter:
@@ -94,7 +95,7 @@ class ProductSearchExporter:
 
             self._apply_base_style(ws, len(headers), apply_filter=False)
 
-            ws.Columns("A:A").NumberFormat = "@"
+            set_number_format_safe(ws.Columns("A:A"), FORMATS.TEXT)
             ws.Columns("A:B").ColumnWidth = 28
 
             wb.SaveAs(str(Path(file_path).resolve()))

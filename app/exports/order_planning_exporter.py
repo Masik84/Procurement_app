@@ -16,6 +16,7 @@ from app.services.supplier_currency_cost_service import SupplierCurrencyCostServ
 from app.services.price_repository import PriceRepository
 from app.exports.excel_column_format import apply_standard_worksheet_format, excel_value_by_header
 from app.utils.excel_fast_writer import write_excel_table
+from app.utils.excel_format_rules import set_number_format_safe
 from app.utils.output_headers import standardize_output_header
 
 
@@ -76,33 +77,8 @@ class OrderPlanningExporter:
         rng.VerticalAlignment = self._xl_vcenter
         ws.Rows(1).RowHeight = 60
 
-    @staticmethod
-    def _excel_invariant_number_format(fmt: str | None) -> str | None:
-        if not fmt:
-            return fmt
-        return (
-            str(fmt)
-            .replace("ДД", "dd")
-            .replace("ММ", "mm")
-            .replace("ГГ", "yy")
-            .replace(",0000", ".0000")
-            .replace(",00", ".00")
-            .replace(",0", ".0")
-        )
-
     def _set_format(self, target, fmt: str) -> None:
-        candidates = [
-            ("NumberFormatLocal", fmt),
-            ("NumberFormat", self._excel_invariant_number_format(fmt) or fmt),
-            ("NumberFormat", fmt),
-            ("NumberFormat", "General"),
-        ]
-        for attr, value in candidates:
-            try:
-                setattr(target, attr, value)
-                return
-            except Exception:
-                pass
+        set_number_format_safe(target, fmt)
 
     def _header_map(self, headers: Sequence[str]) -> dict[str, int]:
         return {str(header): idx + 1 for idx, header in enumerate(headers)}

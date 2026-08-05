@@ -37,6 +37,7 @@ from app.ui.table_style import *
 from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 from app.exports.price_report_exporter import PriceReportExporter
 from app.services.price_repository import PriceRepository
+from app.utils.excel_format_rules import FORMATS
 from app.workers.excel_export_worker import ExcelExportWorker
 
 
@@ -1676,7 +1677,7 @@ class PriceReportsPage(QWidget):
         if self._is_date_header(header):
             if isinstance(value, datetime):
                 cell.value = value
-                cell.number_format = DATE_FORMAT
+                cell.number_format = FORMATS.DATE
             else:
                 cell.value = value
             return
@@ -1687,7 +1688,7 @@ class PriceReportsPage(QWidget):
                 cell.value = ""
             else:
                 cell.value = float(decimal_value)
-                cell.number_format = DECIMAL1_FORMAT
+                cell.number_format = FORMATS.DECIMAL_1
             return
 
         if self._is_money_header(header):
@@ -1696,7 +1697,7 @@ class PriceReportsPage(QWidget):
                 cell.value = ""
             else:
                 cell.value = float(decimal_value)
-                cell.number_format = MONEY_FORMAT
+                cell.number_format = FORMATS.MONEY_RUB
             return
 
         if self._is_integer_header(header):
@@ -1705,7 +1706,7 @@ class PriceReportsPage(QWidget):
                 cell.value = ""
             else:
                 cell.value = int(decimal_value.quantize(Decimal("1")))
-                cell.number_format = INTEGER_FORMAT
+                cell.number_format = FORMATS.INTEGER
             return
 
         if isinstance(value, Decimal):

@@ -14,6 +14,7 @@ from app.services.cost_calculation_service import CostCalculationService
 from app.services.price_repository import PriceRepository
 from app.services.supplier_currency_cost_service import SupplierCurrencyCostService
 from app.utils.excel_fast_writer import write_excel_table
+from app.utils.excel_format_rules import FORMATS, cost_calc_headers, set_number_format_safe
 
 
 class SupplierPriceExporter:
@@ -131,7 +132,7 @@ class SupplierPriceExporter:
         if header not in headers:
             return
         col = self._excel_column_letter(headers.index(header) + 1)
-        self._set_number_format_safe(ws.Columns(f"{col}:{col}"), "# ##0", "# ##0")
+        set_number_format_safe(ws.Columns(f"{col}:{col}"), FORMATS.FX_INTEGER)
         ws.Columns(f"{col}:{col}").ColumnWidth = 7.29
 
     def _fixed_vat_formula_literal(self) -> str:
@@ -343,42 +344,6 @@ class SupplierPriceExporter:
         header_range.VerticalAlignment = self._xl_vcenter
         ws.Rows(1).EntireRow.AutoFit()
 
-    @staticmethod
-    def _excel_invariant_number_format(format_code: str | None) -> str | None:
-        if not format_code:
-            return format_code
-        return (
-            str(format_code)
-            .replace("ДД", "dd")
-            .replace("ММ", "mm")
-            .replace("ГГ", "yy")
-            .replace(",0000", ".0000")
-            .replace(",00", ".00")
-            .replace(",0", ".0")
-        )
-
-    def _set_number_format_safe(self, target, format_en: str = "General", format_local: str | None = None):
-        """Set Excel number format without breaking export on locale-specific Excel builds."""
-        candidates = []
-        if format_local:
-            candidates.append(("NumberFormatLocal", format_local))
-        if format_en:
-            candidates.append(("NumberFormat", format_en))
-        invariant_local = self._excel_invariant_number_format(format_local)
-        if invariant_local and invariant_local != format_en:
-            candidates.append(("NumberFormat", invariant_local))
-        if format_local and format_local != format_en:
-            candidates.append(("NumberFormat", format_local))
-        candidates.append(("NumberFormat", "General"))
-
-        for attr, fmt in candidates:
-            try:
-                setattr(target, attr, fmt)
-                return
-            except Exception:
-                pass
-
-
     def _header_map(self, headers: list[str]) -> dict[str, int]:
         return {str(header): idx + 1 for idx, header in enumerate(headers)}
 
@@ -391,9 +356,9 @@ class SupplierPriceExporter:
     def _set_format_by_header(self, ws, header_map: dict[str, int], header: str, format_local: str) -> None:
         letter = self._column_letter_by_header(header_map, header)
         if letter:
-            self._set_number_format_safe(
+            set_number_format_safe(
                 ws.Columns(f"{letter}:{letter}"),
-                self._excel_invariant_number_format(format_local) or "General",
+                format_local,
                 format_local,
             )
 
@@ -441,19 +406,19 @@ class SupplierPriceExporter:
         fx_headers = [h for h in headers if h == "FX rate" or h in {"FX rate Best1", "FX rate Best2"} or h.startswith("FX rate_")]
 
         for header in text_headers:
-            self._set_format_by_header(ws, header_map, header, "@")
+            self._set_format_by_header(ws, header_map, header, FORMATS.TEXT)
         for header in price_decimal_headers:
-            self._set_format_by_header(ws, header_map, header, "# ##0,00_ ;[Red]-# ##0,00_ ;'-'")
+            self._set_format_by_header(ws, header_map, header, FORMATS.PRICE_DECIMAL)
         for header in rub_headers:
-            self._set_format_by_header(ws, header_map, header, "# ##0 ₽")
+            self._set_format_by_header(ws, header_map, header, FORMATS.MONEY_RUB_SIMPLE)
         for header in uc3_headers:
-            self._set_format_by_header(ws, header_map, header, '# ##0,00;[Red]-# ##0,00;"-"')
+            self._set_format_by_header(ws, header_map, header, FORMATS.DECIMAL_2)
         for header in date_headers:
-            self._set_format_by_header(ws, header_map, header, "ДД.ММ.ГГ;@")
+            self._set_format_by_header(ws, header_map, header, FORMATS.DATE)
         for header in integer_headers:
-            self._set_format_by_header(ws, header_map, header, '# ##0;[Red]-# ##0;"-"')
+            self._set_format_by_header(ws, header_map, header, FORMATS.INTEGER)
         for header in fx_headers:
-            self._set_format_by_header(ws, header_map, header, "# ##0")
+            self._set_format_by_header(ws, header_map, header, FORMATS.FX_INTEGER)
 
         for header in ("Supplier Product Name", "Our Product Name"):
             self._set_width_by_header(ws, header_map, header, 31.14)
@@ -1032,8 +997,8 @@ class SupplierPriceExporter:
             ws.Columns("B:B").ColumnWidth = 31.14
             ws.Columns("C:F").ColumnWidth = 12
 
-            self._set_number_format_safe(ws.Columns("A:A"), "@", "@")
-            self._set_number_format_safe(ws.Columns("C:F"), "0.00", "0,00")
+            set_number_format_safe(ws.Columns("A:A"), FORMATS.TEXT)
+            set_number_format_safe(ws.Columns("C:F"), FORMATS.DECIMAL_2_SIMPLE)
 
             wb.SaveAs(str(target_path))
             return target_path
@@ -1091,58 +1056,10 @@ class SupplierPriceExporter:
             ws = wb.Worksheets(1)
             ws.Name = "Sheet1"
 
-            headers = [
-                "Supplier Article",
-                "Supplier Product Name",
-                "Our Product Name",
-                "Pack",
-                "Категория ABC",
-                "Qty, pcs",
-                "Volume, L",
-                "Volume to take",
-                "Price, L",
-                "Price, pack",
-                "Currency",
-                "FX rate",
-                "Cost Novo with VAT",
-                "Full Cost Msk",
-                "uC3",
-                "Target price, L",
-                "uC3 PY",
-                "uC3 3 mnth",
-                "last update (prev)",
-                "Price, L (prev)",
-                "Cost Novo with VAT (prev)",
-                "Full Cost Msk (prev)",
-                "Дистр цена",
-                "Промо цена",
-                "curr LPC",
-                "curr Landed cost",
-                "min uC3 stock",
-                "Best Suppl",
-                "Best full Price, L",
-                "last update Best1",
-                "FX rate Best1",
-                "Currency Best1",
-                "Best Suppl 2",
-                "Best full Price, L 2",
-                "last update Best2",
-                "FX rate Best2",
-                "Currency Best2",
-                "Volume PY",
-                "Volume 3 mnth",
-                "Stock",
-                "Transit",
-                "Purchase Order",
-                "Order IS",
-                "Stock IS",
-                "Reserve cust",
-                "Reserve E-Comm",
-                "Damaged",
-                "Ср.Продажи мес",
-                f"к Быстрому заказу, л ({quick_order_months} м)" if quick_order_months is not None else "к Быстрому заказу, л",
-                f"к Заказу, л ({safe_stock_months} м)" if safe_stock_months is not None else "к Заказу, л",
-            ]
+            headers, standard_order_header = cost_calc_headers(
+                quick_order_months=quick_order_months,
+                safe_stock_months=safe_stock_months,
+            )
 
             prepared_rows = []
             for source_row in rows:
@@ -1204,7 +1121,7 @@ class SupplierPriceExporter:
             _paint_header_block("Stock", "Purchase Order", self._rgb(33, 92, 152), self._rgb(255, 255, 255))
             _paint_header_block("Order IS", "Stock IS", self._rgb(192, 0, 0), self._rgb(255, 255, 255))
             _paint_header_block("Reserve cust", "Damaged", self._rgb(33, 92, 152), self._rgb(255, 255, 255))
-            _paint_header_block("Ср.Продажи мес", headers[-1], self._rgb(160, 43, 147), self._rgb(255, 255, 255))
+            _paint_header_block("Ср.Продажи мес", standard_order_header, self._rgb(160, 43, 147), self._rgb(255, 255, 255))
 
             for _src, _dst in [
                 ("Currency", "FX rate"),

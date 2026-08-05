@@ -9,6 +9,7 @@ import pythoncom
 import win32com.client as win32
 
 from app.utils.excel_fast_writer import write_excel_table
+from app.utils.excel_format_rules import FORMATS, set_number_format_safe
 
 
 class PriceReportExporter:
@@ -99,40 +100,6 @@ class PriceReportExporter:
         header_range.VerticalAlignment = self._xl_vcenter
         ws.Rows(1).EntireRow.AutoFit()
 
-    @staticmethod
-    def _excel_invariant_number_format(format_code: str | None) -> str | None:
-        if not format_code:
-            return format_code
-        return (
-            str(format_code)
-            .replace("ДД", "dd")
-            .replace("ММ", "mm")
-            .replace("ГГ", "yy")
-            .replace(",0000", ".0000")
-            .replace(",00", ".00")
-            .replace(",0", ".0")
-        )
-
-    def _set_number_format_safe(self, target, format_en: str, format_local: str | None = None) -> None:
-        candidates = []
-        if format_local:
-            candidates.append(("NumberFormatLocal", format_local))
-        if format_en:
-            candidates.append(("NumberFormat", format_en))
-        invariant_local = self._excel_invariant_number_format(format_local)
-        if invariant_local and invariant_local != format_en:
-            candidates.append(("NumberFormat", invariant_local))
-        if format_local and format_local != format_en:
-            candidates.append(("NumberFormat", format_local))
-        candidates.append(("NumberFormat", "General"))
-
-        for attr, fmt in candidates:
-            try:
-                setattr(target, attr, fmt)
-                return
-            except Exception:
-                pass
-
     def _write_table(self, ws, headers: Sequence[str], rows: Sequence[Sequence[object]]) -> None:
         def value_for_header(row, header, col_index):
             value = row[col_index] if col_index < len(row) else ""
@@ -172,7 +139,7 @@ class PriceReportExporter:
         for header in headers:
             letter = self._col(header_map, header)
             if letter:
-                self._set_number_format_safe(ws.Columns(f"{letter}:{letter}"), "General", format_local)
+                set_number_format_safe(ws.Columns(f"{letter}:{letter}"), "General", format_local)
 
     def _set_width_by_header(self, ws, header_map: dict[str, int], header: str, width: float) -> None:
         letter = self._col(header_map, header)
@@ -193,7 +160,7 @@ class PriceReportExporter:
             if h in {"Stock", "Transit", "Purchase Order", "Order IS", "Stock IS", "Reserve cust", "Reserve E-Comm", "Damaged", "Ср.Продажи мес"}
             or h.startswith("к Быстрому заказу, л") or h.startswith("к Заказу, л")
         ]
-        self._format_columns_by_headers(ws, header_map, headers, '# ##0;[Red]-# ##0;"-"')
+        self._format_columns_by_headers(ws, header_map, headers, FORMATS.INTEGER)
 
     def _color_repeating_supplier_headers(self, ws, header_map: dict[str, int], start_idx: int) -> None:
         idx = start_idx
@@ -207,7 +174,7 @@ class PriceReportExporter:
             if header == "FX rate" or header.startswith("FX rate_") or header in {"FX rate Best1", "FX rate Best2"}:
                 letter = self._col(header_map, header)
                 if letter:
-                    self._set_number_format_safe(ws.Columns(f"{letter}:{letter}"), "General", "# ##0")
+                    set_number_format_safe(ws.Columns(f"{letter}:{letter}"), FORMATS.FX_INTEGER)
                     ws.Columns(f"{letter}:{letter}").ColumnWidth = 7.29
 
     def _set_common_data_alignment(self, ws, headers_count: int, rows_count: int) -> None:
@@ -255,15 +222,15 @@ class PriceReportExporter:
         self._color_header_range(ws, header_map, "Reserve cust", "Damaged", self._rgb(33, 92, 152), self._rgb(255, 255, 255))
         self._color_order_plan_headers(ws, header_map)
 
-        # self._format_columns_by_headers(ws, header_map, [], "# ##0,00_ ;[Red]-# ##0,00_ ;'-'")
-        self._format_columns_by_headers(ws, header_map, ["Дистр цена", "Промо цена", "curr LPC", "curr Landed cost"], "# ##0 ₽")
+        # self._format_columns_by_headers(ws, header_map, [], FORMATS.PRICE_DECIMAL)
+        self._format_columns_by_headers(ws, header_map, ["Дистр цена", "Промо цена", "curr LPC", "curr Landed cost"], FORMATS.MONEY_RUB_SIMPLE)
         self._format_stock_and_order_plan_columns(ws, header_map)
 
         idx = 1
         while f"Cost Novo with VAT_{idx}" in header_map:
-            self._format_columns_by_headers(ws, header_map, [f"Cost Novo with VAT_{idx}", f"Full Cost Msk_{idx}"], "# ##0 ₽")
-            self._format_columns_by_headers(ws, header_map, [f"last update_{idx}"], "ДД.ММ.ГГ;@")
-            self._format_columns_by_headers(ws, header_map, [f"FX rate_{idx}"], "# ##0")
+            self._format_columns_by_headers(ws, header_map, [f"Cost Novo with VAT_{idx}", f"Full Cost Msk_{idx}"], FORMATS.MONEY_RUB_SIMPLE)
+            self._format_columns_by_headers(ws, header_map, [f"last update_{idx}"], FORMATS.DATE)
+            self._format_columns_by_headers(ws, header_map, [f"FX rate_{idx}"], FORMATS.FX_INTEGER)
             idx += 1
 
         self._set_width_by_header(ws, header_map, "Brand", 13.00)
@@ -297,19 +264,19 @@ class PriceReportExporter:
         self._color_header_range(ws, header_map, "Reserve cust", "Damaged", self._rgb(33, 92, 152), self._rgb(255, 255, 255))
         self._color_order_plan_headers(ws, header_map)
 
-        self._format_columns_by_headers(ws, header_map, ["last update", "last update (prev)", "last update Best1", "last update Best2"], "ДД.ММ.ГГ;@")
-        self._format_columns_by_headers(ws, header_map, ["FX rate", "FX rate Best1", "FX rate Best2"], "# ##0")
-        self._format_columns_by_headers(ws, header_map, ["Price, L", "Price, pack", "Price, L (prev)"], "# ##0,00_ ;[Red]-# ##0,00_ ;'-'")
+        self._format_columns_by_headers(ws, header_map, ["last update", "last update (prev)", "last update Best1", "last update Best2"], FORMATS.DATE)
+        self._format_columns_by_headers(ws, header_map, ["FX rate", "FX rate Best1", "FX rate Best2"], FORMATS.FX_INTEGER)
+        self._format_columns_by_headers(ws, header_map, ["Price, L", "Price, pack", "Price, L (prev)"], FORMATS.PRICE_DECIMAL)
         self._format_columns_by_headers(ws, header_map, ["Дистр цена", "Промо цена", "Cost Novo with VAT", "Full Cost Msk", 
                                                                                             "Cost Novo with VAT (prev)", "Full Cost Msk (prev)", "curr LPC", 
-                                                                                            "curr Landed cost", "Best full Price, L", "Best full Price, L 2"], "# ##0 ₽")
+                                                                                            "curr Landed cost", "Best full Price, L", "Best full Price, L 2"], FORMATS.MONEY_RUB_SIMPLE)
         self._format_stock_and_order_plan_columns(ws, header_map)
 
         idx = 3
         while f"Cost Novo with VAT_{idx}" in header_map:
-            self._format_columns_by_headers(ws, header_map, [f"Cost Novo with VAT_{idx}", f"Full Cost Msk_{idx}"], "# ##0 ₽")
-            self._format_columns_by_headers(ws, header_map, [f"last update_{idx}"], "ДД.ММ.ГГ;@")
-            self._format_columns_by_headers(ws, header_map, [f"FX rate_{idx}"], "# ##0")
+            self._format_columns_by_headers(ws, header_map, [f"Cost Novo with VAT_{idx}", f"Full Cost Msk_{idx}"], FORMATS.MONEY_RUB_SIMPLE)
+            self._format_columns_by_headers(ws, header_map, [f"last update_{idx}"], FORMATS.DATE)
+            self._format_columns_by_headers(ws, header_map, [f"FX rate_{idx}"], FORMATS.FX_INTEGER)
             idx += 1
 
         self._set_width_by_header(ws, header_map, "Our Product Name", 31.14)

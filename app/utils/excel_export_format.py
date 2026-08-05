@@ -7,6 +7,7 @@ from typing import Any, Mapping, Sequence
 
 from app.utils.excel_headers import display_header
 from app.utils.excel_fast_writer import write_excel_table
+from app.utils.excel_format_rules import FORMATS, set_number_format_safe
 
 XL_CENTER = -4108
 XL_LEFT = -4131
@@ -17,13 +18,13 @@ FONT_NAME = "Aptos Narrow"
 FONT_SIZE = 11
 HEADER_ROW_HEIGHT = 45
 
-TEXT_FORMAT = "@"
-DATE_FORMAT_LOCAL = "ДД.ММ.ГГ;@"
-INTEGER_FORMAT_LOCAL = '# ##0;[Red]-# ##0;"-"'
-DECIMAL_FORMAT_LOCAL = '# ##0,00;[Red]-# ##0,00;"-"'
-DECIMAL4_FORMAT_LOCAL = '# ##0,0000;[Red]-# ##0,0000;"-"'
-MONEY_FORMAT_LOCAL = '# ##0 ₽;[Red]-# ##0 ₽;"-"'
-GENERAL_FORMAT = "General"
+TEXT_FORMAT = FORMATS.TEXT
+DATE_FORMAT_LOCAL = FORMATS.DATE
+INTEGER_FORMAT_LOCAL = FORMATS.INTEGER
+DECIMAL_FORMAT_LOCAL = FORMATS.DECIMAL_2
+DECIMAL4_FORMAT_LOCAL = FORMATS.DECIMAL_4
+MONEY_FORMAT_LOCAL = FORMATS.MONEY_RUB
+GENERAL_FORMAT = FORMATS.GENERAL
 
 DEFAULT_HEADER_COLOR = (205, 205, 205)
 SUPPLIER_HEADER_COLOR = (146, 208, 80)
@@ -51,30 +52,6 @@ def header_map(headers: Sequence[str]) -> dict[str, int]:
 def col_letter(header_to_index: Mapping[str, int], header: str) -> str | None:
     idx = header_to_index.get(header)
     return excel_column_letter(idx) if idx else None
-
-
-def set_number_format_safe(target, format_en: str = GENERAL_FORMAT, format_local: str | None = None) -> None:
-    """Set Excel number format without failing the whole export.
-
-    COM Excel is locale-sensitive: some Russian NumberFormatLocal masks are rejected
-    by NumberFormat and vice versa. If Excel rejects both, leave the column as General
-    instead of producing an empty/failed export.
-    """
-    if format_local and format_local != GENERAL_FORMAT:
-        try:
-            target.NumberFormatLocal = format_local
-            return
-        except Exception:
-            pass
-    try:
-        target.NumberFormat = format_en
-        return
-    except Exception:
-        pass
-    try:
-        target.NumberFormat = GENERAL_FORMAT
-    except Exception:
-        pass
 
 
 def apply_base_table_style(ws, headers_count: int) -> None:
@@ -365,18 +342,18 @@ def openpyxl_cell_value(header: str, value: Any) -> Any:
 def openpyxl_number_format(header: str) -> str:
     h = normalize_header(header)
     if is_date_header(header):
-        return "DD.MM.YY"
+        return FORMATS.DATE
     if is_text_header(header):
-        return "@"
+        return FORMATS.TEXT
     if is_integer_header(header):
-        return '# ##0;[Red]-# ##0;"-"'
+        return FORMATS.INTEGER
     if is_money_header(header):
-        return '# ##0 ₽;[Red]-# ##0 ₽;"-"'
+        return FORMATS.MONEY_RUB
     if is_decimal4_header(header):
-        return '# ##0.0000;[Red]-# ##0.0000;"-"'
+        return FORMATS.DECIMAL_4
     if is_decimal_header(header):
-        return '# ##0.00;[Red]-# ##0.00;"-"'
-    return "General"
+        return FORMATS.DECIMAL_2
+    return FORMATS.GENERAL
 
 
 def write_openpyxl_dict_sheet(ws, rows: Sequence[Mapping[str, Any]], *, widths: Mapping[str, float] | None = None) -> None:
