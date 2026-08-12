@@ -12,13 +12,15 @@ from app.imports.is_importer import ISImporter
 from app.imports.stock_importer import StockImporter
 from app.imports.supplier_orders_importer import SupplierOrdersImporter
 from app.db.models import Product, ProductArticle, ProductStock, TempIsImport, TempStockImport, TempSupplierOrdersImport
-from app.services.product_matching_service import ProductMatchingService
+from app.services.product_matching_service import ProductCreateData, ProductMatchingService
 from app.services.sales_stock_metrics_service import ProductStockMetrics, SalesStockMetricsService
 from app.services.temp_cleanup_service import TempCleanupService
 from app.utils.text import clean_multi_spaces
 
 
 class ProductStockService:
+    AUTOMATCH_FLUSH_BATCH_SIZE = 250
+
     def __init__(self, session: Session):
         self.session = session
         self.product_matching = ProductMatchingService(session)
@@ -122,10 +124,10 @@ class ProductStockService:
                 reserve_ecomm_qty=r.get("reserve_ecomm_qty") or 0,
                 selected_product_id=None,
                 has_lpc_warning=bool(r.get("has_lpc_warning")),
-                new_product_name=None,
-                new_brand=None,
-                new_pack=None,
-                new_is_excise=None,
+                new_product_name=r.get("new_product_name"),
+                new_brand=r.get("new_brand"),
+                new_pack=r.get("new_pack"),
+                new_is_excise=r.get("new_is_excise"),
             ))
 
         if created:
@@ -151,11 +153,13 @@ class ProductStockService:
                 source_product_name=r.get("source_product_name"),
                 abc_category=clean_multi_spaces(r.get("abc_category")) or "-",
                 order_qty=r.get("order_qty") or 0,
+                is_order_qty=r.get("is_order_qty") or 0,
+                is_confirmed_order_qty=r.get("is_confirmed_order_qty") or 0,
                 selected_product_id=None,
-                new_product_name=None,
-                new_brand=None,
-                new_pack=None,
-                new_is_excise=None,
+                new_product_name=r.get("new_product_name"),
+                new_brand=r.get("new_brand"),
+                new_pack=r.get("new_pack"),
+                new_is_excise=r.get("new_is_excise"),
             ))
 
         if created:
@@ -233,25 +237,38 @@ class ProductStockService:
         self._validate_new_rows(rows)
 
     def _create_products_from_rows(self, rows, id_attr: str):
-        count = 0
-        for row in rows:
-            product = self.product_matching.get_or_create_product(
+        products = self.product_matching.get_or_create_products_batch([
+            ProductCreateData(
                 name=row.new_product_name,
                 brand=row.new_brand,
                 pack=row.new_pack,
                 is_excise=bool(row.new_is_excise),
             )
+            for row in rows
+        ])
+
+        for row, product in zip(rows, products):
             setattr(row, "selected_product_id", product.id)
-            src_article = getattr(row, "source_article", None)
-            src_name = getattr(row, "source_product_name", None)
-            if src_article:
-                if self.product_matching.should_create_article_link(src_article):
-                    self.product_matching.create_product_article_if_missing(product_id=product.id, article=src_article, supplier_name=src_name)
-            elif src_name:
-                self.product_matching.create_product_article_if_missing(product_id=product.id, article=None, supplier_name=src_name)
-            count += 1
+
+        self.product_matching.create_product_articles_if_missing_batch([
+            (
+                int(product.id),
+                getattr(row, "source_article", None),
+                getattr(row, "source_product_name", None),
+            )
+            for row, product in zip(rows, products)
+        ])
         self.session.flush()
-        return count
+        return len(rows)
+
+    @staticmethod
+    def can_create_new_product(row: object) -> bool:
+        return bool(
+            clean_multi_spaces(getattr(row, "new_product_name", None))
+            and clean_multi_spaces(getattr(row, "new_brand", None))
+            and getattr(row, "new_pack", None) is not None
+            and getattr(row, "new_is_excise", None) is not None
+        )
 
     def create_stock_products_from_temp(self, batch_id: str, imported_by: str) -> int:
         rows = self.session.query(TempStockImport).filter(
@@ -289,6 +306,22 @@ class ProductStockService:
         ).order_by(TempIsImport.import_row_no.asc(), TempIsImport.id.asc()).all()
         return self._create_products_from_rows(rows, "id")
 
+    def _flush_automatch_batch(self, matched_count: int) -> None:
+        if matched_count and matched_count % self.AUTOMATCH_FLUSH_BATCH_SIZE == 0:
+            self.session.flush()
+
+    def _flush_automatch_remainder(self, matched_count: int) -> None:
+        if matched_count % self.AUTOMATCH_FLUSH_BATCH_SIZE:
+            self.session.flush()
+
+    @staticmethod
+    def _assign_matched_product(row, product_id: int) -> None:
+        row.selected_product_id = product_id
+        row.new_product_name = None
+        row.new_brand = None
+        row.new_pack = None
+        row.new_is_excise = None
+
     def automatch_stock_rows(self, batch_id: str, imported_by: str) -> int:
         rows = self.session.query(TempStockImport).filter(
             TempStockImport.batch_id == batch_id,
@@ -303,9 +336,10 @@ class ProductStockService:
                 source_product_name=row.source_product_name,
             )
             if product is not None:
-                row.selected_product_id = product.id
+                self._assign_matched_product(row, product.id)
                 matched += 1
-        self.session.flush()
+                self._flush_automatch_batch(matched)
+        self._flush_automatch_remainder(matched)
         return matched
 
     def automatch_supplier_orders_rows(self, batch_id: str, imported_by: str) -> int:
@@ -324,9 +358,10 @@ class ProductStockService:
                     source_product_name=row.source_product_name,
                 )
             if product is not None:
-                row.selected_product_id = product.id
+                self._assign_matched_product(row, product.id)
                 matched += 1
-        self.session.flush()
+                self._flush_automatch_batch(matched)
+        self._flush_automatch_remainder(matched)
         return matched
 
     def automatch_is_rows(self, batch_id: str, imported_by: str) -> int:
@@ -343,33 +378,24 @@ class ProductStockService:
                 source_product_name=row.source_product_name,
             )
             if product is not None:
-                row.selected_product_id = product.id
+                self._assign_matched_product(row, product.id)
                 matched += 1
-        self.session.flush()
+                self._flush_automatch_batch(matched)
+        self._flush_automatch_remainder(matched)
         return matched
 
     def _create_or_update_articles(self, rows) -> int:
-        count = 0
-        for row in rows:
-            if row.selected_product_id:
-                src_article = getattr(row, "source_article", None)
-                src_name = getattr(row, "source_product_name", None)
-                if src_article:
-                    if self.product_matching.should_create_article_link(src_article):
-                        self.product_matching.create_product_article_if_missing(
-                            product_id=row.selected_product_id,
-                            article=src_article,
-                            supplier_name=src_name,
-                        )
-                elif src_name:
-                    self.product_matching.create_product_article_if_missing(
-                        product_id=row.selected_product_id,
-                        article=None,
-                        supplier_name=src_name,
-                    )
-                count += 1
+        matched_rows = [row for row in rows if row.selected_product_id]
+        self.product_matching.create_product_articles_if_missing_batch([
+            (
+                int(row.selected_product_id),
+                getattr(row, "source_article", None),
+                getattr(row, "source_product_name", None),
+            )
+            for row in matched_rows
+        ])
         self.session.flush()
-        return count
+        return len(matched_rows)
 
     def create_or_update_stock_product_articles(self, batch_id: str, imported_by: str) -> int:
         rows = self.session.query(TempStockImport).filter(
@@ -384,7 +410,7 @@ class ProductStockService:
             TempSupplierOrdersImport.batch_id == batch_id,
             TempSupplierOrdersImport.imported_by == imported_by,
             TempSupplierOrdersImport.selected_product_id.isnot(None),
-        ).all()
+        ).order_by(TempSupplierOrdersImport.import_row_no.asc(), TempSupplierOrdersImport.id.asc()).all()
         return self._create_or_update_articles(rows)
 
     def create_or_update_is_product_articles(self, batch_id: str, imported_by: str) -> int:
@@ -419,7 +445,11 @@ class ProductStockService:
             TempStockImport.selected_product_id == product_id,
         ).order_by(TempStockImport.import_row_no.asc(), TempStockImport.id.asc()).all()
 
-        for (value,) in rows:
+        return self._abc_category_from_values(value for (value,) in rows)
+
+    @staticmethod
+    def _abc_category_from_values(values) -> str:
+        for value in values:
             category = clean_multi_spaces(value)
             if category and category != "-":
                 return category
@@ -450,6 +480,9 @@ class ProductStockService:
             TempStockImport.selected_product_id == product_id,
         ).all()
 
+        return self._min_price_from_rows(rows, field_name)
+
+    def _min_price_from_rows(self, rows, field_name: str) -> Decimal:
         vals_any = []
         vals_import_non_ru = []
         positive_any = []
@@ -547,6 +580,9 @@ class ProductStockService:
             TempStockImport.selected_product_id == product_id,
         ).all()
 
+        return self._weighted_field_from_rows(rows, field_name)
+
+    def _weighted_field_from_rows(self, rows, field_name: str) -> Decimal:
         weighted_sum = Decimal("0")
         total_weight = Decimal("0")
         avg_sum = Decimal("0")
@@ -603,56 +639,50 @@ class ProductStockService:
             ProductStock.stock_update_date: now,
         }, synchronize_session=False)
 
-        product_ids = [
-            x[0] for x in self.session.query(TempStockImport.selected_product_id).filter(
-                TempStockImport.batch_id == batch_id,
-                TempStockImport.imported_by == imported_by,
-                TempStockImport.selected_product_id.isnot(None),
-            ).distinct().all()
-        ]
+        stock_rows = self.session.query(TempStockImport).filter(
+            TempStockImport.batch_id == batch_id,
+            TempStockImport.imported_by == imported_by,
+            TempStockImport.selected_product_id.isnot(None),
+        ).order_by(TempStockImport.import_row_no.asc(), TempStockImport.id.asc()).all()
 
-        if not product_ids:
+        if not stock_rows:
             raise ValueError("SaveStockToProductStock: не найдено ни одной строки с SelectedProductID для текущего batch.")
+
+        rows_by_product = defaultdict(list)
+        for row in stock_rows:
+            rows_by_product[int(row.selected_product_id)].append(row)
+
+        product_ids = list(rows_by_product.keys())
+        products = self._load_products_map(product_ids)
+        stocks = self._load_product_stock_map(product_ids)
 
         saved = 0
 
         for product_id in product_ids:
-            sums = self.session.query(
-                TempStockImport.selected_product_id,
-                TempStockImport.stock_qty,
-                TempStockImport.transit_qty,
-                TempStockImport.markdown_qty,
-                TempStockImport.reserve_qty,
-                TempStockImport.reserve_ecomm_qty,
-            ).filter(
-                TempStockImport.batch_id == batch_id,
-                TempStockImport.imported_by == imported_by,
-                TempStockImport.selected_product_id == product_id,
-            ).all()
-
-            stock_qty = sum(self._to_decimal(x.stock_qty) for x in sums)
-            transit_qty = sum(self._to_decimal(x.transit_qty) for x in sums)
-            markdown_qty = sum(self._to_decimal(x.markdown_qty) for x in sums)
-            reserve_qty = sum(self._to_decimal(x.reserve_qty) for x in sums)
-            reserve_ecomm_qty = sum(self._to_decimal(getattr(x, "reserve_ecomm_qty", 0)) for x in sums)
+            rows = rows_by_product[product_id]
+            stock_qty = sum(self._to_decimal(x.stock_qty) for x in rows)
+            transit_qty = sum(self._to_decimal(x.transit_qty) for x in rows)
+            markdown_qty = sum(self._to_decimal(x.markdown_qty) for x in rows)
+            reserve_qty = sum(self._to_decimal(x.reserve_qty) for x in rows)
+            reserve_ecomm_qty = sum(self._to_decimal(getattr(x, "reserve_ecomm_qty", 0)) for x in rows)
 
             metric = sales_metrics.get(int(product_id))
             lpc_val = metric.lpc if metric else Decimal("0")
-            landed_val = self._weighted_field_by_product(batch_id, imported_by, product_id, "landed_cost")
-            distr_val = self._min_price_by_product(batch_id, imported_by, product_id, "distr_price")
-            promo_val = self._min_price_by_product(batch_id, imported_by, product_id, "promo_price")
+            landed_val = self._weighted_field_from_rows(rows, "landed_cost")
+            distr_val = self._min_price_from_rows(rows, "distr_price")
+            promo_val = self._min_price_from_rows(rows, "promo_price")
             volume_py = metric.volume_py if metric else Decimal("0")
             volume_3m = metric.volume_3m if metric else Decimal("0")
             uc3_py = metric.uc3_py if metric else Decimal("0")
             uc3_3m = metric.uc3_3m if metric else Decimal("0")
 
-            product = self.session.query(Product).filter(Product.id == product_id).first()
-            abc_category = self._abc_category_by_product(batch_id, imported_by, product_id)
+            product = products.get(product_id)
+            abc_category = self._abc_category_from_values(row.abc_category for row in rows)
             if product is not None:
                 product.abc_category = abc_category
             p_name = product.name if product else ""
 
-            stock = self.session.query(ProductStock).filter(ProductStock.product_id == product_id).first()
+            stock = stocks.get(product_id)
             if stock is None:
                 stock = ProductStock(
                     product_id=product_id,
@@ -679,6 +709,7 @@ class ProductStockService:
                     is_stock_qty=0,
                 )
                 self.session.add(stock)
+                stocks[product_id] = stock
             else:
                 stock.product_name = p_name
                 stock.stock_update_date = now
@@ -712,6 +743,8 @@ class ProductStockService:
 
         self.session.query(ProductStock).update({
             ProductStock.order_qty: 0,
+            ProductStock.is_order_qty: 0,
+            ProductStock.is_confirmed_order_qty: 0,
             ProductStock.supplier_orders_update_date: now,
         }, synchronize_session=False)
 
@@ -719,15 +752,26 @@ class ProductStockService:
             TempSupplierOrdersImport.batch_id == batch_id,
             TempSupplierOrdersImport.imported_by == imported_by,
             TempSupplierOrdersImport.selected_product_id.isnot(None),
-        ).all()
+        ).order_by(TempSupplierOrdersImport.import_row_no.asc(), TempSupplierOrdersImport.id.asc()).all()
 
         if not rows:
             self.session.flush()
             return 0
 
-        grouped = defaultdict(lambda: Decimal('0'))
+        grouped = defaultdict(lambda: {
+            "order_qty": Decimal("0"),
+            "is_order_qty": Decimal("0"),
+            "is_confirmed_order_qty": Decimal("0"),
+            "abc_category": "-",
+        })
         for row in rows:
-            grouped[int(row.selected_product_id)] += self._to_decimal(row.order_qty)
+            totals = grouped[int(row.selected_product_id)]
+            totals["order_qty"] += self._to_decimal(row.order_qty)
+            totals["is_order_qty"] += self._to_decimal(row.is_order_qty)
+            totals["is_confirmed_order_qty"] += self._to_decimal(row.is_confirmed_order_qty)
+            row_abc = clean_multi_spaces(row.abc_category)
+            if totals["abc_category"] == "-" and row_abc and row_abc != "-":
+                totals["abc_category"] = row_abc
 
         product_ids = list(grouped.keys())
         products = {
@@ -740,14 +784,10 @@ class ProductStockService:
         }
 
         saved = 0
-        for product_id, order_val in grouped.items():
+        for product_id, totals in grouped.items():
             product = products.get(product_id)
             if product is not None:
-                abc_category = self._supplier_orders_abc_category_by_product(
-                    batch_id=batch_id,
-                    imported_by=imported_by,
-                    product_id=product_id,
-                )
+                abc_category = totals["abc_category"]
                 # Заказы поставщиков используются только для перепроверки ABC.
                 # Пустая ячейка импорта нормализуется в "-" и не должна
                 # стирать категорию, ранее загруженную из файла остатков.
@@ -775,9 +815,9 @@ class ProductStockService:
                     uc3_py=0,
                     uc3_3m=0,
                     transit_qty=0,
-                    order_qty=order_val,
-                    is_order_qty=0,
-                    is_confirmed_order_qty=0,
+                    order_qty=totals["order_qty"],
+                    is_order_qty=totals["is_order_qty"],
+                    is_confirmed_order_qty=totals["is_confirmed_order_qty"],
                     is_stock_qty=0,
                 )
                 self.session.add(stock)
@@ -785,7 +825,9 @@ class ProductStockService:
             else:
                 stock.product_name = p_name
                 stock.supplier_orders_update_date = now
-                stock.order_qty = order_val
+                stock.order_qty = totals["order_qty"]
+                stock.is_order_qty = totals["is_order_qty"]
+                stock.is_confirmed_order_qty = totals["is_confirmed_order_qty"]
             saved += 1
 
         self.session.flush()
@@ -796,8 +838,6 @@ class ProductStockService:
 
         self.session.query(ProductStock).update({
             ProductStock.is_update_date: now,
-            ProductStock.is_order_qty: 0,
-            ProductStock.is_confirmed_order_qty: 0,
             ProductStock.is_stock_qty: 0,
         }, synchronize_session=False)
 
@@ -818,8 +858,6 @@ class ProductStockService:
                 TempIsImport.selected_product_id == product_id,
             ).all()
 
-            remains_val = sum(self._to_decimal(x.remains_qty) for x in rows)
-            confirmed_val = sum(self._to_decimal(x.confirmed_qty) for x in rows)
             stock_val = sum(self._to_decimal(x.stock_qty) for x in rows)
 
             product = self.session.query(Product).filter(Product.id == product_id).first()
@@ -847,16 +885,14 @@ class ProductStockService:
                     uc3_3m=0,
                     transit_qty=0,
                     order_qty=0,
-                    is_order_qty=remains_val,
-                    is_confirmed_order_qty=confirmed_val,
+                    is_order_qty=0,
+                    is_confirmed_order_qty=0,
                     is_stock_qty=stock_val,
                 )
                 self.session.add(stock)
             else:
                 stock.product_name = p_name
                 stock.is_update_date = now
-                stock.is_order_qty = remains_val
-                stock.is_confirmed_order_qty = confirmed_val
                 stock.is_stock_qty = stock_val
             saved += 1
 

@@ -4,6 +4,7 @@ from pathlib import Path
 import pandas as pd
 
 from app.utils.excel_import import excel_text, read_excel_raw
+from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces, normalize_product_name
 
 
@@ -43,6 +44,19 @@ def is_excluded_brand(brand: object) -> bool:
     if raw == "-":
         return True
     return normalize_product_name(raw) in EXCLUDED_BRANDS
+
+
+def parse_source_is_excise(value: object, *, product_type: bool = False) -> bool | None:
+    normalized = normalize_product_name(value)
+    if product_type:
+        return normalized in {"pvl", "cvl"}
+    if not normalized:
+        return None
+    if normalized in {"да", "yes", "true", "1"}:
+        return True
+    if normalized in {"нет", "no", "false", "0"}:
+        return False
+    return None
 
 
 # Точное распределение колонок складского блока листа Stock&Price.
@@ -115,6 +129,9 @@ class StockImporter:
         )
         col_article = _find_header_index(headers, "Code 1C", "CODE", "1C")
         col_sku = _find_header_index(headers, "SKU", "SKU")
+        col_pack = _find_header_index(headers, "Упаковка", "УПАКОВКА")
+        col_excise = _find_header_index(headers, "Акциз (да/нет)", "АКЦИЗ")
+        col_product_type = _find_header_index(headers, "Prod.type", "PROD.TYPE")
         col_origin = _find_header_index(headers, "Страна происхождения", "СТРАНА", "ПРОИСХ")
         col_lpc = _find_header_index(headers, "LPC", "LPC")
         col_landed = _find_header_index(headers, "Landed Cost+VAT/L", "LANDED", "VAT")
@@ -135,6 +152,7 @@ class StockImporter:
             "Английское наименование продукта": col_prod,
             "Code 1C": col_article,
             "SKU": col_sku,
+            "Упаковка": col_pack,
             "Страна происхождения": col_origin,
             "LPC": col_lpc,
             "Landed Cost+VAT/L": col_landed,
@@ -146,6 +164,8 @@ class StockImporter:
             "Свободный сток (Новороссийск)": col_stock_start,
         }
         missing = [name for name, index in required.items() if index < 0]
+        if col_excise < 0 and col_product_type < 0:
+            missing.append("Акциз (да/нет) или Prod.type")
         if missing:
             raise ValueError(
                 "Не найдены обязательные колонки в листе Stock&Price: "
@@ -171,6 +191,14 @@ class StockImporter:
 
         compact = pd.DataFrame({
             "source_brand": data.iloc[:, col_brand].map(_norm),
+            "source_pack": data.iloc[:, col_pack].map(parse_loose_number),
+            "source_is_excise": (
+                data.iloc[:, col_excise].map(parse_source_is_excise)
+                if col_excise >= 0
+                else data.iloc[:, col_product_type].map(
+                    lambda value: parse_source_is_excise(value, product_type=True)
+                )
+            ),
             "source_product_name": data.iloc[:, col_prod].map(_norm),
             "source_article": data.iloc[:, col_article].map(excel_text),
             "source_sku": data.iloc[:, col_sku].map(excel_text),
@@ -210,6 +238,10 @@ class StockImporter:
                 "source_article": rec["source_article"] or None,
                 "source_sku": rec["source_sku"] or None,
                 "source_product_name": rec["source_product_name"] or None,
+                "new_product_name": rec["source_product_name"] or None,
+                "new_brand": rec["source_brand"] or None,
+                "new_pack": rec["source_pack"],
+                "new_is_excise": rec["source_is_excise"],
                 "source_origin": rec["source_origin"] or None,
                 "source_brand_group": rec["source_brand_group"] or None,
                 "abc_category": rec["abc_category"] or "-",

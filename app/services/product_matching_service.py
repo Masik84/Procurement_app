@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 from decimal import Decimal
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import Product, ProductArticle
 from app.utils.excel_import import excel_text
@@ -28,13 +28,30 @@ class ProductCreateData:
 class ProductMatchingService:
     def __init__(self, session: Session) -> None:
         self.session = session
+        self._exact_products_cache: dict[str, Product] | None = None
         self._normalized_products_cache: dict[str, Product] | None = None
+        self._exact_products_by_brand_cache: dict[tuple[str, str], Product] | None = None
+        self._normalized_products_by_brand_cache: dict[tuple[str, str], Product] | None = None
+        self._product_article_keys_cache: set[tuple[int, str | None, str | None]] | None = None
         self._article_links_cache: dict[str, ProductArticle] | None = None
+        self._article_links_by_brand_cache: dict[tuple[str, str], ProductArticle] | None = None
         self._name_links_cache: dict[str, ProductArticle] | None = None
+        self._name_links_by_brand_cache: dict[tuple[str, str], ProductArticle] | None = None
         self._normalized_name_links_cache: dict[str, ProductArticle] | None = None
+        self._normalized_name_links_by_brand_cache: dict[tuple[str, str], ProductArticle] | None = None
 
-    def _build_normalized_products_cache(self) -> dict[str, Product]:
-        cache: dict[str, Product] = {}
+    @staticmethod
+    def _brand_key(brand: object) -> str:
+        return clean_multi_spaces(brand).upper()
+
+    def _ensure_product_caches(self) -> None:
+        if self._exact_products_cache is not None and self._normalized_products_cache is not None:
+            return
+
+        exact_cache: dict[str, Product] = {}
+        normalized_cache: dict[str, Product] = {}
+        exact_by_brand: dict[tuple[str, str], Product] = {}
+        normalized_by_brand: dict[tuple[str, str], Product] = {}
         products = (
             self.session.query(Product)
             .filter(Product.name.isnot(None))
@@ -42,15 +59,48 @@ class ProductMatchingService:
             .all()
         )
         for product in products:
+            exact_key = clean_multi_spaces(product.name).upper()
+            brand_key = self._brand_key(product.brand)
+            if exact_key and exact_key not in exact_cache:
+                exact_cache[exact_key] = product
+            if exact_key and brand_key:
+                exact_by_brand.setdefault((exact_key, brand_key), product)
             key = normalize_product_name(product.name)
-            if key and key not in cache:
-                cache[key] = product
-        return cache
+            if key and key not in normalized_cache:
+                normalized_cache[key] = product
+            if key and brand_key:
+                normalized_by_brand.setdefault((key, brand_key), product)
+
+        self._exact_products_cache = exact_cache
+        self._normalized_products_cache = normalized_cache
+        self._exact_products_by_brand_cache = exact_by_brand
+        self._normalized_products_by_brand_cache = normalized_by_brand
+
+    def _build_normalized_products_cache(self) -> dict[str, Product]:
+        self._ensure_product_caches()
+        return self._normalized_products_cache or {}
+
+    def _build_product_article_keys_cache(self) -> set[tuple[int, str | None, str | None]]:
+        keys: set[tuple[int, str | None, str | None]] = set()
+        rows = self.session.query(
+            ProductArticle.product_id,
+            ProductArticle.article,
+            ProductArticle.name,
+        ).all()
+        for product_id, article, name in rows:
+            keys.add((
+                int(product_id),
+                self.canonical_article_text(article) or None,
+                clean_multi_spaces(name) or None,
+            ))
+        return keys
 
     def _build_article_links_cache(self) -> dict[str, ProductArticle]:
         cache: dict[str, ProductArticle] = {}
+        by_brand: dict[tuple[str, str], ProductArticle] = {}
         links = (
             self.session.query(ProductArticle)
+            .options(joinedload(ProductArticle.product))
             .filter(ProductArticle.article.isnot(None), ProductArticle.article != "")
             .order_by(ProductArticle.id.asc())
             .all()
@@ -59,12 +109,18 @@ class ProductMatchingService:
             key = self.normalize_article_key(link.article)
             if key and key not in cache:
                 cache[key] = link
+            brand_key = self._brand_key(link.product.brand if link.product else None)
+            if key and brand_key:
+                by_brand.setdefault((key, brand_key), link)
+        self._article_links_by_brand_cache = by_brand
         return cache
 
     def _build_name_links_cache(self) -> dict[str, ProductArticle]:
         cache: dict[str, ProductArticle] = {}
+        by_brand: dict[tuple[str, str], ProductArticle] = {}
         links = (
             self.session.query(ProductArticle)
+            .options(joinedload(ProductArticle.product))
             .filter(ProductArticle.name.isnot(None), ProductArticle.name != "")
             .order_by(ProductArticle.id.desc())
             .all()
@@ -77,12 +133,20 @@ class ProductMatchingService:
             current = cache.get(key)
             if current is None or (current.article and not link.article):
                 cache[key] = link
+            brand_key = self._brand_key(link.product.brand if link.product else None)
+            brand_cache_key = (key, brand_key)
+            brand_current = by_brand.get(brand_cache_key)
+            if brand_key and (brand_current is None or (brand_current.article and not link.article)):
+                by_brand[brand_cache_key] = link
+        self._name_links_by_brand_cache = by_brand
         return cache
 
     def _build_normalized_name_links_cache(self) -> dict[str, ProductArticle]:
         cache: dict[str, ProductArticle] = {}
+        by_brand: dict[tuple[str, str], ProductArticle] = {}
         links = (
             self.session.query(ProductArticle)
+            .options(joinedload(ProductArticle.product))
             .filter(ProductArticle.name.isnot(None), ProductArticle.name != "")
             .order_by(ProductArticle.id.desc())
             .all()
@@ -95,6 +159,12 @@ class ProductMatchingService:
             current = cache.get(key)
             if current is None or (current.article and not link.article):
                 cache[key] = link
+            brand_key = self._brand_key(link.product.brand if link.product else None)
+            brand_cache_key = (key, brand_key)
+            brand_current = by_brand.get(brand_cache_key)
+            if brand_key and (brand_current is None or (brand_current.article and not link.article)):
+                by_brand[brand_cache_key] = link
+        self._normalized_name_links_by_brand_cache = by_brand
         return cache
 
     # =========================================================
@@ -264,69 +334,78 @@ class ProductMatchingService:
     # =========================================================
 
     def _get_product_by_exact_name(self, product_name: str) -> Optional[Product]:
-        return (
-            self.session.query(Product)
-            .filter(Product.name == product_name)
-            .first()
-        )
+        self._ensure_product_caches()
+        return (self._exact_products_cache or {}).get(clean_multi_spaces(product_name).upper())
 
-    def _get_article_link_by_exact_article(self, article: str) -> Optional[ProductArticle]:
+    def _get_article_link_by_exact_article(self, article: str, brand: object = None) -> Optional[ProductArticle]:
         key = self.normalize_article_key(article)
         if not key:
             return None
         if self._article_links_cache is None:
             self._article_links_cache = self._build_article_links_cache()
+        brand_key = self._brand_key(brand)
+        if brand_key:
+            return (self._article_links_by_brand_cache or {}).get((key, brand_key))
         return self._article_links_cache.get(key)
 
-    def _get_article_link_by_exact_name(self, supplier_name: str) -> Optional[ProductArticle]:
+    def _get_article_link_by_exact_name(self, supplier_name: str, brand: object = None) -> Optional[ProductArticle]:
         key = clean_multi_spaces(supplier_name).upper()
         if not key:
             return None
         if self._name_links_cache is None:
             self._name_links_cache = self._build_name_links_cache()
+        brand_key = self._brand_key(brand)
+        if brand_key:
+            return (self._name_links_by_brand_cache or {}).get((key, brand_key))
         return self._name_links_cache.get(key)
 
-    def _get_article_link_by_normalized_name(self, supplier_name: str) -> Optional[ProductArticle]:
+    def _get_article_link_by_normalized_name(self, supplier_name: str, brand: object = None) -> Optional[ProductArticle]:
         key = normalize_product_name(supplier_name)
         if not key:
             return None
         if self._normalized_name_links_cache is None:
             self._normalized_name_links_cache = self._build_normalized_name_links_cache()
+        brand_key = self._brand_key(brand)
+        if brand_key:
+            return (self._normalized_name_links_by_brand_cache or {}).get((key, brand_key))
         return self._normalized_name_links_cache.get(key)
 
-    def find_by_normalized_product_name(self, source_name: object) -> Optional[Product]:
+    def find_by_normalized_product_name(self, source_name: object, brand: object = None) -> Optional[Product]:
         target = normalize_product_name(source_name)
         if not target:
             return None
         if self._normalized_products_cache is None:
             self._normalized_products_cache = self._build_normalized_products_cache()
+        brand_key = self._brand_key(brand)
+        if brand_key:
+            return (self._normalized_products_by_brand_cache or {}).get((target, brand_key))
         return self._normalized_products_cache.get(target)
 
-    def find_product_by_split_articles(self, supplier_article: object) -> Optional[Product]:
+    def find_product_by_split_articles(self, supplier_article: object, brand: object = None) -> Optional[Product]:
         first_product: Optional[Product] = None
 
         for token in self.split_article_tokens(supplier_article):
-            link = self._get_article_link_by_exact_article(token)
+            link = self._get_article_link_by_exact_article(token, brand=brand)
             if link and link.product:
                 if first_product is None:
                     first_product = link.product
 
         return first_product
 
-    def _find_product_by_name_candidate(self, candidate: object) -> Optional[Product]:
+    def _find_product_by_name_candidate(self, candidate: object, brand: object = None) -> Optional[Product]:
         name = clean_multi_spaces(candidate)
         if not name:
             return None
 
-        link = self._get_article_link_by_exact_name(name)
+        link = self._get_article_link_by_exact_name(name, brand=brand)
         if link and link.product:
             return link.product
 
-        link = self._get_article_link_by_normalized_name(name)
+        link = self._get_article_link_by_normalized_name(name, brand=brand)
         if link and link.product:
             return link.product
 
-        product = self.find_by_normalized_product_name(name)
+        product = self.find_by_normalized_product_name(name, brand=brand)
         if product:
             return product
 
@@ -341,6 +420,7 @@ class ProductMatchingService:
         supplier_article: object,
         product_name: object,
         pack: object,
+        brand: object = None,
     ) -> Optional[Product]:
         article = clean_multi_spaces(supplier_article)
         name = clean_multi_spaces(product_name)
@@ -349,7 +429,7 @@ class ProductMatchingService:
         # 1) Highest priority: article from ProductArticle.
         # Handles Excel numeric articles like 149610.0 and split articles like A/B.
         if article:
-            product = self.find_product_by_split_articles(article)
+            product = self.find_product_by_split_articles(article, brand=brand)
             if product:
                 return product
 
@@ -368,7 +448,7 @@ class ProductMatchingService:
                 continue
             seen_names.add(candidate_key)
 
-            product = self._find_product_by_name_candidate(candidate)
+            product = self._find_product_by_name_candidate(candidate, brand=brand)
             if product:
                 return product
 
@@ -382,7 +462,7 @@ class ProductMatchingService:
                 continue
             seen_names.add(candidate_key)
 
-            product = self._find_product_by_name_candidate(candidate)
+            product = self._find_product_by_name_candidate(candidate, brand=brand)
             if product:
                 return product
 
@@ -542,43 +622,116 @@ class ProductMatchingService:
         pack: object,
         is_excise: object,
     ) -> Product:
-        clean_name = clean_multi_spaces(name).upper()
-        clean_brand = clean_multi_spaces(brand)
-        pack_num = parse_loose_number(pack)
+        return self.get_or_create_products_batch([
+            ProductCreateData(
+                name=name,
+                brand=brand,
+                pack=pack,
+                is_excise=is_excise,
+            )
+        ])[0]
 
-        self.validate_new_product_fields(
-            product_name=clean_name,
-            brand=clean_brand,
-            pack=pack_num,
-            is_excise=is_excise,
-        )
+    def get_or_create_products_batch(self, items: list[ProductCreateData]) -> list[Product]:
+        self._ensure_product_caches()
+        exact_cache = self._exact_products_cache or {}
+        normalized_cache = self._normalized_products_cache or {}
+        exact_by_brand = self._exact_products_by_brand_cache or {}
+        normalized_by_brand = self._normalized_products_by_brand_cache or {}
 
-        existing = self._get_product_by_exact_name(clean_name)
-        if existing:
-            return existing
+        resolved: list[Product] = []
+        created: list[Product] = []
 
-        normalized_existing = self.find_by_normalized_product_name(clean_name)
-        if normalized_existing:
-            return normalized_existing
+        for item in items:
+            clean_name = clean_multi_spaces(item.name).upper()
+            clean_brand = clean_multi_spaces(item.brand)
+            pack_num = parse_loose_number(item.pack)
+            self.validate_new_product_fields(
+                product_name=clean_name,
+                brand=clean_brand,
+                pack=pack_num,
+                is_excise=item.is_excise,
+            )
 
-        product = Product()
+            product = exact_cache.get(clean_name)
+            if product is None:
+                product = normalized_cache.get(normalize_product_name(clean_name))
 
-        if hasattr(product, "name"):
-            product.name = clean_name
-        if hasattr(product, "brand"):
-            product.brand = clean_brand
-        if hasattr(product, "pack"):
-            product.pack = pack_num
-        if hasattr(product, "is_excise"):
-            product.is_excise = bool(is_excise)
-        if hasattr(product, "family"):
-            product.family = self.build_product_family_from_name(clean_name, pack_num)
+            if product is None:
+                product = Product(
+                    name=clean_name,
+                    brand=clean_brand,
+                    pack=pack_num,
+                    is_excise=bool(item.is_excise),
+                    family=self.build_product_family_from_name(clean_name, pack_num),
+                )
+                self.session.add(product)
+                created.append(product)
+                exact_cache[clean_name] = product
+                normalized_name = normalize_product_name(clean_name)
+                normalized_cache[normalized_name] = product
+                brand_key = self._brand_key(clean_brand)
+                exact_by_brand[(clean_name, brand_key)] = product
+                normalized_by_brand[(normalized_name, brand_key)] = product
 
-        self.session.add(product)
-        self.session.flush()
+            resolved.append(product)
 
-        self._normalized_products_cache = None
-        return product
+        if created:
+            self.session.flush()
+
+        self._exact_products_cache = exact_cache
+        self._normalized_products_cache = normalized_cache
+        self._exact_products_by_brand_cache = exact_by_brand
+        self._normalized_products_by_brand_cache = normalized_by_brand
+        return resolved
+
+    def create_product_articles_if_missing_batch(
+        self,
+        links: list[tuple[int, object, object]],
+    ) -> int:
+        if self._product_article_keys_cache is None:
+            self._product_article_keys_cache = self._build_product_article_keys_cache()
+
+        created: list[ProductArticle] = []
+        no_article_links: list[tuple[int, object]] = []
+        for product_id, article, supplier_name in links:
+            clean_article = self.canonical_article_text(article)
+            clean_name = clean_multi_spaces(supplier_name)
+            if not clean_article:
+                if clean_name:
+                    no_article_links.append((int(product_id), clean_name))
+                continue
+            if not self.should_create_article_link(clean_article):
+                continue
+
+            key = (int(product_id), clean_article, clean_name or None)
+            if key in self._product_article_keys_cache:
+                continue
+            self._product_article_keys_cache.add(key)
+            created.append(ProductArticle(
+                product_id=int(product_id),
+                article=clean_article,
+                name=clean_name or None,
+            ))
+
+        if created:
+            self.session.add_all(created)
+            self.session.flush()
+
+        for product_id, clean_name in no_article_links:
+            self.create_product_article_if_missing(
+                product_id=product_id,
+                article=None,
+                supplier_name=clean_name,
+            )
+
+        if created:
+            self._article_links_cache = None
+            self._article_links_by_brand_cache = None
+            self._name_links_cache = None
+            self._name_links_by_brand_cache = None
+            self._normalized_name_links_cache = None
+            self._normalized_name_links_by_brand_cache = None
+        return len(created)
 
     def create_product_article_if_missing(
         self,
@@ -620,8 +773,12 @@ class ProductMatchingService:
 
                 self.session.flush()
                 self._article_links_cache = None
+                self._article_links_by_brand_cache = None
                 self._name_links_cache = None
+                self._name_links_by_brand_cache = None
                 self._normalized_name_links_cache = None
+                self._normalized_name_links_by_brand_cache = None
+                self._product_article_keys_cache = None
                 return current
 
         existing = (
@@ -645,8 +802,12 @@ class ProductMatchingService:
         self.session.flush()
 
         self._article_links_cache = None
+        self._article_links_by_brand_cache = None
         self._name_links_cache = None
+        self._name_links_by_brand_cache = None
         self._normalized_name_links_cache = None
+        self._normalized_name_links_by_brand_cache = None
+        self._product_article_keys_cache = None
         return row
 
     def save_product_articles_by_split_articles(

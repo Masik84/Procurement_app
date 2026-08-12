@@ -79,8 +79,9 @@ class ProductStockExporter:
                 "ImportRowNo": row.import_row_no,
                 "SourceArticle": row.source_article,
                 "SourceProductName": row.source_product_name,
-                "TransitQty": row.transit_qty,
                 "OrderQty": row.order_qty,
+                "CoralOrderQty": row.is_order_qty,
+                "CoralConfirmedQty": row.is_confirmed_order_qty,
                 "Comment": "Не найден SelectedProductID. Требуется сопоставление или создание нового продукта.",
             })
 

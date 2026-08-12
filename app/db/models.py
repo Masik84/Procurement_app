@@ -578,6 +578,8 @@ class TempSupplierOrdersImport(Base):
     abc_category = Column(String(50), nullable=False, default="-")
 
     order_qty = Column(Numeric, nullable=False, default=0)
+    is_order_qty = Column(Numeric, nullable=False, default=0)
+    is_confirmed_order_qty = Column(Numeric, nullable=False, default=0)
 
     selected_product_id = Column(
         Integer,
@@ -1002,4 +1004,3 @@ class OrderPlanningCalculation(Base):
         ),
         Index("ix_order_planning_calc_period", "period_from", "period_to"),
     )
-

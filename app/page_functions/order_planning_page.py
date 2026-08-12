@@ -208,9 +208,26 @@ class OrderPlanningPage(QWidget):
         self.ui.btn_Save.clicked.connect(self.save)
         self.table.cellDoubleClicked.connect(self.start_product_edit)
         self.table.itemChanged.connect(self.on_item_changed)
+        self.ui.cbo_FindBrand.currentTextChanged.connect(self.refresh_current_product_combo)
+        self.ui.line_FindProduct.textChanged.connect(self.refresh_current_product_combo)
 
     def load_initial_data(self):
+        self.load_find_brands()
         self._refresh_filter_buttons(prune=True)
+
+    def load_find_brands(self):
+        current_text = clean_multi_spaces(self.ui.cbo_FindBrand.currentText())
+        with self.get_session() as session:
+            brands = self.service(session).get_brand_values()
+
+        self.ui.cbo_FindBrand.blockSignals(True)
+        self.ui.cbo_FindBrand.clear()
+        self.ui.cbo_FindBrand.addItem("-")
+        if brands:
+            self.ui.cbo_FindBrand.addItems(brands)
+        current_index = self.ui.cbo_FindBrand.findText(current_text)
+        self.ui.cbo_FindBrand.setCurrentIndex(current_index if current_index >= 0 else 0)
+        self.ui.cbo_FindBrand.blockSignals(False)
 
     def get_supplier_price_age_months(self) -> int:
         widget = getattr(self.ui, "spb_SuppPriceAge", None)
@@ -736,6 +753,8 @@ class OrderPlanningPage(QWidget):
         if hasattr(self.ui, "spb_SuppPriceAge"):
             self.ui.spb_SuppPriceAge.setValue(3)
         self.ui.radio_VolNotNull.setChecked(False)
+        self.ui.line_FindProduct.clear()
+        self.ui.cbo_FindBrand.setCurrentIndex(0)
         self._base_rows = []
         self._rows = []
         self._period_from = None
@@ -843,13 +862,14 @@ class OrderPlanningPage(QWidget):
         combo.addItem("", None)
 
         row_data = row_data or {}
-        brand_filter = clean_multi_spaces(row_data.get("brand") or row_data.get("sales_brand") or "")
+        brand_filter = clean_multi_spaces(self.ui.cbo_FindBrand.currentText())
+        text_filter = clean_multi_spaces(self.ui.line_FindProduct.text())
 
         with self.get_session() as session:
-            query = session.query(Product).filter(Product.name.isnot(None), Product.name != "")
-            if brand_filter:
-                query = query.filter(Product.brand == brand_filter)
-            products = query.order_by(Product.name.asc()).all()
+            products = self.service(session).get_products_for_combo(
+                brand_filter=brand_filter,
+                text_filter=text_filter,
+            )
 
             # Если текущий выбранный продукт другого бренда, обязательно добавляем его в список,
             # чтобы при повторном открытии редактора значение не потерялось.
@@ -872,6 +892,52 @@ class OrderPlanningPage(QWidget):
             combo.setCurrentText(clean_multi_spaces(row_data.get("product_name") or ""))
 
         return combo
+
+    def refresh_current_product_combo(self):
+        table_row = self.table.currentRow()
+        if table_row < 0:
+            return
+
+        product_col = self.CHECK_COLUMNS.index("product_name") if self._mode == "check" else self.CALC_COLUMNS.index("product_name")
+        current_combo = self.table.cellWidget(table_row, product_col)
+        if not isinstance(current_combo, QComboBox):
+            return
+
+        source_row = self._row_index_from_table_row(table_row)
+        if source_row is None or source_row < 0 or source_row >= len(self._rows):
+            return
+
+        current_id = current_combo.currentData()
+        current_text = current_combo.currentText()
+        brand_filter = clean_multi_spaces(self.ui.cbo_FindBrand.currentText())
+        text_filter = clean_multi_spaces(self.ui.line_FindProduct.text())
+
+        with self.get_session() as session:
+            products = self.service(session).get_products_for_combo(
+                brand_filter=brand_filter,
+                text_filter=text_filter,
+            )
+
+            selected_product = None
+            if current_id:
+                selected_product = session.query(Product).filter(Product.id == current_id).first()
+
+            current_combo.blockSignals(True)
+            current_combo.clear()
+            current_combo.addItem("", None)
+            added_ids: set[int] = set()
+            for product in products:
+                current_combo.addItem(product.name, product.id)
+                added_ids.add(int(product.id))
+            if selected_product and int(selected_product.id) not in added_ids:
+                current_combo.addItem(selected_product.name, selected_product.id)
+
+            current_index = current_combo.findData(current_id)
+            if current_index >= 0:
+                current_combo.setCurrentIndex(current_index)
+            else:
+                current_combo.setCurrentText(current_text)
+            current_combo.blockSignals(False)
 
     def finish_product_edit(self, table_row: int, source_row: int, combo: QComboBox):
         product_id = combo.currentData()

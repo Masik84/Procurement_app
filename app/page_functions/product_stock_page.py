@@ -87,6 +87,8 @@ COLUMN_DEFS: dict[str, list[ColumnDef]] = {
         ColumnDef("source_product_name", "Source product", editable=True),
         ColumnDef("abc_category", "Категория ABC", editable=True),
         ColumnDef("order_qty", "Order qty", editable=True),
+        ColumnDef("is_order_qty", "CORAL order qty", editable=True),
+        ColumnDef("is_confirmed_order_qty", "CORAL confirmed qty", editable=True),
         ColumnDef("new_product_name", "Product name (new)", editable=True),
         ColumnDef("new_brand", "Brand (new)", kind="brand_combo"),
         ColumnDef("new_pack", "Pack (new)", editable=True),
@@ -109,7 +111,7 @@ COLUMN_DEFS: dict[str, list[ColumnDef]] = {
 
 NUMERIC_FIELDS = {
     "stock_qty", "markdown_qty", "reserve_qty", "reserve_ecomm_qty", "lpc", "landed_cost", "distr_price", "promo_price",
-    "transit_qty", "order_qty", "confirmed_qty", "remains_qty", "new_pack",
+    "transit_qty", "order_qty", "is_order_qty", "is_confirmed_order_qty", "confirmed_qty", "remains_qty", "new_pack",
 }
 
 
@@ -326,15 +328,16 @@ class ProductStockPage(QWidget):
         self.refresh_counters()
 
     def _row_to_dict(self, row) -> dict[str, Any]:
+        show_new_product_fields = row.selected_product_id is None
         base = {
             "id": row.id,
             "selected_product_id": row.selected_product_id,
             "source_article": row.source_article,
             "source_product_name": row.source_product_name,
-            "new_product_name": row.new_product_name,
-            "new_brand": row.new_brand,
-            "new_pack": row.new_pack,
-            "new_is_excise": bool(row.new_is_excise) if row.new_is_excise is not None else False,
+            "new_product_name": row.new_product_name if show_new_product_fields else None,
+            "new_brand": row.new_brand if show_new_product_fields else None,
+            "new_pack": row.new_pack if show_new_product_fields else None,
+            "new_is_excise": bool(row.new_is_excise) if show_new_product_fields and row.new_is_excise is not None else False,
         }
         if isinstance(row, TempStockImport):
             base.update({
@@ -355,6 +358,8 @@ class ProductStockPage(QWidget):
             base.update({
                 "abc_category": row.abc_category,
                 "order_qty": row.order_qty,
+                "is_order_qty": row.is_order_qty,
+                "is_confirmed_order_qty": row.is_confirmed_order_qty,
             })
         elif isinstance(row, TempIsImport):
             base.update({
@@ -393,7 +398,7 @@ class ProductStockPage(QWidget):
         return f"{num:,.1f}".replace(",", " ")
 
     def _format_cell_value(self, field_name: str, value: Any) -> str:
-        if field_name in {"stock_qty", "transit_qty", "markdown_qty", "reserve_qty", "reserve_ecomm_qty", "order_qty", "confirmed_qty", "remains_qty"}:
+        if field_name in {"stock_qty", "transit_qty", "markdown_qty", "reserve_qty", "reserve_ecomm_qty", "order_qty", "is_order_qty", "is_confirmed_order_qty", "confirmed_qty", "remains_qty"}:
             return self._format_int_like(value, blank_zero=True)
         if field_name in {"lpc", "landed_cost", "distr_price", "promo_price"}:
             return self._format_decimal1(value, blank_zero=True)
@@ -821,6 +826,10 @@ class ProductStockPage(QWidget):
                     product = matcher.find_stock_product(row.source_article, row.source_product_name)
                 if product is not None:
                     row.selected_product_id = product.id
+                    row.new_product_name = None
+                    row.new_brand = None
+                    row.new_pack = None
+                    row.new_is_excise = None
                     session.commit()
                     self.load_table()
                 else:
@@ -855,7 +864,11 @@ class ProductStockPage(QWidget):
                 if model is TempStockImport:
                     total_qty += float(row.stock_qty or 0) + float(row.transit_qty or 0) + float(row.markdown_qty or 0) + float(row.reserve_qty or 0) + float(getattr(row, "reserve_ecomm_qty", 0) or 0)
                 elif model is TempSupplierOrdersImport:
-                    total_qty += float(row.order_qty or 0)
+                    total_qty += (
+                        float(row.order_qty or 0)
+                        + float(row.is_order_qty or 0)
+                        + float(row.is_confirmed_order_qty or 0)
+                    )
                 else:
                     total_qty += float(row.confirmed_qty or 0) + float(row.remains_qty or 0) + float(row.stock_qty or 0)
 
@@ -913,7 +926,12 @@ class ProductStockPage(QWidget):
                     "SourceArticle": row.source_article,
                     "SourceSKU": row.source_sku,
                     "SourceProductName": row.source_product_name,
-                    "Comment": "Не найден SelectedProductID. Требуется сопоставление или создание нового продукта.",
+                    "Comment": (
+                        "Продукт не найден в БД и будет создан автоматически при сохранении. "
+                        "Проверьте написание английского названия."
+                        if ProductStockService.can_create_new_product(row)
+                        else "Не найден SelectedProductID. Недостаточно исходных данных для автоматического создания продукта."
+                    ),
                 } for row in rows]
                 if product_errors:
                     sheets.append(("Product errors", product_errors))
@@ -960,7 +978,14 @@ class ProductStockPage(QWidget):
                     "SourceArticle": row.source_article,
                     "SourceProductName": row.source_product_name,
                     "OrderQty": self._format_int_like(row.order_qty, blank_zero=True),
-                    "Comment": "Не найден SelectedProductID. Требуется сопоставление или создание нового продукта.",
+                    "CoralOrderQty": self._format_int_like(row.is_order_qty, blank_zero=True),
+                    "CoralConfirmedQty": self._format_int_like(row.is_confirmed_order_qty, blank_zero=True),
+                    "Comment": (
+                        "Продукт не найден в БД и будет создан автоматически при сохранении. "
+                        "Проверьте написание английского названия."
+                        if ProductStockService.can_create_new_product(row)
+                        else "Не найден SelectedProductID. Недостаточно исходных данных для автоматического создания продукта."
+                    ),
                 } for row in rows]
                 if data:
                     sheets.append(("Product errors", data))
@@ -1068,8 +1093,13 @@ class ProductStockPage(QWidget):
                     return
                 matched_count = sum(1 for row in rows if row.selected_product_id is not None)
                 if matched_count == 0:
-                    self.show_error_message("В текущем импорте нет ни одной строки с SelectedProductID.")
-                    return
+                    can_auto_create = (
+                        self._mode in {MODE_STOCK, MODE_ORDERS}
+                        and any(ProductStockService.can_create_new_product(row) for row in rows)
+                    )
+                    if not can_auto_create:
+                        self.show_error_message("В текущем импорте нет ни одной строки с SelectedProductID.")
+                        return
 
                 runner = ProductStockService(session)
                 if self._mode == MODE_STOCK:
@@ -1111,4 +1141,3 @@ class ProductStockPage(QWidget):
             self.show_message("Форма очищена")
         except Exception as e:
             self.show_error_message(str(e))
-

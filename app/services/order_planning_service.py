@@ -153,6 +153,26 @@ class OrderPlanningService:
             query = query.filter(Product.name.ilike(f"%{text_filter}%"))
         return query.order_by(Product.name.asc()).all()
 
+    def _sales_link_matches_source(
+        self,
+        link: SalesProductLink | None,
+        *,
+        article: object,
+        product_name: object,
+        pack: object,
+        brand: object,
+        is_excise: Optional[bool],
+    ) -> bool:
+        if link is None:
+            return False
+        return (
+            clean_multi_spaces(link.sales_article) == clean_multi_spaces(article)
+            and clean_multi_spaces(link.sales_product_name) == clean_multi_spaces(product_name)
+            and self._to_decimal(link.sales_pack) == self._to_decimal(pack)
+            and clean_multi_spaces(link.sales_brand) == clean_multi_spaces(brand)
+            and link.sales_is_excise == is_excise
+        )
+
     # ------------------------------------------------------------------
     # Product check / linking
     # ------------------------------------------------------------------
@@ -179,12 +199,25 @@ class OrderPlanningService:
             sales_excise = self._bool_from_sales_excise(source.get("Акциз_да_нет"))
 
             link = links.get(sales_code)
-            linked_product = link.product if link and link.product else None
+            link_matches_source = self._sales_link_matches_source(
+                link,
+                article=sales_article,
+                product_name=sales_name,
+                pack=sales_pack,
+                brand=sales_brand,
+                is_excise=sales_excise,
+            )
+            linked_product = link.product if link_matches_source and link and link.product else None
             product = linked_product
             auto_found = False
 
             if product is None:
-                product = self.matcher.find_customer_product(sales_article, sales_name, sales_pack)
+                product = self.matcher.find_customer_product(
+                    sales_article,
+                    sales_name,
+                    sales_pack,
+                    brand=sales_brand,
+                )
                 if product is not None:
                     auto_found = True
                     auto_matched += 1
@@ -194,15 +227,7 @@ class OrderPlanningService:
             if is_new:
                 new_count += 1
             else:
-                if (link.sales_article or "") != (sales_article or ""):
-                    is_changed = True
-                if (link.sales_product_name or "") != (sales_name or ""):
-                    is_changed = True
-                if self._to_decimal(link.sales_pack) != self._to_decimal(sales_pack):
-                    is_changed = True
-                if (link.sales_brand or "") != (sales_brand or ""):
-                    is_changed = True
-                if link.sales_is_excise != sales_excise:
+                if not link_matches_source:
                     is_changed = True
                 if linked_product is None and product is not None:
                     is_changed = True
@@ -357,10 +382,23 @@ class OrderPlanningService:
 
             product = None
             link = links.get(sales_code)
-            if link and link.product:
+            link_matches_source = self._sales_link_matches_source(
+                link,
+                article=sales_article,
+                product_name=sales_name,
+                pack=sales_pack,
+                brand=sales_brand,
+                is_excise=sales_excise,
+            )
+            if link_matches_source and link and link.product:
                 product = link.product
             else:
-                product = self.matcher.find_customer_product(sales_article, sales_name, sales_pack)
+                product = self.matcher.find_customer_product(
+                    sales_article,
+                    sales_name,
+                    sales_pack,
+                    brand=sales_brand,
+                )
                 if product:
                     auto_matched += 1
                 else:
@@ -375,7 +413,7 @@ class OrderPlanningService:
                 "sales_is_excise": sales_excise,
                 "product_id": product.id if product else None,
                 "product_name": product.name if product else "",
-                "is_auto_matched": bool(product and (not link or not link.product)),
+                "is_auto_matched": bool(product and not (link_matches_source and link and link.product)),
                 "avg_sales_month": avg_sales,
             })
 
