@@ -35,7 +35,7 @@ from app.exports.supplier_price_exporter import SupplierPriceExporter
 from app.services.supplier_service import SupplierService, SupplierUpsertData
 from app.services.supplier_price_service import SupplierPriceService
 from app.utils.batch import get_current_username
-from app.utils.parsers import parse_flexible_date, parse_loose_number
+from app.utils.parsers import parse_flexible_date, parse_loose_number, parse_user_percent
 from app.utils.text import clean_multi_spaces
 from app.ui.table_style import *
 from app.workers.excel_export_worker import start_excel_export
@@ -140,8 +140,8 @@ class SupplierPricesPage(QWidget):
         self._setup_number_field(self.ui.line_Transport, "Формат: 1,2500")
         if hasattr(self.ui, "line_AgentFee"):
             self._setup_number_field(self.ui.line_AgentFee, "Формат: 0,2500")
-        self._setup_number_field(self.ui.line_Reexport, "Формат: 3,5% / 0,24%")
-        self._setup_number_field(self.ui.line_FXMarkup, "Формат: 3,5% / 0,24%")
+        self._setup_number_field(self.ui.line_Reexport, "Введите 3,5 для 3,5% — знак % не нужен")
+        self._setup_number_field(self.ui.line_FXMarkup, "Введите 3,5 для 3,5% — знак % не нужен")
         self._setup_number_field(self.ui.line_FXMarkupAbs, "Формат: 1,5000")
 
     def setup_connections(self):
@@ -554,10 +554,17 @@ class SupplierPricesPage(QWidget):
             is_rf=self.ui.cbo_SupplierRF.currentText() == "да",
         )
 
-    def ensure_supplier(self) -> int:
+    def ensure_supplier(self, *, save_existing_changes: bool = False) -> int:
         supplier_id = self.ui.cbo_SupplName.currentData()
-        if self.ui.cbx_NewSupplier.isChecked():
+        is_new_supplier = self.ui.cbx_NewSupplier.isChecked()
+        if is_new_supplier:
             supplier_id = None
+
+        # Importing and adding rows only need the existing supplier id. Supplier
+        # costs are persisted immediately before the final Save so edits made
+        # after an import cannot be missed.
+        if supplier_id is not None and not save_existing_changes:
+            return int(supplier_id)
 
         with self.get_session() as session:
             supplier_service = SupplierService(session)
@@ -593,20 +600,10 @@ class SupplierPricesPage(QWidget):
         if not text:
             return Decimal("0")
 
-        has_percent_sign = "%" in text
-        cleaned = text.replace("%", "")
-        value = parse_loose_number(cleaned)
+        value = parse_user_percent(text)
         if value is None:
             raise ValueError(f"Некорректное поле: {field_name}")
-
-        decimal_value = Decimal(str(value))
-
-        # В БД проценты хранятся долей: 1% = 0.01, 100% = 1.
-        # Старое условие делило только значения > 1, поэтому ровно "1%"
-        # сохранялся как 1 и потом отображался как 100%.
-        if has_percent_sign or abs(decimal_value) >= Decimal("1"):
-            decimal_value = decimal_value / Decimal("100")
-        return decimal_value
+        return value
 
     def format_number(self, value: object, digits: int = 4) -> str:
         number = parse_loose_number(value)
@@ -654,20 +651,11 @@ class SupplierPricesPage(QWidget):
         if not text:
             widget.setText("0,0%")
             return
-        has_percent_sign = "%" in text
-        cleaned = text.replace("%", "")
-        value = parse_loose_number(cleaned)
+        value = parse_user_percent(text)
         if value is None:
             self.show_error_message("Проверь процент")
             return
-        decimal_value = Decimal(str(value))
-
-        # Ввод пользователя считаем процентами, а не готовой долей:
-        # 1 или 1% -> 1,0%; 100 или 100% -> 100,0%.
-        # При этом старые доли вроде 0,01 тоже продолжают работать как 1,0%.
-        if has_percent_sign or abs(decimal_value) >= Decimal("1"):
-            decimal_value = decimal_value / Decimal("100")
-        widget.setText(self.format_percent(decimal_value))
+        widget.setText(self.format_percent(value))
 
     def get_price_date(self) -> datetime:
         qdate = self.ui.date_Price.date()
@@ -1260,7 +1248,7 @@ class SupplierPricesPage(QWidget):
             return
 
         try:
-            supplier_id = self.ensure_supplier()
+            supplier_id = self.ensure_supplier(save_existing_changes=True)
             currency_code = clean_multi_spaces(self.ui.cbo_Currency.currentText()).upper()
             if not currency_code or currency_code == "-":
                 raise ValueError("Выбери валюту")
@@ -1460,5 +1448,3 @@ class SupplierPricesPage(QWidget):
 
         if msg.clickedButton() == copy_btn:
             QApplication.clipboard().setText(text)
-
-

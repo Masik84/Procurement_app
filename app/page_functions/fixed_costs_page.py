@@ -19,6 +19,7 @@ from app.db.models import FixedCosts
 from app.db.db import SessionLocal
 from app.ui.table_style import *
 from app.utils.output_headers import display_headers
+from app.utils.parsers import parse_user_percent
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -42,6 +43,10 @@ def load_ui(ui_path: Path):
 
 
 class FixedCostsPage(QWidget):
+    # These values are stored as fractions and used as multipliers in the cost
+    # formulas (1 + value). The remaining fixed-cost fields are RUB/L amounts.
+    PERCENT_COLUMNS = {"customs_clearance", "vat", "bank_fee", "money"}
+
     def __init__(self):
         super().__init__()
 
@@ -72,14 +77,14 @@ class FixedCostsPage(QWidget):
         ]
         self.headers = [
             "id",
-            "Customs clearance",
+            "Customs clearance %",
             "Additional customs",
             "Excise",
             "Eco fee",
-            "VAT",
+            "VAT %",
             "Customs fee",
-            "Bank fee",
-            "Money",
+            "Bank fee %",
+            "Money %",
             "Storage",
             "Move Novo-Tamozh",
             "Move Tamozh-Chekhov",
@@ -103,6 +108,12 @@ class FixedCostsPage(QWidget):
         return SessionLocal()
 
     def _to_decimal(self, value, field_name):
+        if field_name in self.PERCENT_COLUMNS:
+            parsed = parse_user_percent(value)
+            if parsed is None:
+                raise Exception(f"Поле '{field_name}' должно быть числом")
+            return parsed
+
         if isinstance(value, Decimal):
             return value
 
@@ -231,6 +242,13 @@ class FixedCostsPage(QWidget):
         item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter if align_left else Qt.AlignCenter)
         return item
 
+    @staticmethod
+    def _format_percent(value) -> str:
+        if value is None:
+            return ""
+        text = f"{float(value) * 100:.2f}".rstrip("0").rstrip(".").replace(".", ",")
+        return f"{text}%"
+
     def _display_data(self, row_data):
         self.table.clear()
         self.table.setColumnCount(0)
@@ -245,7 +263,10 @@ class FixedCostsPage(QWidget):
 
         for col_index, col_name in enumerate(self.columns):
             editable = col_name != "id"
-            item = self._build_item(row_data[col_name], editable=editable, align_left=False)
+            value = row_data[col_name]
+            if col_name in self.PERCENT_COLUMNS:
+                value = self._format_percent(value)
+            item = self._build_item(value, editable=editable, align_left=False)
             self.table.setItem(0, col_index, item)
 
         self.table.resizeColumnsToContents()

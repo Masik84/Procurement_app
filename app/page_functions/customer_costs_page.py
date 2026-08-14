@@ -41,6 +41,8 @@ COL_SUPPLIER_OPTION = 0
 COL_PRODUCT = 1
 COL_BRAND = 12
 BASE_HEADERS_COUNT = 15
+PRODUCT_SEARCH_RESULT_LIMIT = 500
+PRODUCT_SEARCH_DEBOUNCE_MS = 250
 
 
 def load_ui(ui_path: Path):
@@ -73,6 +75,11 @@ class CustomerCostsPage(QWidget):
         self._excel_export_thread = None
         self._excel_export_worker = None
         self._manual_price_blocks = 0
+        self._product_search_rows: list[tuple[int, str, str]] = []
+        self._product_search_timer = QTimer(self)
+        self._product_search_timer.setSingleShot(True)
+        self._product_search_timer.setInterval(PRODUCT_SEARCH_DEBOUNCE_MS)
+        self._product_search_timer.timeout.connect(self.refresh_product_combos)
 
         self.columns = [
             "selected_option_id",
@@ -143,8 +150,8 @@ class CustomerCostsPage(QWidget):
             self.ui.spb_SuppPriceAge.setMaximum(120)
             self.ui.spb_SuppPriceAge.setValue(3)
         self.ui.line_FindProduct.setToolTip("Часть названия продукта")
-        self.ui.line_FindProduct.textChanged.connect(self.refresh_product_combos)
-        self.ui.cbo_FindBrand.currentTextChanged.connect(self.refresh_product_combos)
+        self.ui.line_FindProduct.textChanged.connect(self.schedule_product_combo_refresh)
+        self.ui.cbo_FindBrand.currentTextChanged.connect(self.schedule_product_combo_refresh)
 
     def setup_connections(self):
         self.table.cellDoubleClicked.connect(self.start_cell_edit)
@@ -212,35 +219,44 @@ class CustomerCostsPage(QWidget):
         self._manual_price_blocks = 0
     
     def refresh_filters(self):
+        current_brand = clean_multi_spaces(self.ui.cbo_FindBrand.currentText())
         with self.get_session() as session:
-            brands = (
-                session.query(Product.brand)
-                .filter(Product.brand.isnot(None), Product.brand != "")
-                .distinct()
-                .order_by(Product.brand.asc())
+            products = (
+                session.query(Product.id, Product.name, Product.brand)
+                .filter(Product.name.isnot(None), Product.name != "")
+                .order_by(Product.name.asc())
                 .all()
             )
+
+        self._product_search_rows = [
+            (int(product_id), str(product_name), str(brand or ""))
+            for product_id, product_name, brand in products
+        ]
+        brands = sorted({brand for _, _, brand in self._product_search_rows if brand}, key=str.casefold)
 
         self.ui.cbo_FindBrand.blockSignals(True)
         self.ui.cbo_FindBrand.clear()
         self.ui.cbo_FindBrand.addItem("-")
-        for row in brands:
-            self.ui.cbo_FindBrand.addItem(row[0])
+        self.ui.cbo_FindBrand.addItems(brands)
+        if current_brand and self.ui.cbo_FindBrand.findText(current_brand) >= 0:
+            self.ui.cbo_FindBrand.setCurrentText(current_brand)
         self.ui.cbo_FindBrand.blockSignals(False)
 
-    def _get_filtered_products(self) -> list[Product]:
+    def _get_filtered_products(self) -> list[tuple[int, str]]:
         brand_filter = clean_multi_spaces(self.ui.cbo_FindBrand.currentText())
         text_filter = clean_multi_spaces(self.ui.line_FindProduct.text())
+        text_filter_folded = text_filter.casefold()
 
-        with self.get_session() as session:
-            query = session.query(Product).filter(Product.name.isnot(None), Product.name != "")
-            if brand_filter and brand_filter != "-":
-                query = query.filter(Product.brand == brand_filter)
-            if text_filter:
-                query = query.filter(Product.name.ilike(f"%{text_filter}%"))
-            products = query.order_by(Product.name.asc()).all()
-
-        return products
+        results: list[tuple[int, str]] = []
+        for product_id, product_name, product_brand in self._product_search_rows:
+            if brand_filter and brand_filter != "-" and product_brand != brand_filter:
+                continue
+            if text_filter_folded and text_filter_folded not in product_name.casefold():
+                continue
+            results.append((product_id, product_name))
+            if len(results) >= PRODUCT_SEARCH_RESULT_LIMIT:
+                break
+        return results
 
     def _get_brand_values(self) -> list[str]:
         with self.get_session() as session:
@@ -632,8 +648,8 @@ class CustomerCostsPage(QWidget):
         combo.clear()
         combo.addItem("", None)
 
-        for product in products:
-            combo.addItem(product.name, int(product.id))
+        for product_id, product_name in products:
+            combo.addItem(product_name, product_id)
 
         if current_id is not None and combo.findData(current_id) < 0:
             with self.get_session() as session:
@@ -864,6 +880,9 @@ class CustomerCostsPage(QWidget):
         if isinstance(combo, QComboBox):
             self.populate_product_combo(combo, keep_current=True)
 
+    def schedule_product_combo_refresh(self):
+        self._product_search_timer.start()
+
     def _commit_open_editors(self):
         for row in range(self.table.rowCount()):
             columns = [COL_SUPPLIER_OPTION, COL_PRODUCT, COL_BRAND]
@@ -1027,6 +1046,7 @@ class CustomerCostsPage(QWidget):
 
             def done(output_path):
                 self.load_table()
+                self.refresh_filters()
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(output_path)))
                 self.show_message("Расчет выполнен")
 

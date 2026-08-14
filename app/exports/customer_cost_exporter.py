@@ -59,6 +59,13 @@ class CustomerCostExporter:
             return ""
 
     @staticmethod
+    def _our_product_name(row: TempCustomerCostImport) -> str:
+        product = row.selected_product
+        if product is not None and product.name:
+            return product.name
+        return row.new_product_name or ""
+
+    @staticmethod
     def _excel_column_letter(col_num: int) -> str:
         result = ""
         while col_num > 0:
@@ -180,7 +187,8 @@ class CustomerCostExporter:
                     f"{self._excel_column_letter(first)}1:{self._excel_column_letter(last)}1"
                 ).Interior.Color = color
 
-        color_range("Дата", "Комментарии", self._rgb(205, 205, 205))
+        first_base_header = "Our Product Name" if "Our Product Name" in header_map else "Дата"
+        color_range(first_base_header, "Комментарии", self._rgb(205, 205, 205))
         color_range("Кост руб л с НДС", "Кост руб л с НДС", self._rgb(0, 176, 240))
         color_range("Поставщик", "Курс", self._rgb(146, 208, 80))
 
@@ -200,6 +208,7 @@ class CustomerCostExporter:
                 set_number_format_safe(ws.Columns(f"{letter}:{letter}"), fmt)
 
         widths = {
+            "Our Product Name": 35.00,
             "Дата": 8.00,
             "Менеджер": 13.00,
             "Клиент": 13.00,
@@ -252,6 +261,7 @@ class CustomerCostExporter:
 
             product = row.selected_product
             data = {
+                "Our Product Name": self._our_product_name(row),
                 "Дата": row.request_date,
                 "Менеджер": row.manager_name,
                 "Клиент": row.customer_name,
@@ -296,6 +306,7 @@ class CustomerCostExporter:
         rows, max_opt = self._collect_export_rows(batch_id=batch_id, imported_by=imported_by)
 
         base_headers = [
+            "Our Product Name",
             "Дата",
             "Менеджер",
             "Клиент",
@@ -401,6 +412,7 @@ class CustomerCostExporter:
                 start_col += 6
 
             base_widths = {
+                "Our Product Name": 35.00,
                 "Дата": 11.00,
                 "Менеджер": 16.14,
                 "Клиент": 18.14,
@@ -486,6 +498,7 @@ class CustomerCostExporter:
 
             product = row.selected_product
             out_rows.append({
+                "Our Product Name": self._our_product_name(row),
                 "Дата": row.request_date,
                 "Менеджер": row.manager_name,
                 "Клиент": row.customer_name,
@@ -522,6 +535,7 @@ class CustomerCostExporter:
         rows = self._collect_kam_rows(batch_id, imported_by, manager_name, customer_name)
 
         headers = [
+            "Our Product Name",
             "Дата",
             "Менеджер",
             "Клиент",

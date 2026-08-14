@@ -18,6 +18,7 @@ from PySide6.QtUiTools import QUiLoader
 from app.db.models import Supplier
 from app.db.db import SessionLocal
 from app.ui.table_style import *
+from app.utils.parsers import parse_user_percent
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -387,23 +388,9 @@ class SuppliersPage(QWidget):
             raise Exception(f"Поле '{field_name}' должно быть числом")
 
     def _to_percent_decimal(self, value, field_name):
-        if isinstance(value, Decimal):
-            decimal_value = value
-            has_percent_sign = False
-        else:
-            text = str(value).strip()
-            has_percent_sign = "%" in text
-            text = text.replace("%", "").strip().replace(",", ".")
-            try:
-                decimal_value = Decimal(text)
-            except (InvalidOperation, ValueError):
-                raise Exception(f"Поле '{field_name}' должно быть числом")
-
-        # В БД проценты хранятся долей: 1% = 0.01, 100% = 1.
-        # Поэтому ввод в процентных колонках трактуем именно как проценты.
-        # 1 / 1% -> 0.01; 100 / 100% -> 1; 0,01 остается 0,01.
-        if has_percent_sign or abs(decimal_value) >= Decimal("1"):
-            decimal_value = decimal_value / Decimal("100")
+        decimal_value = parse_user_percent(value)
+        if decimal_value is None:
+            raise Exception(f"Поле '{field_name}' должно быть числом")
         return decimal_value
 
     def refresh_all_comboboxes(self):

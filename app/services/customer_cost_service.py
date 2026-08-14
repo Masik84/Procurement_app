@@ -377,7 +377,7 @@ class CustomerCostService:
 
             current_prices = self.price_repository.get_suppliers_with_current_prices_for_product(
                 product_id=row.selected_product_id,
-                only_rating_calc=True,
+                only_rating_calc=False,
                 min_price_date=min_price_date,
             )
             for supplier_price in current_prices:
@@ -387,7 +387,7 @@ class CustomerCostService:
 
             latest_history = self.price_repository.get_latest_history_prices_for_product(
                 product_id=row.selected_product_id,
-                only_rating_calc=True,
+                only_rating_calc=False,
                 min_price_date=min_price_date,
             )
             for supplier_price in latest_history:

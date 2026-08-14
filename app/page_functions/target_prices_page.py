@@ -19,7 +19,7 @@ from app.imports.target_price_importer import TargetPriceImporter
 from app.services.supplier_service import SupplierService, SupplierUpsertData
 from app.services.target_price_service import TargetPriceService
 from app.utils.batch import get_current_username
-from app.utils.parsers import parse_loose_number
+from app.utils.parsers import parse_loose_number, parse_user_percent
 from app.utils.text import clean_multi_spaces
 from app.ui.table_style import *
 from app.workers.excel_export_worker import start_excel_export
@@ -103,8 +103,8 @@ class TargetPricesPage(QWidget):
             (self.ui.line_ExchangeRate, "Формат: 82,0000"),
             (self.ui.line_Transport, "Формат: 1,2500"),
             (self.ui.line_AgentFee, "Формат: 0,2500"),
-            (self.ui.line_Reexport, "Формат: 3,5% / 0,24%"),
-            (self.ui.line_FXMarkup, "Формат: 3,5% / 0,24%"),
+            (self.ui.line_Reexport, "Введите 3,5 для 3,5% — знак % не нужен"),
+            (self.ui.line_FXMarkup, "Введите 3,5 для 3,5% — знак % не нужен"),
             (self.ui.line_FXMarkupAbs, "Формат: 1,5000"),
         ]:
             widget.setToolTip(tip)
@@ -381,14 +381,10 @@ class TargetPricesPage(QWidget):
         text = clean_multi_spaces(widget.text())
         if not text:
             return Decimal("0")
-        has_percent = "%" in text
-        value = parse_loose_number(text.replace("%", ""))
+        value = parse_user_percent(text)
         if value is None:
             raise ValueError(f"Некорректное поле: {field_name}")
-        d = Decimal(str(value))
-        if has_percent or abs(d) >= Decimal("1"):
-            d = d / Decimal("100")
-        return d
+        return value
 
     def format_number(self, value: object, digits: int = 4) -> str:
         number = parse_loose_number(value)
@@ -424,15 +420,11 @@ class TargetPricesPage(QWidget):
         if not text:
             widget.setText("0,0%")
             return
-        has_percent = "%" in text
-        value = parse_loose_number(text.replace("%", ""))
+        value = parse_user_percent(text)
         if value is None:
             self.show_error_message("Проверь процент")
             return
-        d = Decimal(str(value))
-        if has_percent or abs(d) >= Decimal("1"):
-            d = d / Decimal("100")
-        widget.setText(self.format_percent(d))
+        widget.setText(self.format_percent(value))
 
     def import_file(self):
         try:

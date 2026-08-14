@@ -58,6 +58,23 @@ def parse_loose_number(value: object) -> Optional[Decimal]:
     except (InvalidOperation, ValueError):
         return None
 
+
+def parse_user_percent(value: object) -> Optional[Decimal]:
+    """Parse a value entered in a percentage field into a stored fraction.
+
+    User-facing percentage fields always contain percentage points, regardless
+    of whether the optional ``%`` sign is present: ``3,5`` and ``3,5%`` both
+    become ``Decimal("0.035")``.
+    """
+    if value is None:
+        return None
+
+    text = str(value).replace("%", "").strip()
+    parsed = parse_loose_number(text)
+    if parsed is None:
+        return None
+    return parsed / Decimal("100")
+
 def parse_flexible_date(value: object, default_to_today: bool = True) -> Optional[date]:
     """
     Parses flexible date input similar to the Access VBA behavior.

@@ -10,7 +10,7 @@ from PySide6.QtUiTools import QUiLoader
 from app.db.db import SessionLocal
 from app.db.models import ExchangeRate, MarkingRate, Supplier
 from app.services.quick_cost_calculation_service import QuickCostCalculationService
-from app.utils.parsers import parse_loose_number
+from app.utils.parsers import parse_loose_number, parse_user_percent
 from app.utils.text import clean_multi_spaces
 
 
@@ -61,8 +61,8 @@ class QuickCostCalcPage(QWidget):
         self._setup_number_field(self.ui.line_ExchangeRate, "Формат: 82,0000")
         self._setup_number_field(self.ui.line_Transport, "Формат: 1,2500")
         self._setup_number_field(self.ui.line_AgentFee, "Формат: 2,6500")
-        self._setup_number_field(self.ui.line_Reexport, "Формат: 3,5% / 0,24%")
-        self._setup_number_field(self.ui.line_FXMarkup, "Формат: 3,5% / 0,24%")
+        self._setup_number_field(self.ui.line_Reexport, "Введите 3,5 для 3,5% — знак % не нужен")
+        self._setup_number_field(self.ui.line_FXMarkup, "Введите 3,5 для 3,5% — знак % не нужен")
         self._setup_number_field(self.ui.line_FXMarkupAbs, "Формат: 1,5000")
         self._setup_number_field(self.ui.line_Price, "Формат: 125,4500")
 
@@ -296,15 +296,10 @@ class QuickCostCalcPage(QWidget):
         if not text:
             return Decimal("0")
 
-        cleaned = text.replace("%", "")
-        value = parse_loose_number(cleaned)
+        value = parse_user_percent(text)
         if value is None:
             raise ValueError(f"Поле '{field_name}' должно быть числом или процентом")
-
-        decimal_value = Decimal(str(value))
-        if abs(decimal_value) > Decimal("1"):
-            decimal_value = decimal_value / Decimal("100")
-        return decimal_value
+        return value
 
     def format_number(self, value: object, digits: int = 4) -> str:
         number = parse_loose_number(value)
@@ -354,15 +349,11 @@ class QuickCostCalcPage(QWidget):
         if not text:
             widget.setText("0,0%")
             return
-        cleaned = text.replace("%", "")
-        value = parse_loose_number(cleaned)
+        value = parse_user_percent(text)
         if value is None:
             self.show_error_message("Проверь процент")
             return
-        decimal_value = Decimal(str(value))
-        if abs(decimal_value) > Decimal("1"):
-            decimal_value = decimal_value / Decimal("100")
-        widget.setText(self.format_percent(decimal_value))
+        widget.setText(self.format_percent(value))
 
     def validate_required_combos(self):
         required_fields = [
