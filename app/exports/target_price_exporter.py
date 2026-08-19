@@ -4,7 +4,8 @@ from pathlib import Path
 
 import pythoncom
 import win32com.client as win32
-from sqlalchemy.orm import Session
+from app.utils.excel_format_rules import save_workbook_xlsx
+from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import Product, ProductStock, TargetPriceCalculation, TempTargetPriceImport, TempTargetPriceOption
 from app.utils.excel_fast_writer import write_excel_table
@@ -78,7 +79,7 @@ class TargetPriceExporter:
                 last_row = max(len(rows) + 1, 1)
                 ws.Range(f"A1:{last_col}{last_row}").AutoFilter(1)
 
-            wb.SaveAs(str(target_path))
+            save_workbook_xlsx(wb, target_path)
             return target_path
         finally:
             try:
@@ -102,17 +103,44 @@ class TargetPriceExporter:
             TempTargetPriceImport.batch_id == batch_id,
             TempTargetPriceImport.imported_by == imported_by,
         ).order_by(TempTargetPriceImport.import_row_no.asc(), TempTargetPriceImport.id.asc()).all()
+        product_ids = {
+            int(row.selected_product_id)
+            for row in rows
+            if row.selected_product_id is not None
+        }
+        products_by_id = {
+            int(product.id): product
+            for product in (
+                self.session.query(Product).filter(Product.id.in_(product_ids)).all()
+                if product_ids else []
+            )
+        }
+        stocks_by_product = {
+            int(stock.product_id): stock
+            for stock in (
+                self.session.query(ProductStock).filter(ProductStock.product_id.in_(product_ids)).all()
+                if product_ids else []
+            )
+        }
+        options = self.session.query(TempTargetPriceOption).filter(
+            TempTargetPriceOption.batch_id == batch_id,
+            TempTargetPriceOption.imported_by == imported_by,
+        ).order_by(
+            TempTargetPriceOption.temp_import_id.asc(),
+            TempTargetPriceOption.opt_rank.asc(),
+            TempTargetPriceOption.cost_novo_wvat.asc(),
+            TempTargetPriceOption.id.asc(),
+        ).all()
+        options_by_row: dict[int, list[TempTargetPriceOption]] = {}
+        for option in options:
+            options_by_row.setdefault(int(option.temp_import_id), []).append(option)
         out: list[dict] = []
         max_opt = 0
         for row in rows:
-            product = self.session.query(Product).filter(Product.id == row.selected_product_id).first() if row.selected_product_id else None
-            options = self.session.query(TempTargetPriceOption).filter(
-                TempTargetPriceOption.batch_id == batch_id,
-                TempTargetPriceOption.imported_by == imported_by,
-                TempTargetPriceOption.temp_import_id == row.id,
-            ).order_by(TempTargetPriceOption.opt_rank.asc(), TempTargetPriceOption.cost_novo_wvat.asc(), TempTargetPriceOption.id.asc()).all()
+            product = products_by_id.get(int(row.selected_product_id)) if row.selected_product_id else None
+            options = options_by_row.get(int(row.id), [])
             max_opt = max(max_opt, len(options))
-            stock = self.session.query(ProductStock).filter(ProductStock.product_id == row.selected_product_id).first() if row.selected_product_id else None
+            stock = stocks_by_product.get(int(row.selected_product_id)) if row.selected_product_id else None
             data = {
                 "Supplier Article": row.supplier_article,
                 "Supplier Product Name": row.product_name,
@@ -158,13 +186,16 @@ class TargetPriceExporter:
         )
 
     def _collect_final_rows(self, batch_id: str, imported_by: str) -> list[dict]:
-        rows = self.session.query(TargetPriceCalculation).filter(
+        rows = self.session.query(TargetPriceCalculation).options(
+            joinedload(TargetPriceCalculation.product),
+            joinedload(TargetPriceCalculation.donor_supplier),
+        ).filter(
             TargetPriceCalculation.batch_id == batch_id,
             TargetPriceCalculation.imported_by == imported_by,
         ).order_by(TargetPriceCalculation.import_row_no.asc(), TargetPriceCalculation.id.asc()).all()
         out: list[dict] = []
         for row in rows:
-            product = self.session.query(Product).filter(Product.id == row.product_id).first()
+            product = row.product
             donor = row.donor_supplier.name if row.donor_supplier else ""
             out.append({
                 "Supplier Article": row.supplier_article,

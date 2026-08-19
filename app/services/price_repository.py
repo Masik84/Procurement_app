@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Iterable, Mapping, Optional
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, tuple_
 
 from app.db.models import CurrentSupplierPrice, PriceHistory, Supplier
 from app.services.supplier_service import MANUAL_SUPPLIER_NAME
@@ -256,6 +256,119 @@ class PriceRepository:
 
         return result
 
+    def get_supplier_prices_for_products(
+        self,
+        product_ids: Iterable[int],
+        *,
+        only_rating_calc: bool = True,
+        min_price_date: datetime | None = None,
+        exclude_manual: bool = True,
+    ) -> dict[int, list[SupplierPriceWithSupplier]]:
+        """Return one effective price per product/supplier using two bulk queries.
+
+        A qualifying current price has the same priority as in the former
+        per-product implementation.  History supplies only pairs which have no
+        qualifying current row, and ties on the latest date are resolved by the
+        greatest history id exactly as before.
+        """
+        ids = sorted({int(product_id) for product_id in product_ids if product_id is not None})
+        result: dict[int, list[SupplierPriceWithSupplier]] = {product_id: [] for product_id in ids}
+        if not ids:
+            return result
+
+        current_query = (
+            self.session.query(CurrentSupplierPrice, Supplier)
+            .join(Supplier, Supplier.id == CurrentSupplierPrice.supplier_id)
+            .filter(
+                CurrentSupplierPrice.product_id.in_(ids),
+                CurrentSupplierPrice.price.isnot(None),
+            )
+        )
+        if exclude_manual:
+            current_query = current_query.filter(Supplier.name != MANUAL_SUPPLIER_NAME)
+        if min_price_date is not None:
+            current_query = current_query.filter(CurrentSupplierPrice.last_update >= min_price_date)
+        if only_rating_calc:
+            current_query = current_query.filter(Supplier.rating_calc.is_(True))
+
+        current_rows = current_query.order_by(
+            CurrentSupplierPrice.product_id.asc(),
+            Supplier.name.asc(),
+            CurrentSupplierPrice.last_update.desc(),
+        ).all()
+        seen_pairs: set[tuple[int, int]] = set()
+        for current_price, supplier in current_rows:
+            product_id = int(current_price.product_id)
+            supplier_id = int(supplier.id)
+            seen_pairs.add((product_id, supplier_id))
+            result[product_id].append(SupplierPriceWithSupplier(
+                supplier_id=supplier_id,
+                supplier_name=supplier.name,
+                product_id=product_id,
+                price=self._to_decimal(current_price.price),
+                currency_code=current_price.currency,
+                price_date=current_price.last_update,
+            ))
+
+        max_dates_query = self.session.query(
+            PriceHistory.supplier_id.label("supplier_id"),
+            PriceHistory.product_id.label("product_id"),
+            func.max(PriceHistory.price_date).label("max_price_date"),
+        ).filter(
+            PriceHistory.product_id.in_(ids),
+            PriceHistory.price.isnot(None),
+        )
+        if min_price_date is not None:
+            max_dates_query = max_dates_query.filter(PriceHistory.price_date >= min_price_date)
+        max_dates_subq = max_dates_query.group_by(
+            PriceHistory.supplier_id,
+            PriceHistory.product_id,
+        ).subquery()
+
+        history_query = (
+            self.session.query(PriceHistory, Supplier)
+            .join(
+                max_dates_subq,
+                (PriceHistory.supplier_id == max_dates_subq.c.supplier_id)
+                & (PriceHistory.product_id == max_dates_subq.c.product_id)
+                & (PriceHistory.price_date == max_dates_subq.c.max_price_date),
+            )
+            .join(Supplier, Supplier.id == PriceHistory.supplier_id)
+            .filter(
+                PriceHistory.product_id.in_(ids),
+                PriceHistory.price.isnot(None),
+            )
+        )
+        if min_price_date is not None:
+            history_query = history_query.filter(PriceHistory.price_date >= min_price_date)
+        history_rows = history_query.order_by(
+            PriceHistory.product_id.asc(),
+            Supplier.name.asc(),
+            PriceHistory.price_date.desc(),
+            PriceHistory.id.desc(),
+        ).all()
+
+        history_seen: set[tuple[int, int]] = set()
+        for history_row, supplier in history_rows:
+            product_id = int(history_row.product_id)
+            supplier_id = int(supplier.id)
+            pair = (product_id, supplier_id)
+            if pair in seen_pairs or pair in history_seen:
+                continue
+            if only_rating_calc and not supplier.rating_calc:
+                continue
+            history_seen.add(pair)
+            result[product_id].append(SupplierPriceWithSupplier(
+                supplier_id=supplier_id,
+                supplier_name=supplier.name,
+                product_id=product_id,
+                price=self._to_decimal(history_row.price),
+                currency_code=history_row.currency,
+                price_date=history_row.price_date,
+            ))
+
+        return result
+
     def save_supplier_price(self, *, supplier_id: int, product_id: int, price: object, currency_code: str, price_date: datetime) -> None:
         price_value = self._to_decimal(price)
 
@@ -286,3 +399,72 @@ class PriceRepository:
                 current_row.last_update = price_date
 
         self.session.flush()
+
+    def save_supplier_prices_batch(self, prices: Iterable[Mapping[str, object]]) -> int:
+        """Save history/current supplier prices with one lookup and one flush.
+
+        Rows are applied in the supplied order so duplicate supplier/product
+        pairs keep the same last-update behaviour as ``save_supplier_price``.
+        """
+        records = list(prices)
+        if not records:
+            return 0
+
+        pairs = {
+            (int(record["supplier_id"]), int(record["product_id"]))
+            for record in records
+        }
+        current_rows = (
+            self.session.query(CurrentSupplierPrice)
+            .filter(
+                tuple_(
+                    CurrentSupplierPrice.supplier_id,
+                    CurrentSupplierPrice.product_id,
+                ).in_(pairs)
+            )
+            .all()
+        )
+        current_by_pair = {
+            (int(row.supplier_id), int(row.product_id)): row
+            for row in current_rows
+        }
+
+        history_rows: list[PriceHistory] = []
+        new_current_rows: list[CurrentSupplierPrice] = []
+        for record in records:
+            supplier_id = int(record["supplier_id"])
+            product_id = int(record["product_id"])
+            price_value = self._to_decimal(record["price"])
+            currency_code = str(record["currency_code"])
+            price_date = record["price_date"]
+
+            history_rows.append(PriceHistory(
+                supplier_id=supplier_id,
+                product_id=product_id,
+                price_date=price_date,
+                price=price_value,
+                currency=currency_code,
+            ))
+
+            key = (supplier_id, product_id)
+            current_row = current_by_pair.get(key)
+            if current_row is None:
+                current_row = CurrentSupplierPrice(
+                    supplier_id=supplier_id,
+                    product_id=product_id,
+                    price=price_value,
+                    currency=currency_code,
+                    last_update=price_date,
+                )
+                current_by_pair[key] = current_row
+                new_current_rows.append(current_row)
+            elif current_row.last_update is None or current_row.last_update <= price_date:
+                current_row.price = price_value
+                current_row.currency = currency_code
+                current_row.last_update = price_date
+
+        self.session.add_all(history_rows)
+        if new_current_rows:
+            self.session.add_all(new_current_rows)
+        self.session.flush()
+        return len(records)

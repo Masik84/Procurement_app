@@ -7,6 +7,7 @@ from typing import Sequence
 import pythoncom
 import pywintypes
 import win32com.client as win32
+from app.utils.excel_format_rules import save_workbook_xlsx
 
 from app.utils.excel_fast_writer import write_excel_table
 from app.exports.excel_column_format import (
@@ -94,7 +95,7 @@ class TargetPriceHistoryExporter:
             self._write_table(ws, header_list, rows)
             apply_standard_worksheet_format(ws, header_list, freeze_cell="F2", zoom=85)
 
-            wb.SaveAs(str(target_path))
+            save_workbook_xlsx(wb, target_path)
             return target_path
         finally:
             try:

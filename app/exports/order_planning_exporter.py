@@ -16,7 +16,7 @@ from app.services.supplier_currency_cost_service import SupplierCurrencyCostServ
 from app.services.price_repository import PriceRepository
 from app.exports.excel_column_format import apply_standard_worksheet_format, excel_value_by_header
 from app.utils.excel_fast_writer import write_excel_table
-from app.utils.excel_format_rules import set_number_format_safe
+from app.utils.excel_format_rules import set_number_format_safe, save_workbook_xlsx
 from app.utils.output_headers import standardize_output_header
 
 
@@ -25,7 +25,10 @@ class OrderPlanningExporter:
         self.session = session
         self.cost_calculation = CostCalculationService(session)
         self.supplier_service = SupplierService(session)
-        self.currency_cost_service = SupplierCurrencyCostService(session)
+        self.currency_cost_service = SupplierCurrencyCostService(
+            session,
+            cost_calculation=self.cost_calculation,
+        )
         self.price_repository = PriceRepository(session)
         self._xl_center = -4108
         self._xl_vcenter = -4160
@@ -134,6 +137,23 @@ class OrderPlanningExporter:
             return None
 
     def _get_supplier_options(self, product_id: int, min_price_date=None) -> list[dict]:
+        bulk_prices = getattr(self, "_bulk_prices_by_product", None)
+        if bulk_prices is not None:
+            options: list[dict] = []
+            for snapshot in bulk_prices.get(int(product_id), []):
+                supplier = self.cost_calculation.get_supplier(snapshot.supplier_id)
+                option = self._calc_supplier_option(
+                    supplier,
+                    product_id,
+                    snapshot.price,
+                    snapshot.price_date,
+                    snapshot.currency_code,
+                )
+                if option and option["full_cost"] is not None:
+                    options.append(option)
+            options.sort(key=lambda x: (self._to_decimal(x["full_cost"]), str(x["supplier"]).lower()))
+            return options
+
         current_query = self.session.query(CurrentSupplierPrice.supplier_id).filter(
             CurrentSupplierPrice.product_id == product_id,
             CurrentSupplierPrice.price.isnot(None),
@@ -204,6 +224,26 @@ class OrderPlanningExporter:
 
     def build_export_data(self, display_rows: list[dict], supplier_price_age_months: int = 3) -> tuple[list[str], list[list[object]]]:
         min_price_date = PriceRepository.supplier_price_cutoff_from_months(supplier_price_age_months)
+        product_ids = {
+            int(row["product_id"])
+            for row in display_rows
+            if row.get("product_id")
+        }
+        self._bulk_prices_by_product = self.price_repository.get_supplier_prices_for_products(
+            product_ids,
+            only_rating_calc=True,
+            min_price_date=min_price_date,
+            exclude_manual=False,
+        )
+        supplier_ids = {
+            price.supplier_id
+            for prices in self._bulk_prices_by_product.values()
+            for price in prices
+        }
+        self.currency_cost_service.preload_reference_data(
+            product_ids=product_ids,
+            supplier_ids=supplier_ids,
+        )
         max_suppliers = 0
         prepared = []
         for row in display_rows:
@@ -295,7 +335,7 @@ class OrderPlanningExporter:
 
             apply_standard_worksheet_format(ws, headers, freeze_cell="M2", zoom=85)
 
-            wb.SaveAs(str(target_path))
+            save_workbook_xlsx(wb, target_path)
             return target_path
         finally:
             try:

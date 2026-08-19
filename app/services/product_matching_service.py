@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Optional
 from decimal import Decimal
 
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from app.db.models import Product, ProductArticle
 from app.utils.excel_import import excel_text
@@ -26,12 +26,24 @@ class ProductCreateData:
 
 
 class ProductMatchingService:
+    BRAND_ALIASES = {
+        "VAG": "VAG",
+        "VOLKSWAGEN": "VAG",
+        "VW": "VAG",
+        "AUDI": "VAG",
+        "SKODA": "VAG",
+        "ŠKODA": "VAG",
+        "GM": "GM",
+        "GENERAL MOTORS": "GM",
+    }
+
     def __init__(self, session: Session) -> None:
         self.session = session
         self._exact_products_cache: dict[str, Product] | None = None
         self._normalized_products_cache: dict[str, Product] | None = None
         self._exact_products_by_brand_cache: dict[tuple[str, str], Product] | None = None
         self._normalized_products_by_brand_cache: dict[tuple[str, str], Product] | None = None
+        self._products_by_id_cache: dict[int, Product] | None = None
         self._product_article_keys_cache: set[tuple[int, str | None, str | None]] | None = None
         self._article_links_cache: dict[str, ProductArticle] | None = None
         self._article_links_by_brand_cache: dict[tuple[str, str], ProductArticle] | None = None
@@ -42,7 +54,8 @@ class ProductMatchingService:
 
     @staticmethod
     def _brand_key(brand: object) -> str:
-        return clean_multi_spaces(brand).upper()
+        cleaned = clean_multi_spaces(brand).upper()
+        return ProductMatchingService.BRAND_ALIASES.get(cleaned, cleaned)
 
     def _ensure_product_caches(self) -> None:
         if self._exact_products_cache is not None and self._normalized_products_cache is not None:
@@ -75,6 +88,7 @@ class ProductMatchingService:
         self._normalized_products_cache = normalized_cache
         self._exact_products_by_brand_cache = exact_by_brand
         self._normalized_products_by_brand_cache = normalized_by_brand
+        self._products_by_id_cache = {int(product.id): product for product in products}
 
     def _build_normalized_products_cache(self) -> dict[str, Product]:
         self._ensure_product_caches()
@@ -95,77 +109,80 @@ class ProductMatchingService:
             ))
         return keys
 
-    def _build_article_links_cache(self) -> dict[str, ProductArticle]:
-        cache: dict[str, ProductArticle] = {}
-        by_brand: dict[tuple[str, str], ProductArticle] = {}
-        links = (
-            self.session.query(ProductArticle)
-            .options(joinedload(ProductArticle.product))
-            .filter(ProductArticle.article.isnot(None), ProductArticle.article != "")
-            .order_by(ProductArticle.id.asc())
-            .all()
-        )
+    def _ensure_link_caches(self) -> None:
+        if all(
+            cache is not None
+            for cache in (
+                self._article_links_cache,
+                self._article_links_by_brand_cache,
+                self._name_links_cache,
+                self._name_links_by_brand_cache,
+                self._normalized_name_links_cache,
+                self._normalized_name_links_by_brand_cache,
+            )
+        ):
+            return
+
+        # ProductArticle used to be loaded three times from the network database:
+        # once for articles and twice for the two name representations.  One
+        # ordered snapshot is enough for all indices.  Iterating it backwards
+        # preserves the former DESC priority for name matching.
+        # Load products once and keep ProductArticle rows narrow.  Joining every
+        # link to the full product record roughly doubles the network payload.
+        self._ensure_product_caches()
+        products_by_id = self._products_by_id_cache or {}
+        links = self.session.query(ProductArticle).order_by(ProductArticle.id.asc()).all()
+
+        article_cache: dict[str, ProductArticle] = {}
+        article_by_brand: dict[tuple[str, str], ProductArticle] = {}
         for link in links:
             key = self.normalize_article_key(link.article)
-            if key and key not in cache:
-                cache[key] = link
-            brand_key = self._brand_key(link.product.brand if link.product else None)
+            if key and key not in article_cache:
+                article_cache[key] = link
+            product = products_by_id.get(int(link.product_id))
+            brand_key = self._brand_key(product.brand if product else None)
             if key and brand_key:
-                by_brand.setdefault((key, brand_key), link)
-        self._article_links_by_brand_cache = by_brand
-        return cache
+                article_by_brand.setdefault((key, brand_key), link)
+
+        name_cache: dict[str, ProductArticle] = {}
+        name_by_brand: dict[tuple[str, str], ProductArticle] = {}
+        normalized_cache: dict[str, ProductArticle] = {}
+        normalized_by_brand: dict[tuple[str, str], ProductArticle] = {}
+        for link in reversed(links):
+            product = products_by_id.get(int(link.product_id))
+            brand_key = self._brand_key(product.brand if product else None)
+            for key, cache, by_brand in (
+                (clean_multi_spaces(link.name).upper(), name_cache, name_by_brand),
+                (normalize_product_name(link.name), normalized_cache, normalized_by_brand),
+            ):
+                if not key:
+                    continue
+                current = cache.get(key)
+                if current is None or (current.article and not link.article):
+                    cache[key] = link
+                brand_cache_key = (key, brand_key)
+                brand_current = by_brand.get(brand_cache_key)
+                if brand_key and (brand_current is None or (brand_current.article and not link.article)):
+                    by_brand[brand_cache_key] = link
+
+        self._article_links_cache = article_cache
+        self._article_links_by_brand_cache = article_by_brand
+        self._name_links_cache = name_cache
+        self._name_links_by_brand_cache = name_by_brand
+        self._normalized_name_links_cache = normalized_cache
+        self._normalized_name_links_by_brand_cache = normalized_by_brand
+
+    def _build_article_links_cache(self) -> dict[str, ProductArticle]:
+        self._ensure_link_caches()
+        return self._article_links_cache or {}
 
     def _build_name_links_cache(self) -> dict[str, ProductArticle]:
-        cache: dict[str, ProductArticle] = {}
-        by_brand: dict[tuple[str, str], ProductArticle] = {}
-        links = (
-            self.session.query(ProductArticle)
-            .options(joinedload(ProductArticle.product))
-            .filter(ProductArticle.name.isnot(None), ProductArticle.name != "")
-            .order_by(ProductArticle.id.desc())
-            .all()
-        )
-        for link in links:
-            key = clean_multi_spaces(link.name).upper()
-            if not key:
-                continue
-
-            current = cache.get(key)
-            if current is None or (current.article and not link.article):
-                cache[key] = link
-            brand_key = self._brand_key(link.product.brand if link.product else None)
-            brand_cache_key = (key, brand_key)
-            brand_current = by_brand.get(brand_cache_key)
-            if brand_key and (brand_current is None or (brand_current.article and not link.article)):
-                by_brand[brand_cache_key] = link
-        self._name_links_by_brand_cache = by_brand
-        return cache
+        self._ensure_link_caches()
+        return self._name_links_cache or {}
 
     def _build_normalized_name_links_cache(self) -> dict[str, ProductArticle]:
-        cache: dict[str, ProductArticle] = {}
-        by_brand: dict[tuple[str, str], ProductArticle] = {}
-        links = (
-            self.session.query(ProductArticle)
-            .options(joinedload(ProductArticle.product))
-            .filter(ProductArticle.name.isnot(None), ProductArticle.name != "")
-            .order_by(ProductArticle.id.desc())
-            .all()
-        )
-        for link in links:
-            key = normalize_product_name(link.name)
-            if not key:
-                continue
-
-            current = cache.get(key)
-            if current is None or (current.article and not link.article):
-                cache[key] = link
-            brand_key = self._brand_key(link.product.brand if link.product else None)
-            brand_cache_key = (key, brand_key)
-            brand_current = by_brand.get(brand_cache_key)
-            if brand_key and (brand_current is None or (brand_current.article and not link.article)):
-                by_brand[brand_cache_key] = link
-        self._normalized_name_links_by_brand_cache = by_brand
-        return cache
+        self._ensure_link_caches()
+        return self._normalized_name_links_cache or {}
 
     # =========================================================
     # Article helpers
@@ -677,6 +694,10 @@ class ProductMatchingService:
 
         if created:
             self.session.flush()
+            products_by_id = self._products_by_id_cache or {}
+            for product in created:
+                products_by_id[int(product.id)] = product
+            self._products_by_id_cache = products_by_id
 
         self._exact_products_cache = exact_cache
         self._normalized_products_cache = normalized_cache

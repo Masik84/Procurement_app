@@ -17,6 +17,7 @@ class QuickCostCalculationResult:
     fx_rate_used: Decimal
     transport_used: Decimal
     reexport_used: Decimal
+    insurance_used: Decimal
     fx_markup_used: Decimal
     fx_markup_abs_used: Decimal
     agent_fee_used: Decimal
@@ -87,6 +88,7 @@ class QuickCostCalculationService:
         fx_rate: Decimal,
         transport: Decimal,
         reexport: Decimal,
+        insurance: Decimal,
         fx_markup: Decimal,
         fx_markup_abs: Decimal,
         has_customs: bool,
@@ -105,6 +107,7 @@ class QuickCostCalculationService:
         d_price = self._to_decimal(supplier_price)
         d_transport = self._to_decimal(transport)
         d_reexport = self._to_decimal(reexport)
+        d_insurance = self._to_decimal(insurance)
         d_fx_rate = self._to_decimal(fx_rate)
         d_fx_markup = self._to_decimal(fx_markup)
         d_fx_markup_abs = self._to_decimal(fx_markup_abs)
@@ -134,12 +137,13 @@ class QuickCostCalculationService:
             d_marking = self.get_marking_cost_by_pack_type(pack_type_name)
 
         customs_multiplier = Decimal("1") + d_customs_clearance if has_customs else Decimal("1")
+        customs_and_insurance_multiplier = customs_multiplier + d_insurance
 
         if supplier_is_rf:
             base_before_add = (
                 (d_price + d_transport)
                 * (Decimal("1") + d_reexport)
-                * customs_multiplier
+                * customs_and_insurance_multiplier
                 * d_effective_fx_rate
             )
             base = base_before_add + d_marking + (d_agent_fee * d_fx_rate)
@@ -147,7 +151,7 @@ class QuickCostCalculationService:
             base_before_add = (
                 (d_price + d_transport)
                 * (Decimal("1") + d_reexport)
-                * customs_multiplier
+                * customs_and_insurance_multiplier
                 * (Decimal("1") + d_bank_fee)
                 * d_effective_fx_rate
             )
@@ -181,6 +185,7 @@ class QuickCostCalculationService:
             fx_rate_used=d_fx_rate,
             transport_used=d_transport,
             reexport_used=d_reexport,
+            insurance_used=d_insurance,
             fx_markup_used=d_fx_markup,
             fx_markup_abs_used=d_fx_markup_abs,
             agent_fee_used=d_agent_fee,

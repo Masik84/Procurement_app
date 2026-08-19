@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pythoncom
 import win32com.client as win32
+from app.utils.excel_format_rules import save_workbook_xlsx
 from app.utils.output_headers import standardize_output_header, apply_header_style_and_formats
 
 
@@ -85,7 +86,7 @@ class ProductExporter:
             ws.Columns("D:D").ColumnWidth = 12
             ws.Columns("E:E").ColumnWidth = 14
 
-            wb.SaveAs(Filename=save_path, FileFormat=self._xl_openxml_workbook)
+            save_workbook_xlsx(wb, save_path)
 
         except PermissionError:
             raise

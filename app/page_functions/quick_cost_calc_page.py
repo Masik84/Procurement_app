@@ -62,6 +62,7 @@ class QuickCostCalcPage(QWidget):
         self._setup_number_field(self.ui.line_Transport, "Формат: 1,2500")
         self._setup_number_field(self.ui.line_AgentFee, "Формат: 2,6500")
         self._setup_number_field(self.ui.line_Reexport, "Введите 3,5 для 3,5% — знак % не нужен")
+        self._setup_number_field(self.ui.line_Insurance, "Введите 1 для 1% — знак % не нужен")
         self._setup_number_field(self.ui.line_FXMarkup, "Введите 3,5 для 3,5% — знак % не нужен")
         self._setup_number_field(self.ui.line_FXMarkupAbs, "Формат: 1,5000")
         self._setup_number_field(self.ui.line_Price, "Формат: 125,4500")
@@ -74,6 +75,7 @@ class QuickCostCalcPage(QWidget):
         self.ui.line_Transport.editingFinished.connect(self.normalize_transport)
         self.ui.line_AgentFee.editingFinished.connect(self.normalize_agent_fee)
         self.ui.line_Reexport.editingFinished.connect(self.normalize_reexport)
+        self.ui.line_Insurance.editingFinished.connect(self.normalize_insurance)
         self.ui.line_FXMarkup.editingFinished.connect(self.normalize_fx_markup)
         self.ui.line_FXMarkupAbs.editingFinished.connect(self.normalize_fx_markup_abs)
         self.ui.line_Price.editingFinished.connect(self.normalize_price)
@@ -91,6 +93,7 @@ class QuickCostCalcPage(QWidget):
             self.ui.line_Transport,
             self.ui.line_AgentFee,
             self.ui.line_Reexport,
+            self.ui.line_Insurance,
             self.ui.line_FXMarkup,
             self.ui.line_FXMarkupAbs,
             self.ui.line_Price,
@@ -142,6 +145,7 @@ class QuickCostCalcPage(QWidget):
         self.ui.line_Transport.clear()
         self.ui.line_AgentFee.clear()
         self.ui.line_Reexport.setText("0,0%")
+        self.ui.line_Insurance.setText("0,0%")
         self.ui.line_FXMarkup.setText("0,0%")
         self.ui.line_FXMarkupAbs.setText("0,0000")
         self.ui.line_Price.clear()
@@ -227,6 +231,7 @@ class QuickCostCalcPage(QWidget):
             self.ui.line_Transport.clear()
             self.ui.line_AgentFee.clear()
             self.ui.line_Reexport.setText("0,0%")
+            self.ui.line_Insurance.setText("0,0%")
             self.ui.line_FXMarkup.setText("0,0%")
             self.ui.line_FXMarkupAbs.setText("0,0000")
             return
@@ -255,6 +260,7 @@ class QuickCostCalcPage(QWidget):
         self.ui.line_AgentFee.setText(self.format_number(getattr(supplier, "agent_fee", None), 4))
         self.set_combo_text(self.ui.cbo_viaNovo, "через Ново" if supplier.is_via_novo else "в Мск")
         self.ui.line_Reexport.setText(self.format_percent(supplier.reexport_percent))
+        self.ui.line_Insurance.setText(self.format_percent(supplier.insurance_percent))
         self.ui.line_FXMarkup.setText(self.format_percent(supplier.fx_rate_markup))
         self.ui.line_FXMarkupAbs.setText(self.format_number(supplier.fx_rate_markup_abs, 4))
         self.set_combo_text(self.ui.cbo_Customs, "да" if supplier.has_import_duty else "нет")
@@ -328,6 +334,9 @@ class QuickCostCalcPage(QWidget):
     def normalize_reexport(self):
         self._normalize_percent_widget(self.ui.line_Reexport)
 
+    def normalize_insurance(self):
+        self._normalize_percent_widget(self.ui.line_Insurance)
+
     def normalize_fx_markup(self):
         self._normalize_percent_widget(self.ui.line_FXMarkup)
 
@@ -384,6 +393,7 @@ class QuickCostCalcPage(QWidget):
             transport = self.parse_decimal_field(self.ui.line_Transport, "Транспорт")
             agent_fee = self.parse_decimal_field(self.ui.line_AgentFee, "Agent fee")
             reexport = self.parse_percent_field(self.ui.line_Reexport, "Реэкспорт")
+            insurance = self.parse_percent_field(self.ui.line_Insurance, "Insurance %")
             fx_markup = self.parse_percent_field(self.ui.line_FXMarkup, "FX markup %")
             fx_markup_abs = self.parse_decimal_field(self.ui.line_FXMarkupAbs, "FX markup abs")
 
@@ -404,6 +414,7 @@ class QuickCostCalcPage(QWidget):
                     transport=transport,
                     agent_fee=agent_fee,
                     reexport=reexport,
+                    insurance=insurance,
                     fx_markup=fx_markup,
                     fx_markup_abs=fx_markup_abs,
                     has_customs=has_customs,

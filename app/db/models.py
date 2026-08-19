@@ -70,6 +70,7 @@ class Supplier(Base):
     base_currency = Column(String(10), nullable=False)
     transport_cost_per_l = Column(Numeric, nullable=False, default=0)
     reexport_percent = Column(Numeric, nullable=False, default=0)
+    insurance_percent = Column(Numeric, nullable=False, default=0)
     fx_rate_markup = Column(Numeric, nullable=False, default=0)
     fx_rate_markup_abs = Column(Numeric, nullable=False, default=0)
     agent_fee = Column(Numeric, nullable=False, default=0)
@@ -216,6 +217,16 @@ class PriceHistory(Base):
     supplier = relationship("Supplier", back_populates="price_history")
     product = relationship("Product", back_populates="price_history")
 
+    __table_args__ = (
+        Index(
+            "ix_price_history_product_supplier_date_id",
+            "product_id",
+            "supplier_id",
+            "price_date",
+            "id",
+        ),
+    )
+
 
 class CurrentSupplierPrice(Base):
     __tablename__ = "current_supplier_prices"
@@ -237,6 +248,14 @@ class CurrentSupplierPrice(Base):
 
     supplier = relationship("Supplier", back_populates="current_prices")
     product = relationship("Product", back_populates="current_prices")
+
+    __table_args__ = (
+        Index(
+            "ix_current_supplier_prices_product_supplier",
+            "product_id",
+            "supplier_id",
+        ),
+    )
 
 
 class SupplierPriceCalculation(Base):
@@ -275,6 +294,7 @@ class SupplierPriceCalculation(Base):
     fx_markup_abs_used = Column(Numeric, nullable=False, default=0)
     transport_used = Column(Numeric, nullable=False)
     reexport_used = Column(Numeric, nullable=False)
+    insurance_used = Column(Numeric, nullable=False, default=0)
     agent_fee_used = Column(Numeric, nullable=False)
 
     has_customs_used = Column(Boolean, nullable=False)
@@ -485,6 +505,7 @@ class TempCustomerCostOption(Base):
     fx_markup_abs_used = Column(Numeric, nullable=False, default=0)
     transport_used = Column(Numeric, nullable=False)
     reexport_used = Column(Numeric, nullable=False)
+    insurance_used = Column(Numeric, nullable=False, default=0)
     agent_fee_used = Column(Numeric, nullable=False)
 
     has_customs_used = Column(Boolean, nullable=False)
@@ -764,6 +785,7 @@ class TempTargetPriceOption(Base):
     fx_markup_abs_used = Column(Numeric, nullable=False, default=0)
     transport_used = Column(Numeric, nullable=False)
     reexport_used = Column(Numeric, nullable=False)
+    insurance_used = Column(Numeric, nullable=False, default=0)
     agent_fee_used = Column(Numeric, nullable=False)
 
     has_customs_used = Column(Boolean, nullable=False)
@@ -843,6 +865,7 @@ class TargetPriceCalculation(Base):
     fx_markup_abs_used = Column(Numeric, nullable=False, default=0)
     transport_used = Column(Numeric, nullable=False)
     reexport_used = Column(Numeric, nullable=False)
+    insurance_used = Column(Numeric, nullable=False, default=0)
     agent_fee_used = Column(Numeric, nullable=False)
     has_customs_used = Column(Boolean, nullable=False)
     via_novo_used = Column(Boolean, nullable=False)
@@ -919,6 +942,7 @@ class CustomerPriceCalculation(Base):
     fx_markup_abs_used = Column(Numeric, nullable=False, default=0)
     transport_used = Column(Numeric, nullable=False)
     reexport_used = Column(Numeric, nullable=False)
+    insurance_used = Column(Numeric, nullable=False, default=0)
     agent_fee_used = Column(Numeric, nullable=False)
 
     has_customs_used = Column(Boolean, nullable=False)

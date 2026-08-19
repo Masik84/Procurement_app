@@ -4,6 +4,7 @@ from datetime import date, datetime
 import uuid
 from pathlib import Path
 from decimal import Decimal
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.exports.customer_cost_exporter import CustomerCostExporter
@@ -24,7 +25,10 @@ class CustomerCostService:
         self.price_repository = PriceRepository(session)
         self.cost_calculation = CostCalculationService(session)
         self.supplier_service = SupplierService(session)
-        self.currency_cost_service = SupplierCurrencyCostService(session)
+        self.currency_cost_service = SupplierCurrencyCostService(
+            session,
+            cost_calculation=self.cost_calculation,
+        )
         self.importer = CustomerCostImporter()
         self.exporter = CustomerCostExporter(session)
 
@@ -214,38 +218,49 @@ class CustomerCostService:
         if not manual_prices:
             return 0
 
-        price_date = datetime.utcnow()
-        saved_count = 0
-
+        valid_inputs: list[tuple[int, int, object]] = []
         for manual_price in manual_prices:
-            temp_import_id = manual_price.get("temp_import_id")
-            supplier_id = manual_price.get("supplier_id")
+            try:
+                temp_import_id = int(manual_price.get("temp_import_id"))
+                supplier_id = int(manual_price.get("supplier_id"))
+            except (TypeError, ValueError):
+                continue
             price = manual_price.get("price")
-
-            if temp_import_id is None or supplier_id is None or price in (None, ""):
+            if price in (None, ""):
                 continue
+            valid_inputs.append((temp_import_id, supplier_id, price))
+        if not valid_inputs:
+            return 0
 
-            row = self.session.query(TempCustomerCostImport).filter(
-                TempCustomerCostImport.id == int(temp_import_id)
-            ).first()
-            if row is None or row.selected_product_id is None:
+        row_ids = {temp_import_id for temp_import_id, _, _ in valid_inputs}
+        rows_by_id = {
+            int(row.id): row
+            for row in self.session.query(TempCustomerCostImport).filter(
+                TempCustomerCostImport.id.in_(row_ids),
+                TempCustomerCostImport.selected_product_id.isnot(None),
+            ).all()
+        }
+        supplier_ids = {supplier_id for _, supplier_id, _ in valid_inputs}
+        suppliers_by_id = {
+            int(supplier.id): supplier
+            for supplier in self.session.query(Supplier).filter(Supplier.id.in_(supplier_ids)).all()
+        }
+        price_date = datetime.utcnow()
+        records = []
+        for temp_import_id, supplier_id, price in valid_inputs:
+            row = rows_by_id.get(temp_import_id)
+            supplier = suppliers_by_id.get(supplier_id)
+            if row is None or supplier is None:
                 continue
+            records.append({
+                "supplier_id": supplier_id,
+                "product_id": int(row.selected_product_id),
+                "price": price,
+                "currency_code": supplier.base_currency,
+                "price_date": price_date,
+            })
 
-            supplier = self.session.query(Supplier).filter(Supplier.id == int(supplier_id)).first()
-            if supplier is None:
-                continue
-
-            self.price_repository.save_supplier_price(
-                supplier_id=int(supplier_id),
-                product_id=int(row.selected_product_id),
-                price=price,
-                currency_code=supplier.base_currency,
-                price_date=price_date,
-            )
-            saved_count += 1
-
-        self.session.flush()
-        return saved_count
+        return self.price_repository.save_supplier_prices_batch(records)
 
     def select_manual_options(self, batch_id: str, imported_by: str, manual_prices: list[dict] | None) -> None:
         if not manual_prices:
@@ -260,27 +275,42 @@ class CustomerCostService:
                 continue
             manual_suppliers_by_row.setdefault(temp_import_id, set()).add(supplier_id)
 
-        for temp_import_id, supplier_ids in manual_suppliers_by_row.items():
-            options = self.session.query(TempCustomerCostOption).filter(
-                TempCustomerCostOption.batch_id == batch_id,
-                TempCustomerCostOption.imported_by == imported_by,
-                TempCustomerCostOption.temp_import_id == temp_import_id,
-                TempCustomerCostOption.supplier_id.in_(supplier_ids),
-            ).order_by(
-                TempCustomerCostOption.full_cost_msk.asc(),
-                TempCustomerCostOption.id.desc(),
-            ).all()
-
-            if not options:
+        if not manual_suppliers_by_row:
+            return
+        row_ids = set(manual_suppliers_by_row)
+        all_supplier_ids = {
+            supplier_id
+            for supplier_ids in manual_suppliers_by_row.values()
+            for supplier_id in supplier_ids
+        }
+        options = self.session.query(TempCustomerCostOption).filter(
+            TempCustomerCostOption.batch_id == batch_id,
+            TempCustomerCostOption.imported_by == imported_by,
+            TempCustomerCostOption.temp_import_id.in_(row_ids),
+            TempCustomerCostOption.supplier_id.in_(all_supplier_ids),
+        ).all()
+        best_by_row: dict[int, TempCustomerCostOption] = {}
+        for option in options:
+            row_id = int(option.temp_import_id)
+            if int(option.supplier_id) not in manual_suppliers_by_row.get(row_id, set()):
                 continue
+            current = best_by_row.get(row_id)
+            if current is None or (
+                option.full_cost_msk,
+                -int(option.id),
+            ) < (
+                current.full_cost_msk,
+                -int(current.id),
+            ):
+                best_by_row[row_id] = option
 
-            row = self.session.query(TempCustomerCostImport).filter(
-                TempCustomerCostImport.id == temp_import_id,
-                TempCustomerCostImport.batch_id == batch_id,
-                TempCustomerCostImport.imported_by == imported_by,
-            ).first()
-            if row is not None:
-                row.selected_option_id = options[0].id
+        rows = self.session.query(TempCustomerCostImport).filter(
+            TempCustomerCostImport.id.in_(best_by_row),
+            TempCustomerCostImport.batch_id == batch_id,
+            TempCustomerCostImport.imported_by == imported_by,
+        ).all()
+        for row in rows:
+            row.selected_option_id = best_by_row[int(row.id)].id
 
         self.session.flush()
 
@@ -291,24 +321,25 @@ class CustomerCostService:
         are not stable.  The stable user choice is the supplier selected for the temp
         import row.
         """
-        rows = self.session.query(TempCustomerCostImport).filter(
-            TempCustomerCostImport.batch_id == batch_id,
-            TempCustomerCostImport.imported_by == imported_by,
-            TempCustomerCostImport.selected_option_id.isnot(None),
-        ).all()
-
-        choices: dict[int, int] = {}
-        for row in rows:
-            option = self.session.query(TempCustomerCostOption).filter(
-                TempCustomerCostOption.id == row.selected_option_id,
+        rows = (
+            self.session.query(
+                TempCustomerCostImport.id,
+                TempCustomerCostOption.supplier_id,
+            )
+            .join(
+                TempCustomerCostOption,
+                TempCustomerCostOption.id == TempCustomerCostImport.selected_option_id,
+            )
+            .filter(
+                TempCustomerCostImport.batch_id == batch_id,
+                TempCustomerCostImport.imported_by == imported_by,
                 TempCustomerCostOption.batch_id == batch_id,
                 TempCustomerCostOption.imported_by == imported_by,
-                TempCustomerCostOption.temp_import_id == row.id,
-            ).first()
-            if option is not None:
-                choices[int(row.id)] = int(option.supplier_id)
-
-        return choices
+                TempCustomerCostOption.temp_import_id == TempCustomerCostImport.id,
+            )
+            .all()
+        )
+        return {int(row_id): int(supplier_id) for row_id, supplier_id in rows}
 
     def _restore_selected_supplier_choices(
         self,
@@ -371,39 +402,76 @@ class CustomerCostService:
             TempCustomerCostImport.selected_product_id.isnot(None),
         ).order_by(TempCustomerCostImport.import_row_no.asc(), TempCustomerCostImport.id.asc()).all()
 
+        prices_by_product = self.price_repository.get_supplier_prices_for_products(
+            (row.selected_product_id for row in rows),
+            only_rating_calc=False,
+            min_price_date=min_price_date,
+        )
+        supplier_ids = {
+            price.supplier_id
+            for prices in prices_by_product.values()
+            for price in prices
+        }
+        self.currency_cost_service.preload_reference_data(
+            product_ids=(row.selected_product_id for row in rows),
+            supplier_ids=supplier_ids,
+        )
+
         created_count = 0
         for row in rows:
-            seen_supplier_ids: set[int] = set()
-
-            current_prices = self.price_repository.get_suppliers_with_current_prices_for_product(
-                product_id=row.selected_product_id,
-                only_rating_calc=False,
-                min_price_date=min_price_date,
-            )
-            for supplier_price in current_prices:
+            for supplier_price in prices_by_product.get(int(row.selected_product_id), []):
                 self._create_option_from_snapshot(row, batch_id, imported_by, supplier_price)
-                seen_supplier_ids.add(supplier_price.supplier_id)
                 created_count += 1
 
-            latest_history = self.price_repository.get_latest_history_prices_for_product(
-                product_id=row.selected_product_id,
-                only_rating_calc=False,
-                min_price_date=min_price_date,
-            )
-            for supplier_price in latest_history:
-                if supplier_price.supplier_id in seen_supplier_ids:
-                    continue
-                self._create_option_from_snapshot(row, batch_id, imported_by, supplier_price)
-                seen_supplier_ids.add(supplier_price.supplier_id)
-                created_count += 1
-
+        # IDs are needed for the exact former database ordering and for
+        # selected_option_id. Flush all new options in one go.
         self.session.flush()
-        self.rank_supplier_options(batch_id, imported_by)
-        self.select_best_options(batch_id, imported_by)
-        self._restore_selected_supplier_choices(batch_id, imported_by, selected_suppliers_by_row)
+        self.session.execute(text("""
+            WITH ranked AS (
+                SELECT
+                    id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY temp_import_id
+                        ORDER BY full_cost_msk ASC, supplier_name ASC, id ASC
+                    ) AS new_rank
+                FROM temp_customer_cost_options
+                WHERE batch_id = :batch_id AND imported_by = :imported_by
+            )
+            UPDATE temp_customer_cost_options AS target
+            SET opt_rank = ranked.new_rank
+            FROM ranked
+            WHERE target.id = ranked.id
+        """), {"batch_id": batch_id, "imported_by": imported_by})
+        ordered_options = self.session.query(TempCustomerCostOption).filter(
+            TempCustomerCostOption.batch_id == batch_id,
+            TempCustomerCostOption.imported_by == imported_by,
+        ).order_by(
+            TempCustomerCostOption.temp_import_id.asc(),
+            TempCustomerCostOption.opt_rank.asc(),
+            TempCustomerCostOption.id.asc(),
+        ).populate_existing().all()
+        options_by_row = {}
+        for option in ordered_options:
+            row_options = options_by_row.setdefault(int(option.temp_import_id), [])
+            row_options.append(option)
+
+        for row in rows:
+            options = options_by_row.get(int(row.id), [])
+            selected_supplier_id = selected_suppliers_by_row.get(int(row.id))
+            if selected_supplier_id is not None:
+                row.selected_option_id = next(
+                    (
+                        option.id for option in options
+                        if int(option.supplier_id) == selected_supplier_id
+                    ),
+                    None,
+                )
+            else:
+                row.selected_option_id = options[0].id if len(options) == 1 else None
+        self.session.flush()
         return created_count
 
-    def _create_option_from_snapshot(self, row: TempCustomerCostImport, batch_id: str, imported_by: str, supplier_price) -> None:
+    def _create_option_from_snapshot(self, row: TempCustomerCostImport, batch_id: str, imported_by: str, supplier_price) -> TempCustomerCostOption:
         calc = self.currency_cost_service.calculate_costs_for_price_record(
             supplier_id=supplier_price.supplier_id,
             product_id=row.selected_product_id,
@@ -435,6 +503,7 @@ class CustomerCostService:
             fx_markup_abs_used=safe(calc.fx_markup_abs_used),
             transport_used=safe(calc.transport_used),
             reexport_used=safe(calc.reexport_used),
+            insurance_used=safe(calc.insurance_used),
             has_customs_used=calc.has_customs_used,
             via_novo_used=calc.via_novo_used,
             bank_fee_used=safe(calc.bank_fee_used),
@@ -453,26 +522,27 @@ class CustomerCostService:
         )
 
         self.session.add(option)
+        return option
 
     def rank_supplier_options(self, batch_id: str, imported_by: str) -> None:
-        rows = self.session.query(TempCustomerCostImport).filter(
-            TempCustomerCostImport.batch_id == batch_id,
-            TempCustomerCostImport.imported_by == imported_by,
+        options = self.session.query(TempCustomerCostOption).filter(
+            TempCustomerCostOption.batch_id == batch_id,
+            TempCustomerCostOption.imported_by == imported_by,
+        ).order_by(
+            TempCustomerCostOption.temp_import_id.asc(),
+            TempCustomerCostOption.full_cost_msk.asc(),
+            TempCustomerCostOption.supplier_name.asc(),
+            TempCustomerCostOption.id.asc(),
         ).all()
-        for row in rows:
-            options = self.session.query(TempCustomerCostOption).filter(
-                TempCustomerCostOption.batch_id == batch_id,
-                TempCustomerCostOption.imported_by == imported_by,
-                TempCustomerCostOption.temp_import_id == row.id,
-            ).order_by(
-                TempCustomerCostOption.full_cost_msk.asc(),
-                TempCustomerCostOption.supplier_name.asc(),
-                TempCustomerCostOption.id.asc(),
-            ).all()
-            rank = 1
-            for option in options:
-                option.opt_rank = rank
-                rank += 1
+        current_row_id: int | None = None
+        rank = 0
+        for option in options:
+            row_id = int(option.temp_import_id)
+            if row_id != current_row_id:
+                current_row_id = row_id
+                rank = 0
+            rank += 1
+            option.opt_rank = rank
         self.session.flush()
 
     def select_best_options(self, batch_id: str, imported_by: str) -> None:
@@ -480,19 +550,21 @@ class CustomerCostService:
             TempCustomerCostImport.batch_id == batch_id,
             TempCustomerCostImport.imported_by == imported_by,
         ).all()
-
+        options = self.session.query(TempCustomerCostOption).filter(
+            TempCustomerCostOption.batch_id == batch_id,
+            TempCustomerCostOption.imported_by == imported_by,
+        ).order_by(
+            TempCustomerCostOption.temp_import_id.asc(),
+            TempCustomerCostOption.opt_rank.asc(),
+            TempCustomerCostOption.id.asc(),
+        ).all()
+        options_by_row: dict[int, list[TempCustomerCostOption]] = {}
+        for option in options:
+            options_by_row.setdefault(int(option.temp_import_id), []).append(option)
         for row in rows:
-            options = self.session.query(TempCustomerCostOption).filter(
-                TempCustomerCostOption.batch_id == batch_id,
-                TempCustomerCostOption.imported_by == imported_by,
-                TempCustomerCostOption.temp_import_id == row.id,
-            ).order_by(
-                TempCustomerCostOption.opt_rank.asc(),
-                TempCustomerCostOption.id.asc(),
-            ).all()
-
-            if len(options) == 1:
-                row.selected_option_id = options[0].id
+            row_options = options_by_row.get(int(row.id), [])
+            if len(row_options) == 1:
+                row.selected_option_id = row_options[0].id
             else:
                 row.selected_option_id = None
 
@@ -513,13 +585,26 @@ class CustomerCostService:
             TempCustomerCostImport.imported_by == imported_by,
         ).order_by(TempCustomerCostImport.import_row_no.asc(), TempCustomerCostImport.id.asc()).all()
 
+        option_ids = {
+            int(row.selected_option_id)
+            for row in rows
+            if row.selected_product_id is not None and row.selected_option_id is not None
+        }
+        options_by_id = {
+            int(option.id): option
+            for option in (
+                self.session.query(TempCustomerCostOption)
+                .filter(TempCustomerCostOption.id.in_(option_ids))
+                .all()
+                if option_ids else []
+            )
+        }
+
         saved_count = 0
         for row in rows:
             if row.selected_product_id is None or row.selected_option_id is None:
                 continue
-            option = self.session.query(TempCustomerCostOption).filter(
-                TempCustomerCostOption.id == row.selected_option_id
-            ).first()
+            option = options_by_id.get(int(row.selected_option_id))
             if option is None:
                 continue
 
@@ -547,6 +632,7 @@ class CustomerCostService:
                 fx_markup_abs_used=option.fx_markup_abs_used,
                 transport_used=option.transport_used,
                 reexport_used=option.reexport_used,
+                insurance_used=option.insurance_used,
                 agent_fee_used=option.agent_fee_used if option.agent_fee_used is not None else Decimal("0"),
                 has_customs_used=option.has_customs_used,
                 via_novo_used=option.via_novo_used,

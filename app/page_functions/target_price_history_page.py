@@ -98,6 +98,7 @@ class TargetPriceHistoryPage(QWidget):
         "FX markup abs",
         "Transport",
         "Re-export",
+        "Insurance %",
         "Agent fee",
         "Has customs",
         "Via Novo",
@@ -528,6 +529,7 @@ class TargetPriceHistoryPage(QWidget):
             calc.fx_markup_abs_used,
             calc.transport_used,
             calc.reexport_used,
+            calc.insurance_used,
             calc.agent_fee_used,
             calc.has_customs_used,
             calc.via_novo_used,
@@ -598,7 +600,7 @@ class TargetPriceHistoryPage(QWidget):
             return str(prepared)
         if base in INTEGER_NUMERIC_HEADERS:
             return "" if prepared == "" else str(prepared)
-        if base == "FX markup %":
+        if base in {"FX markup %", "Insurance %"}:
             try:
                 return f"{float(prepared) * 100:.2f}%".replace(".", ",")
             except (TypeError, ValueError):

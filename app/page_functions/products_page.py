@@ -6,6 +6,7 @@ from decimal import Decimal, InvalidOperation
 import re
 import pythoncom
 import win32com.client as win32
+from app.utils.excel_format_rules import save_workbook_xlsx
 from sqlalchemy.exc import SQLAlchemyError
 from PySide6.QtWidgets import (
     QMessageBox,
@@ -947,7 +948,7 @@ class ProductsPage(QWidget):
             # if rows:
             #     ws.Range(f"D2:D{len(rows) + 1}").NumberFormat = "General"
 
-            wb.SaveAs(str(Path(file_path).resolve()))
+            save_workbook_xlsx(wb, file_path)
 
         except PermissionError:
             raise

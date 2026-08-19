@@ -14,7 +14,7 @@ from app.services.cost_calculation_service import CostCalculationService
 from app.services.price_repository import PriceRepository
 from app.services.supplier_currency_cost_service import SupplierCurrencyCostService
 from app.utils.excel_fast_writer import write_excel_table
-from app.utils.excel_format_rules import FORMATS, cost_calc_headers, set_number_format_safe
+from app.utils.excel_format_rules import FORMATS, cost_calc_headers, set_number_format_safe, to_invariant_number_format
 
 
 class SupplierPriceExporter:
@@ -358,7 +358,7 @@ class SupplierPriceExporter:
         if letter:
             set_number_format_safe(
                 ws.Columns(f"{letter}:{letter}"),
-                format_local,
+                to_invariant_number_format(format_local) or "General",
                 format_local,
             )
 
@@ -544,6 +544,7 @@ class SupplierPriceExporter:
             fx_rate = calc_row.fx_rate_used
             transport = calc_row.transport_used
             reexport = calc_row.reexport_used
+            insurance = calc_row.insurance_used
             fx_markup = calc_row.fx_markup_used
             fx_markup_abs = calc_row.fx_markup_abs_used
             has_customs = bool(calc_row.has_customs_used)
@@ -556,6 +557,7 @@ class SupplierPriceExporter:
                 return None
             transport = getattr(supplier, "transport_cost_per_l", None)
             reexport = getattr(supplier, "reexport_percent", None)
+            insurance = getattr(supplier, "insurance_percent", None)
             fx_markup = getattr(supplier, "fx_rate_markup", None)
             fx_markup_abs = getattr(supplier, "fx_rate_markup_abs", None)
             has_customs = bool(getattr(supplier, "has_import_duty", False))
@@ -573,6 +575,7 @@ class SupplierPriceExporter:
                 fx_rate=fx_rate,
                 transport=transport,
                 reexport=reexport,
+                insurance=insurance,
                 fx_markup=fx_markup,
                 fx_markup_abs=fx_markup_abs,
                 has_customs=has_customs,

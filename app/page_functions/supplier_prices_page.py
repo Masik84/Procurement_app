@@ -141,6 +141,7 @@ class SupplierPricesPage(QWidget):
         if hasattr(self.ui, "line_AgentFee"):
             self._setup_number_field(self.ui.line_AgentFee, "Формат: 0,2500")
         self._setup_number_field(self.ui.line_Reexport, "Введите 3,5 для 3,5% — знак % не нужен")
+        self._setup_number_field(self.ui.line_Insurance, "Введите 1 для 1% — знак % не нужен")
         self._setup_number_field(self.ui.line_FXMarkup, "Введите 3,5 для 3,5% — знак % не нужен")
         self._setup_number_field(self.ui.line_FXMarkupAbs, "Формат: 1,5000")
 
@@ -166,6 +167,7 @@ class SupplierPricesPage(QWidget):
         if hasattr(self.ui, "line_AgentFee"):
             self.ui.line_AgentFee.editingFinished.connect(self.normalize_agent_fee)
         self.ui.line_Reexport.editingFinished.connect(self.normalize_reexport)
+        self.ui.line_Insurance.editingFinished.connect(self.normalize_insurance)
         self.ui.line_FXMarkup.editingFinished.connect(self.normalize_fx_markup)
         self.ui.line_FXMarkupAbs.editingFinished.connect(self.normalize_fx_markup_abs)
 
@@ -197,6 +199,7 @@ class SupplierPricesPage(QWidget):
             self.ui.line_Transport,
             *([self.ui.line_AgentFee] if hasattr(self.ui, "line_AgentFee") else []),
             self.ui.line_Reexport,
+            self.ui.line_Insurance,
             self.ui.line_FXMarkup,
             self.ui.line_FXMarkupAbs,
         }:
@@ -245,6 +248,7 @@ class SupplierPricesPage(QWidget):
             self.ui.line_AgentFee.clear()
         self.set_combo_text(self.ui.cbo_viaNovo, "через Ново")
         self.ui.line_Reexport.setText("0,0%")
+        self.ui.line_Insurance.setText("0,0%")
         self.ui.line_FXMarkup.setText("0,0%")
         self.ui.line_FXMarkupAbs.setText("0,0000")
         self.set_combo_text(self.ui.cbo_Customs, "да")
@@ -469,6 +473,7 @@ class SupplierPricesPage(QWidget):
             if hasattr(self.ui, "line_AgentFee"):
                 self.ui.line_AgentFee.clear()
             self.ui.line_Reexport.setText("0,0%")
+            self.ui.line_Insurance.setText("0,0%")
             self.ui.line_FXMarkup.setText("0,0%")
             self.ui.line_FXMarkupAbs.setText("0,0000")
             self.set_combo_text(self.ui.cbo_Currency, "-")
@@ -512,6 +517,7 @@ class SupplierPricesPage(QWidget):
             self.ui.line_AgentFee.setText(self.format_number(supplier_data.agent_fee, 4))
         self.set_combo_text(self.ui.cbo_viaNovo, "через Ново" if supplier_data.is_via_novo else "в Мск")
         self.ui.line_Reexport.setText(self.format_percent(supplier_data.reexport_percent))
+        self.ui.line_Insurance.setText(self.format_percent(supplier_data.insurance_percent))
         self.ui.line_FXMarkup.setText(self.format_percent(supplier_data.fx_rate_markup))
         self.ui.line_FXMarkupAbs.setText(self.format_number(supplier_data.fx_rate_markup_abs, 4))
         self.set_combo_text(self.ui.cbo_Customs, "да" if supplier_data.has_import_duty else "нет")
@@ -545,6 +551,7 @@ class SupplierPricesPage(QWidget):
             transport_cost_per_l=self.parse_decimal_field(self.ui.line_Transport, "Транспорт"),
             agent_fee=self.parse_decimal_field(self.ui.line_AgentFee, "Agent fee") if hasattr(self.ui, "line_AgentFee") else Decimal("0"),
             reexport_percent=self.parse_percent_field(self.ui.line_Reexport, "Реэкспорт"),
+            insurance_percent=self.parse_percent_field(self.ui.line_Insurance, "Insurance %"),
             fx_rate_markup=self.parse_percent_field(self.ui.line_FXMarkup, "FX markup %"),
             fx_rate_markup_abs=self.parse_decimal_field(self.ui.line_FXMarkupAbs, "FX markup abs"),
             is_via_novo=self.ui.cbo_viaNovo.currentText() == "через Ново",
@@ -629,6 +636,9 @@ class SupplierPricesPage(QWidget):
 
     def normalize_reexport(self):
         self._normalize_percent_widget(self.ui.line_Reexport)
+
+    def normalize_insurance(self):
+        self._normalize_percent_widget(self.ui.line_Insurance)
 
     def normalize_fx_markup(self):
         self._normalize_percent_widget(self.ui.line_FXMarkup)

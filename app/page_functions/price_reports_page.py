@@ -574,13 +574,14 @@ class PriceReportsPage(QWidget):
         with self.get_session() as session:
             products = self._get_filtered_products(session)
             fixed_costs = session.query(FixedCosts).first()
+            stock_by_product = self._prepare_report_caches(session, products, min_price_date)
             preview_rows: List[List[object]] = []
             export_rows: List[List[object]] = []
             max_export_suppliers = 0
             product_export_data = []
 
             for product in products:
-                stock = session.query(ProductStock).filter(ProductStock.product_id == product.id).first()
+                stock = stock_by_product.get(int(product.id))
                 options = self._get_all_supplier_options_for_product(
                     session=session,
                     product=product,
@@ -611,14 +612,21 @@ class PriceReportsPage(QWidget):
 
             products = self._get_filtered_products(session)
             fixed_costs = session.query(FixedCosts).first()
+            stock_by_product = self._prepare_report_caches(session, products, min_price_date)
             show_prev = self.ui.cbx_ShowPrevPrice.isChecked()
+            if show_prev:
+                self._prepare_previous_price_cache(
+                    session,
+                    int(supplier.id),
+                    (int(product.id) for product in products),
+                )
             preview_rows: List[List[object]] = []
             export_rows: List[List[object]] = []
             max_other_suppliers = 0
             report_data = []
 
             for product in products:
-                stock = session.query(ProductStock).filter(ProductStock.product_id == product.id).first()
+                stock = stock_by_product.get(int(product.id))
                 chosen = self._build_supplier_option_for_specific_supplier(
                     session=session,
                     supplier=supplier,
@@ -1207,6 +1215,111 @@ class PriceReportsPage(QWidget):
         self.clear_preview_table()
         self.show_message("Форма очищена")
 
+    def _prepare_report_caches(
+        self,
+        session,
+        products: Sequence[Product],
+        min_price_date: Optional[datetime],
+    ) -> dict[int, ProductStock]:
+        """Load report inputs once instead of querying inside every product loop."""
+        product_ids = [int(product.id) for product in products]
+        stocks = (
+            session.query(ProductStock).filter(ProductStock.product_id.in_(product_ids)).all()
+            if product_ids else []
+        )
+
+        prices_by_product = PriceRepository(session).get_supplier_prices_for_products(
+            product_ids,
+            only_rating_calc=False,
+            min_price_date=min_price_date,
+            exclude_manual=False,
+        )
+        latest_records: dict[tuple[int, int], dict[str, object]] = {}
+        supplier_ids_by_product: dict[int, set[int]] = {}
+        supplier_ids: set[int] = set()
+        for product_id, prices in prices_by_product.items():
+            for price in prices:
+                supplier_id = int(price.supplier_id)
+                supplier_ids.add(supplier_id)
+                supplier_ids_by_product.setdefault(int(product_id), set()).add(supplier_id)
+                latest_records[(supplier_id, int(product_id))] = {
+                    "price": self._to_decimal(price.price),
+                    "price_date": price.price_date,
+                    "currency": price.currency_code or "",
+                }
+
+        suppliers = (
+            session.query(Supplier).filter(Supplier.id.in_(supplier_ids)).all()
+            if supplier_ids else []
+        )
+        pack_types = session.query(PackType).all()
+        marking_rates = session.query(MarkingRate).all()
+        rate_by_pack_name = {
+            str(rate.pack_type): self._to_decimal(rate.cost_per_l, Decimal("0")) or Decimal("0")
+            for rate in marking_rates
+        }
+        marking_by_volume = {
+            pack_type.volume: rate_by_pack_name.get(str(pack_type.name), Decimal("0"))
+            for pack_type in pack_types
+            if pack_type.volume is not None
+        }
+
+        self._report_latest_price_records = latest_records
+        self._report_supplier_ids_by_product = supplier_ids_by_product
+        self._report_suppliers_by_id = {int(supplier.id): supplier for supplier in suppliers}
+        self._report_marking_by_volume = marking_by_volume
+        return {int(stock.product_id): stock for stock in stocks}
+
+    def _prepare_previous_price_cache(
+        self,
+        session,
+        supplier_id: int,
+        product_ids,
+    ) -> None:
+        ids = list(product_ids)
+        rows = (
+            session.query(PriceHistory)
+            .filter(
+                PriceHistory.supplier_id == supplier_id,
+                PriceHistory.product_id.in_(ids),
+                PriceHistory.price.isnot(None),
+            )
+            .order_by(
+                PriceHistory.product_id.asc(),
+                PriceHistory.price_date.desc(),
+                PriceHistory.id.desc(),
+            )
+            .all()
+            if ids else []
+        )
+        histories_by_product: dict[int, list[PriceHistory]] = {}
+        for row in rows:
+            histories_by_product.setdefault(int(row.product_id), []).append(row)
+
+        previous_records: dict[tuple[int, int], dict[str, object] | None] = {}
+        latest_records = getattr(self, "_report_latest_price_records", {})
+        for product_id in ids:
+            current = latest_records.get((supplier_id, int(product_id)))
+            current_date = current.get("price_date") if current else None
+            previous = None
+            if current_date is not None:
+                previous = next(
+                    (
+                        row for row in histories_by_product.get(int(product_id), [])
+                        if row.price_date < current_date
+                    ),
+                    None,
+                )
+            previous_records[(supplier_id, int(product_id))] = (
+                {
+                    "price": self._to_decimal(previous.price),
+                    "price_date": previous.price_date,
+                    "currency": previous.currency or "",
+                }
+                if previous is not None else None
+            )
+        self._report_previous_price_records = previous_records
+
     def _get_latest_price_record(
         self,
         session,
@@ -1214,6 +1327,10 @@ class PriceReportsPage(QWidget):
         product_id: int,
         min_price_date: Optional[datetime] = None,
     ):
+        cached_records = getattr(self, "_report_latest_price_records", None)
+        if cached_records is not None:
+            return cached_records.get((int(supplier_id), int(product_id)))
+
         current_query = session.query(CurrentSupplierPrice).filter(
             CurrentSupplierPrice.supplier_id == supplier_id,
             CurrentSupplierPrice.product_id == product_id,
@@ -1248,6 +1365,10 @@ class PriceReportsPage(QWidget):
     def _get_previous_price_record(self, session, supplier_id: int, product_id: int, current_price_date: Optional[datetime]):
         if current_price_date is None:
             return None
+
+        cached_records = getattr(self, "_report_previous_price_records", None)
+        if cached_records is not None:
+            return cached_records.get((int(supplier_id), int(product_id)))
 
         history = (
             session.query(PriceHistory)
@@ -1361,25 +1482,34 @@ class PriceReportsPage(QWidget):
         include_supplier_without_rating: bool = False,
         min_price_date: Optional[datetime] = None,
     ) -> List[SupplierOption]:
-        current_query = session.query(CurrentSupplierPrice.supplier_id).filter(
-            CurrentSupplierPrice.product_id == product.id,
-            CurrentSupplierPrice.price.isnot(None),
-        )
-        history_query = session.query(PriceHistory.supplier_id).filter(
-            PriceHistory.product_id == product.id,
-            PriceHistory.price.isnot(None),
-        )
-        if min_price_date is not None:
-            current_query = current_query.filter(CurrentSupplierPrice.last_update >= min_price_date)
-            history_query = history_query.filter(PriceHistory.price_date >= min_price_date)
-        supplier_ids = {row[0] for row in current_query.all()}
-        supplier_ids.update(row[0] for row in history_query.all())
+        cached_supplier_ids = getattr(self, "_report_supplier_ids_by_product", None)
+        if cached_supplier_ids is not None:
+            supplier_ids = set(cached_supplier_ids.get(int(product.id), set()))
+        else:
+            current_query = session.query(CurrentSupplierPrice.supplier_id).filter(
+                CurrentSupplierPrice.product_id == product.id,
+                CurrentSupplierPrice.price.isnot(None),
+            )
+            history_query = session.query(PriceHistory.supplier_id).filter(
+                PriceHistory.product_id == product.id,
+                PriceHistory.price.isnot(None),
+            )
+            if min_price_date is not None:
+                current_query = current_query.filter(CurrentSupplierPrice.last_update >= min_price_date)
+                history_query = history_query.filter(PriceHistory.price_date >= min_price_date)
+            supplier_ids = {row[0] for row in current_query.all()}
+            supplier_ids.update(row[0] for row in history_query.all())
         if exclude_supplier_id:
             supplier_ids.discard(exclude_supplier_id)
 
         options: List[SupplierOption] = []
+        cached_suppliers = getattr(self, "_report_suppliers_by_id", None)
         for supplier_id in supplier_ids:
-            supplier = session.query(Supplier).filter(Supplier.id == supplier_id).first()
+            supplier = (
+                cached_suppliers.get(int(supplier_id))
+                if cached_suppliers is not None
+                else session.query(Supplier).filter(Supplier.id == supplier_id).first()
+            )
             if not supplier:
                 continue
             if not include_supplier_without_rating and not bool(getattr(supplier, "rating_calc", True)):
@@ -1449,6 +1579,7 @@ class PriceReportsPage(QWidget):
                 return None
 
         reexport = self._to_decimal(getattr(supplier, "reexport_percent", None), Decimal("0"))
+        insurance = self._to_decimal(getattr(supplier, "insurance_percent", None), Decimal("0"))
         fx_markup = self._to_decimal(getattr(supplier, "fx_rate_markup", None), Decimal("0"))
         fx_markup_abs = self._to_decimal(getattr(supplier, "fx_rate_markup_abs", None), Decimal("0"))
         effective_fx_rate = fx_rate * (Decimal("1") + fx_markup) + fx_markup_abs
@@ -1467,12 +1598,13 @@ class PriceReportsPage(QWidget):
             marking = self._get_marking_cost(session, product)
 
         customs_multiplier = Decimal("1") + customs_clearance if bool(getattr(supplier, "has_import_duty", False)) else Decimal("1")
+        customs_and_insurance_multiplier = customs_multiplier + insurance
 
         if bool(getattr(supplier, "is_rf", False)):
             base_before_add = (
                 (supplier_price + transport)
                 * (Decimal("1") + reexport)
-                * customs_multiplier
+                * customs_and_insurance_multiplier
                 * effective_fx_rate
             )
             base = base_before_add + marking + (agent_fee * fx_rate)
@@ -1480,7 +1612,7 @@ class PriceReportsPage(QWidget):
             base_before_add = (
                 (supplier_price + transport)
                 * (Decimal("1") + reexport)
-                * customs_multiplier
+                * customs_and_insurance_multiplier
                 * (Decimal("1") + bank_fee)
                 * effective_fx_rate
             )
@@ -1531,6 +1663,9 @@ class PriceReportsPage(QWidget):
     def _get_marking_cost(self, session, product: Product) -> Decimal:
         if product.pack is None:
             return Decimal("0")
+        cached_marking = getattr(self, "_report_marking_by_volume", None)
+        if cached_marking is not None:
+            return cached_marking.get(product.pack, Decimal("0"))
         pack_type = session.query(PackType).filter(PackType.volume == product.pack).first()
         if not pack_type:
             return Decimal("0")

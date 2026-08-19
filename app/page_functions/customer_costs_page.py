@@ -272,6 +272,9 @@ class CustomerCostsPage(QWidget):
     def _get_product_name_by_id(self, product_id: int | None) -> str:
         if not product_id:
             return ""
+        cached = getattr(self, "_display_product_names", {})
+        if int(product_id) in cached:
+            return cached[int(product_id)]
         with self.get_session() as session:
             product = session.query(Product).filter(Product.id == product_id).first()
             return product.name if product else ""
@@ -279,6 +282,9 @@ class CustomerCostsPage(QWidget):
     def _get_supplier_option_name(self, row_id: int, option_id: int | None) -> str:
         if not option_id:
             return ""
+        cached = getattr(self, "_display_option_names", {}).get(int(option_id))
+        if cached is not None and cached[0] == int(row_id):
+            return cached[1]
         with self.get_session() as session:
             option = (
                 session.query(TempCustomerCostOption)
@@ -360,6 +366,20 @@ class CustomerCostsPage(QWidget):
                 .order_by(TempCustomerCostImport.import_row_no.asc(), TempCustomerCostImport.id.asc())
                 .all()
             )
+            product_ids = {int(row.selected_product_id) for row in rows if row.selected_product_id}
+            products = (
+                session.query(Product).filter(Product.id.in_(product_ids)).all()
+                if product_ids else []
+            )
+            option_rows = session.query(TempCustomerCostOption).filter(
+                TempCustomerCostOption.batch_id == self._batch_id,
+                TempCustomerCostOption.imported_by == self._imported_by,
+            ).all()
+            self._display_product_names = {int(product.id): product.name or "" for product in products}
+            self._display_option_names = {
+                int(option.id): (int(option.temp_import_id), option.supplier_name or "")
+                for option in option_rows
+            }
 
         self.display_rows(rows)
 

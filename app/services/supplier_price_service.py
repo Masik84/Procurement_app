@@ -43,7 +43,10 @@ class SupplierPriceService:
         self.cost_calculation_service = CostCalculationService(session)
         self.price_repository = PriceRepository(session)
         self.supplier_service = SupplierService(session)
-        self.currency_cost_service = SupplierCurrencyCostService(session)
+        self.currency_cost_service = SupplierCurrencyCostService(
+            session,
+            cost_calculation=self.cost_calculation_service,
+        )
         self.importer = SupplierPriceImporter()
         self.exporter = SupplierPriceExporter(session)
         self.last_create_products_debug: list[dict] = []
@@ -488,7 +491,7 @@ class SupplierPriceService:
             .all()
         )
 
-        saved_count = 0
+        prices_to_save: list[dict[str, object]] = []
 
         for row in rows:
             if not self._is_positive_price(row.price):
@@ -502,17 +505,15 @@ class SupplierPriceService:
             if not self._is_positive_price(normalized_price):
                 continue
 
-            self.price_repository.save_supplier_price(
-                supplier_id=row.supplier_id,
-                product_id=row.selected_product_id,
-                price=normalized_price,
-                currency_code=currency_code,
-                price_date=row.import_date,
-            )
-            saved_count += 1
+            prices_to_save.append({
+                "supplier_id": row.supplier_id,
+                "product_id": row.selected_product_id,
+                "price": normalized_price,
+                "currency_code": currency_code,
+                "price_date": row.import_date,
+            })
 
-        self.session.flush()
-        return saved_count
+        return self.price_repository.save_supplier_prices_batch(prices_to_save)
 
     def save_supplier_price_calculations(
         self,
@@ -575,6 +576,7 @@ class SupplierPriceService:
                 fx_markup_abs_used=calc_result.fx_markup_abs_used,
                 transport_used=calc_result.transport_used,
                 reexport_used=calc_result.reexport_used,
+                insurance_used=calc_result.insurance_used,
                 agent_fee_used=calc_result.agent_fee_used,
                 has_customs_used=calc_result.has_customs_used,
                 via_novo_used=calc_result.via_novo_used,

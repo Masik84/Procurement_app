@@ -841,29 +841,27 @@ class ProductStockService:
             ProductStock.is_stock_qty: 0,
         }, synchronize_session=False)
 
-        product_ids = [
-            x[0] for x in self.session.query(TempIsImport.selected_product_id).filter(
-                TempIsImport.batch_id == batch_id,
-                TempIsImport.imported_by == imported_by,
-                TempIsImport.selected_product_id.isnot(None),
-            ).distinct().all()
-        ]
+        rows = self.session.query(TempIsImport).filter(
+            TempIsImport.batch_id == batch_id,
+            TempIsImport.imported_by == imported_by,
+            TempIsImport.selected_product_id.isnot(None),
+        ).all()
+        totals_by_product: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
+        for row in rows:
+            totals_by_product[int(row.selected_product_id)] += self._to_decimal(row.stock_qty)
+
+        product_ids = list(totals_by_product)
+        products = self._load_products_map(product_ids)
+        stocks = self._load_product_stock_map(product_ids)
 
         saved = 0
 
         for product_id in product_ids:
-            rows = self.session.query(TempIsImport).filter(
-                TempIsImport.batch_id == batch_id,
-                TempIsImport.imported_by == imported_by,
-                TempIsImport.selected_product_id == product_id,
-            ).all()
-
-            stock_val = sum(self._to_decimal(x.stock_qty) for x in rows)
-
-            product = self.session.query(Product).filter(Product.id == product_id).first()
+            stock_val = totals_by_product[product_id]
+            product = products.get(product_id)
             p_name = product.name if product else ""
 
-            stock = self.session.query(ProductStock).filter(ProductStock.product_id == product_id).first()
+            stock = stocks.get(product_id)
             if stock is None:
                 stock = ProductStock(
                     product_id=product_id,
@@ -890,6 +888,7 @@ class ProductStockService:
                     is_stock_qty=stock_val,
                 )
                 self.session.add(stock)
+                stocks[product_id] = stock
             else:
                 stock.product_name = p_name
                 stock.is_update_date = now

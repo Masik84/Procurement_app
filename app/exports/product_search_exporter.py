@@ -7,7 +7,7 @@ import win32com.client as win32
 
 from app.exports.excel_column_format import apply_standard_worksheet_format, excel_value_by_header
 from app.utils.excel_fast_writer import write_excel_table
-from app.utils.excel_format_rules import FORMATS, set_number_format_safe
+from app.utils.excel_format_rules import FORMATS, set_number_format_safe, save_workbook_xlsx
 
 
 class ProductSearchExporter:
@@ -98,7 +98,7 @@ class ProductSearchExporter:
             set_number_format_safe(ws.Columns("A:A"), FORMATS.TEXT)
             ws.Columns("A:B").ColumnWidth = 28
 
-            wb.SaveAs(str(Path(file_path).resolve()))
+            save_workbook_xlsx(wb, file_path)
 
         except PermissionError:
             raise
@@ -157,7 +157,7 @@ class ProductSearchExporter:
 
             apply_standard_worksheet_format(ws, headers, freeze_cell="C2", zoom=85)
 
-            wb.SaveAs(str(target_path))
+            save_workbook_xlsx(wb, target_path)
             return target_path
 
         except PermissionError:

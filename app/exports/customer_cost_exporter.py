@@ -7,10 +7,10 @@ from typing import Any
 
 import pythoncom
 import win32com.client as win32
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.utils.excel_fast_writer import write_excel_table
-from app.utils.excel_format_rules import FORMATS, set_number_format_safe
+from app.utils.excel_format_rules import FORMATS, set_number_format_safe, save_workbook_xlsx
 
 from app.db.models import TempCustomerCostImport, TempCustomerCostOption
 
@@ -157,7 +157,7 @@ class CustomerCostExporter:
             except Exception:
                 pass
 
-            wb.SaveAs(str(target_path))
+            save_workbook_xlsx(wb, target_path)
             return target_path
         finally:
             try:
@@ -235,7 +235,9 @@ class CustomerCostExporter:
         ws.Range(f"A1:{last_col}1").AutoFilter(1)
 
     def _collect_export_rows(self, batch_id: str, imported_by: str) -> tuple[list[dict], int]:
-        rows = self.session.query(TempCustomerCostImport).filter(
+        rows = self.session.query(TempCustomerCostImport).options(
+            joinedload(TempCustomerCostImport.selected_product)
+        ).filter(
             TempCustomerCostImport.batch_id == batch_id,
             TempCustomerCostImport.imported_by == imported_by,
         ).order_by(
@@ -243,19 +245,24 @@ class CustomerCostExporter:
             TempCustomerCostImport.id.asc(),
         ).all()
 
+        options = self.session.query(TempCustomerCostOption).filter(
+            TempCustomerCostOption.batch_id == batch_id,
+            TempCustomerCostOption.imported_by == imported_by,
+        ).order_by(
+            TempCustomerCostOption.temp_import_id.asc(),
+            TempCustomerCostOption.opt_rank.asc(),
+            TempCustomerCostOption.full_cost_msk.asc(),
+            TempCustomerCostOption.id.asc(),
+        ).all()
+        options_by_row: dict[int, list[TempCustomerCostOption]] = {}
+        for option in options:
+            options_by_row.setdefault(int(option.temp_import_id), []).append(option)
+
         out_rows: list[dict] = []
         max_opt = 0
 
         for row in rows:
-            options = self.session.query(TempCustomerCostOption).filter(
-                TempCustomerCostOption.batch_id == batch_id,
-                TempCustomerCostOption.imported_by == imported_by,
-                TempCustomerCostOption.temp_import_id == row.id,
-            ).order_by(
-                TempCustomerCostOption.opt_rank.asc(),
-                TempCustomerCostOption.full_cost_msk.asc(),
-                TempCustomerCostOption.id.asc(),
-            ).all()
+            options = options_by_row.get(int(row.id), [])
 
             max_opt = max(max_opt, len(options))
 
@@ -462,7 +469,7 @@ class CustomerCostExporter:
             except Exception:
                 pass
 
-            wb.SaveAs(str(target_path))
+            save_workbook_xlsx(wb, target_path)
             return target_path
         finally:
             try:
@@ -478,7 +485,9 @@ class CustomerCostExporter:
             pythoncom.CoUninitialize()
 
     def _collect_kam_rows(self, batch_id: str, imported_by: str, manager_name: str, customer_name: str) -> list[dict]:
-        rows = self.session.query(TempCustomerCostImport).filter(
+        rows = self.session.query(TempCustomerCostImport).options(
+            joinedload(TempCustomerCostImport.selected_product)
+        ).filter(
             TempCustomerCostImport.batch_id == batch_id,
             TempCustomerCostImport.imported_by == imported_by,
             TempCustomerCostImport.manager_name == manager_name,
@@ -488,13 +497,26 @@ class CustomerCostExporter:
             TempCustomerCostImport.id.asc(),
         ).all()
 
+        selected_option_ids = {
+            int(row.selected_option_id)
+            for row in rows
+            if row.selected_option_id is not None
+        }
+        options_by_id = {
+            int(option.id): option
+            for option in (
+                self.session.query(TempCustomerCostOption)
+                .filter(TempCustomerCostOption.id.in_(selected_option_ids))
+                .all()
+                if selected_option_ids else []
+            )
+        }
         out_rows: list[dict] = []
         for row in rows:
-            option = None
-            if row.selected_option_id is not None:
-                option = self.session.query(TempCustomerCostOption).filter(
-                    TempCustomerCostOption.id == row.selected_option_id
-                ).first()
+            option = (
+                options_by_id.get(int(row.selected_option_id))
+                if row.selected_option_id is not None else None
+            )
 
             product = row.selected_product
             out_rows.append({
@@ -592,7 +614,7 @@ class CustomerCostExporter:
             except Exception:
                 pass
 
-            wb.SaveAs(str(target_path))
+            save_workbook_xlsx(wb, target_path)
             return target_path
         finally:
             try:

@@ -4,6 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 import uuid
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.db.models import (
@@ -32,7 +33,10 @@ class TargetPriceService:
         self.price_repository = PriceRepository(session)
         self.cost_calculation = CostCalculationService(session)
         self.supplier_service = SupplierService(session)
-        self.currency_cost_service = SupplierCurrencyCostService(session)
+        self.currency_cost_service = SupplierCurrencyCostService(
+            session,
+            cost_calculation=self.cost_calculation,
+        )
         self.importer = TargetPriceImporter()
 
     @staticmethod
@@ -200,36 +204,64 @@ class TargetPriceService:
             TempTargetPriceImport.selected_product_id.isnot(None),
         ).order_by(TempTargetPriceImport.import_row_no.asc(), TempTargetPriceImport.id.asc()).all()
 
+        prices_by_product = self.price_repository.get_supplier_prices_for_products(
+            (row.selected_product_id for row in rows),
+            only_rating_calc=True,
+            min_price_date=min_price_date,
+        )
+        supplier_ids = {
+            price.supplier_id
+            for prices in prices_by_product.values()
+            for price in prices
+        }
+        self.currency_cost_service.preload_reference_data(
+            product_ids=(row.selected_product_id for row in rows),
+            supplier_ids=supplier_ids,
+        )
+
         created = 0
         for row in rows:
-            seen: set[int] = set()
-            current_prices = self.price_repository.get_suppliers_with_current_prices_for_product(
-                product_id=row.selected_product_id,
-                only_rating_calc=True,
-                min_price_date=min_price_date,
-            )
-            for supplier_price in current_prices:
+            for supplier_price in prices_by_product.get(int(row.selected_product_id), []):
                 self._create_option_from_snapshot(row, batch_id, imported_by, supplier_price)
-                seen.add(supplier_price.supplier_id)
-                created += 1
-            latest_history = self.price_repository.get_latest_history_prices_for_product(
-                product_id=row.selected_product_id,
-                only_rating_calc=True,
-                min_price_date=min_price_date,
-            )
-            for supplier_price in latest_history:
-                if supplier_price.supplier_id in seen:
-                    continue
-                self._create_option_from_snapshot(row, batch_id, imported_by, supplier_price)
-                seen.add(supplier_price.supplier_id)
                 created += 1
 
         self.session.flush()
-        self.rank_supplier_options(batch_id, imported_by)
-        self.select_best_options(batch_id, imported_by)
+        self.session.execute(text("""
+            WITH ranked AS (
+                SELECT
+                    id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY temp_import_id
+                        ORDER BY cost_novo_wvat ASC, full_cost_msk ASC, supplier_name ASC, id ASC
+                    ) AS new_rank
+                FROM temp_target_price_options
+                WHERE batch_id = :batch_id AND imported_by = :imported_by
+            )
+            UPDATE temp_target_price_options AS target
+            SET opt_rank = ranked.new_rank
+            FROM ranked
+            WHERE target.id = ranked.id
+        """), {"batch_id": batch_id, "imported_by": imported_by})
+        ordered_options = self.session.query(TempTargetPriceOption).filter(
+            TempTargetPriceOption.batch_id == batch_id,
+            TempTargetPriceOption.imported_by == imported_by,
+        ).order_by(
+            TempTargetPriceOption.temp_import_id.asc(),
+            TempTargetPriceOption.opt_rank.asc(),
+            TempTargetPriceOption.id.asc(),
+        ).populate_existing().all()
+        options_by_row = {}
+        for option in ordered_options:
+            row_options = options_by_row.setdefault(int(option.temp_import_id), [])
+            row_options.append(option)
+
+        for row in rows:
+            options = options_by_row.get(int(row.id), [])
+            row.selected_option_id = options[0].id if len(options) == 1 else None
+        self.session.flush()
         return created
 
-    def _create_option_from_snapshot(self, row: TempTargetPriceImport, batch_id: str, imported_by: str, supplier_price) -> None:
+    def _create_option_from_snapshot(self, row: TempTargetPriceImport, batch_id: str, imported_by: str, supplier_price) -> TempTargetPriceOption:
         calc = self.currency_cost_service.calculate_costs_for_price_record(
             supplier_id=supplier_price.supplier_id,
             product_id=row.selected_product_id,
@@ -260,6 +292,7 @@ class TargetPriceService:
             fx_markup_abs_used=safe(calc.fx_markup_abs_used),
             transport_used=safe(calc.transport_used),
             reexport_used=safe(calc.reexport_used),
+            insurance_used=safe(calc.insurance_used),
             agent_fee_used=safe(calc.agent_fee_used),
             has_customs_used=calc.has_customs_used,
             via_novo_used=calc.via_novo_used,
@@ -274,25 +307,28 @@ class TargetPriceService:
             opt_rank=None,
         )
         self.session.add(option)
+        return option
 
     def rank_supplier_options(self, batch_id: str, imported_by: str) -> None:
-        rows = self.session.query(TempTargetPriceImport).filter(
-            TempTargetPriceImport.batch_id == batch_id,
-            TempTargetPriceImport.imported_by == imported_by,
+        options = self.session.query(TempTargetPriceOption).filter(
+            TempTargetPriceOption.batch_id == batch_id,
+            TempTargetPriceOption.imported_by == imported_by,
+        ).order_by(
+            TempTargetPriceOption.temp_import_id.asc(),
+            TempTargetPriceOption.cost_novo_wvat.asc(),
+            TempTargetPriceOption.full_cost_msk.asc(),
+            TempTargetPriceOption.supplier_name.asc(),
+            TempTargetPriceOption.id.asc(),
         ).all()
-        for row in rows:
-            options = self.session.query(TempTargetPriceOption).filter(
-                TempTargetPriceOption.batch_id == batch_id,
-                TempTargetPriceOption.imported_by == imported_by,
-                TempTargetPriceOption.temp_import_id == row.id,
-            ).order_by(
-                TempTargetPriceOption.cost_novo_wvat.asc(),
-                TempTargetPriceOption.full_cost_msk.asc(),
-                TempTargetPriceOption.supplier_name.asc(),
-                TempTargetPriceOption.id.asc(),
-            ).all()
-            for rank, option in enumerate(options, start=1):
-                option.opt_rank = rank
+        current_row_id: int | None = None
+        rank = 0
+        for option in options:
+            row_id = int(option.temp_import_id)
+            if row_id != current_row_id:
+                current_row_id = row_id
+                rank = 0
+            rank += 1
+            option.opt_rank = rank
         self.session.flush()
 
     def select_best_options(self, batch_id: str, imported_by: str) -> None:
@@ -300,13 +336,16 @@ class TargetPriceService:
             TempTargetPriceImport.batch_id == batch_id,
             TempTargetPriceImport.imported_by == imported_by,
         ).all()
+        options = self.session.query(TempTargetPriceOption).filter(
+            TempTargetPriceOption.batch_id == batch_id,
+            TempTargetPriceOption.imported_by == imported_by,
+        ).order_by(TempTargetPriceOption.opt_rank.asc(), TempTargetPriceOption.id.asc()).all()
+        options_by_row: dict[int, list[TempTargetPriceOption]] = {}
+        for option in options:
+            options_by_row.setdefault(int(option.temp_import_id), []).append(option)
         for row in rows:
-            options = self.session.query(TempTargetPriceOption).filter(
-                TempTargetPriceOption.batch_id == batch_id,
-                TempTargetPriceOption.imported_by == imported_by,
-                TempTargetPriceOption.temp_import_id == row.id,
-            ).order_by(TempTargetPriceOption.opt_rank.asc(), TempTargetPriceOption.id.asc()).all()
-            row.selected_option_id = options[0].id if len(options) == 1 else None
+            row_options = options_by_row.get(int(row.id), [])
+            row.selected_option_id = row_options[0].id if len(row_options) == 1 else None
         self.session.flush()
 
     def _get_manual_supplier(self) -> Supplier:
@@ -319,25 +358,31 @@ class TargetPriceService:
         if not manual_full_costs:
             return 0
         manual_supplier = self._get_manual_supplier()
-        fixed = self.session.query(FixedCosts).order_by(FixedCosts.id.asc()).first()
-        created_or_updated = 0
-        for row_id, value in manual_full_costs.items():
-            full_cost = self._to_decimal(value)
-            if full_cost == 0:
-                continue
-            row = self.session.query(TempTargetPriceImport).filter(
-                TempTargetPriceImport.id == int(row_id),
-                TempTargetPriceImport.batch_id == batch_id,
-                TempTargetPriceImport.imported_by == imported_by,
-            ).first()
-            if row is None or row.selected_product_id is None:
-                continue
+        fixed = self.cost_calculation.get_fixed_costs()
+        values_by_row_id = {
+            int(row_id): self._to_decimal(value)
+            for row_id, value in manual_full_costs.items()
+            if self._to_decimal(value) != 0
+        }
+        if not values_by_row_id:
+            return 0
+        rows = self.session.query(TempTargetPriceImport).filter(
+            TempTargetPriceImport.id.in_(values_by_row_id),
+            TempTargetPriceImport.batch_id == batch_id,
+            TempTargetPriceImport.imported_by == imported_by,
+            TempTargetPriceImport.selected_product_id.isnot(None),
+        ).all()
+        row_ids = [int(row.id) for row in rows]
+        if row_ids:
             # Manual overrides all ordinary supplier options for this row.
             self.session.query(TempTargetPriceOption).filter(
                 TempTargetPriceOption.batch_id == batch_id,
                 TempTargetPriceOption.imported_by == imported_by,
-                TempTargetPriceOption.temp_import_id == row.id,
+                TempTargetPriceOption.temp_import_id.in_(row_ids),
             ).delete(synchronize_session=False)
+
+        new_options: list[tuple[TempTargetPriceImport, TempTargetPriceOption]] = []
+        for row in rows:
             option = TempTargetPriceOption(
                 temp_import_id=row.id,
                 batch_id=batch_id,
@@ -351,13 +396,14 @@ class TargetPriceService:
                 supplier_price=Decimal("0"),
                 price_date_used=None,
                 cost_novo_wvat=Decimal("0"),
-                full_cost_msk=full_cost,
+                full_cost_msk=values_by_row_id[int(row.id)],
                 currency_code=manual_supplier.base_currency or "USD",
                 fx_rate_used=Decimal("0"),
                 fx_markup_used=Decimal("0"),
                 fx_markup_abs_used=Decimal("0"),
                 transport_used=Decimal("0"),
                 reexport_used=Decimal("0"),
+                insurance_used=Decimal("0"),
                 agent_fee_used=Decimal("0"),
                 has_customs_used=False,
                 via_novo_used=False,
@@ -372,27 +418,31 @@ class TargetPriceService:
                 opt_rank=1,
             )
             self.session.add(option)
-            self.session.flush()
-            row.selected_option_id = option.id
-            created_or_updated += 1
+            new_options.append((row, option))
+
         self.session.flush()
-        return created_or_updated
+        for row, option in new_options:
+            row.selected_option_id = option.id
+        self.session.flush()
+        return len(new_options)
 
     def ensure_single_options_selected(self, batch_id: str, imported_by: str) -> None:
         rows = self.session.query(TempTargetPriceImport).filter(
             TempTargetPriceImport.batch_id == batch_id,
             TempTargetPriceImport.imported_by == imported_by,
         ).all()
+        options = self.session.query(TempTargetPriceOption).filter(
+            TempTargetPriceOption.batch_id == batch_id,
+            TempTargetPriceOption.imported_by == imported_by,
+        ).order_by(TempTargetPriceOption.opt_rank.asc(), TempTargetPriceOption.id.asc()).all()
+        options_by_row: dict[int, list[TempTargetPriceOption]] = {}
+        for option in options:
+            options_by_row.setdefault(int(option.temp_import_id), []).append(option)
         for row in rows:
-            if row.selected_option_id is not None:
-                continue
-            options = self.session.query(TempTargetPriceOption).filter(
-                TempTargetPriceOption.batch_id == batch_id,
-                TempTargetPriceOption.imported_by == imported_by,
-                TempTargetPriceOption.temp_import_id == row.id,
-            ).order_by(TempTargetPriceOption.opt_rank.asc(), TempTargetPriceOption.id.asc()).all()
-            if len(options) == 1:
-                row.selected_option_id = options[0].id
+            if row.selected_option_id is None:
+                row_options = options_by_row.get(int(row.id), [])
+                if len(row_options) == 1:
+                    row.selected_option_id = row_options[0].id
         self.session.flush()
 
     def run_calculation(
@@ -428,21 +478,16 @@ class TargetPriceService:
         fx_rate: object,
         transport: object,
         reexport: object,
+        insurance: object,
         fx_markup: object,
         fx_markup_abs: object,
         has_customs: bool,
         via_novo: bool,
         agent_fee: object | None = None,
     ) -> tuple[Decimal, Decimal]:
-        supplier = self.session.query(Supplier).filter(Supplier.id == target_supplier_id).first()
-        if supplier is None:
-            raise ValueError("Поставщик для target price не найден.")
-        product = self.session.query(Product).filter(Product.id == product_id).first()
-        if product is None:
-            raise ValueError("Продукт для target price не найден.")
-        fixed = self.session.query(FixedCosts).order_by(FixedCosts.id.asc()).first()
-        if fixed is None:
-            raise ValueError("В таблице fixed_costs нет данных.")
+        supplier = self.cost_calculation.get_supplier(target_supplier_id)
+        product = self.cost_calculation.get_product(product_id)
+        fixed = self.cost_calculation.get_fixed_costs()
 
         d_full_cost = self._to_decimal(full_cost_msk)
         d_fx_rate = self._to_decimal(fx_rate)
@@ -450,6 +495,7 @@ class TargetPriceService:
             raise ValueError("Курс валюты не может быть 0.")
         d_transport = self._to_decimal(transport)
         d_reexport = self._to_decimal(reexport)
+        d_insurance = self._to_decimal(insurance)
         d_fx_markup = self._to_decimal(fx_markup)
         d_fx_markup_abs = self._to_decimal(fx_markup_abs)
         d_effective_fx_rate = d_fx_rate * (Decimal("1") + d_fx_markup) + d_fx_markup_abs
@@ -479,11 +525,12 @@ class TargetPriceService:
 
         marking = Decimal("0") if supplier.marks_for_us else self.cost_calculation.get_marking_cost(product_id)
         customs_multiplier = Decimal("1") + d_customs_clearance if has_customs else Decimal("1")
+        customs_and_insurance_multiplier = customs_multiplier + d_insurance
 
         base = cost_novo_wvat / (Decimal("1") + d_vat)
         if supplier_is_rf:
             numerator = base - marking - (d_agent_fee * d_fx_rate)
-            denominator = (Decimal("1") + d_reexport) * customs_multiplier * d_effective_fx_rate
+            denominator = (Decimal("1") + d_reexport) * customs_and_insurance_multiplier * d_effective_fx_rate
         else:
             numerator = (
                 base
@@ -496,7 +543,7 @@ class TargetPriceService:
             )
             denominator = (
                 (Decimal("1") + d_reexport)
-                * customs_multiplier
+                * customs_and_insurance_multiplier
                 * (Decimal("1") + d_bank_fee)
                 * d_effective_fx_rate
             )
@@ -516,6 +563,7 @@ class TargetPriceService:
         fx_rate: Decimal,
         transport: Decimal,
         reexport: Decimal,
+        insurance: Decimal,
         fx_markup: Decimal,
         fx_markup_abs: Decimal,
         has_customs: bool,
@@ -535,15 +583,41 @@ class TargetPriceService:
             TempTargetPriceImport.imported_by == imported_by,
         ).order_by(TempTargetPriceImport.import_row_no.asc(), TempTargetPriceImport.id.asc()).all()
 
+        option_ids = {
+            int(row.selected_option_id)
+            for row in rows
+            if row.selected_option_id is not None
+        }
+        options_by_id = {
+            int(option.id): option
+            for option in (
+                self.session.query(TempTargetPriceOption)
+                .filter(TempTargetPriceOption.id.in_(option_ids))
+                .all()
+                if option_ids else []
+            )
+        }
+        product_ids = {
+            int(row.selected_product_id)
+            for row in rows
+            if row.selected_product_id is not None
+        }
+        self.cost_calculation.preload_reference_data(
+            product_ids=product_ids,
+            supplier_ids=(target_supplier_id,),
+        )
+        target_supplier = self.cost_calculation.get_supplier(target_supplier_id)
+        fixed = self.cost_calculation.get_fixed_costs()
+
         saved = 0
         for row in rows:
             if row.selected_product_id is None or row.selected_option_id is None:
                 raise ValueError("Для всех строк нужно выбрать Our Product Name и финального поставщика.")
-            option = self.session.query(TempTargetPriceOption).filter(TempTargetPriceOption.id == row.selected_option_id).first()
+            option = options_by_id.get(int(row.selected_option_id))
             if option is None:
                 raise ValueError("Выбранный финальный поставщик не найден.")
-            product = self.session.query(Product).filter(Product.id == row.selected_product_id).first()
-            pack = self._to_decimal(product.pack if product else 0)
+            product = self.cost_calculation.get_product(row.selected_product_id)
+            pack = self._to_decimal(product.pack)
             cost_novo_wvat, target_price_l = self.reverse_calculate_target_price(
                 target_supplier_id=target_supplier_id,
                 product_id=row.selected_product_id,
@@ -552,6 +626,7 @@ class TargetPriceService:
                 fx_rate=fx_rate,
                 transport=transport,
                 reexport=reexport,
+                insurance=insurance,
                 fx_markup=fx_markup,
                 fx_markup_abs=fx_markup_abs,
                 has_customs=has_customs,
@@ -578,7 +653,8 @@ class TargetPriceService:
                 fx_markup_abs_used=fx_markup_abs,
                 transport_used=transport,
                 reexport_used=reexport,
-                agent_fee_used=self._to_decimal(getattr(self.session.query(Supplier).filter(Supplier.id == target_supplier_id).first(), "agent_fee", None)),
+                insurance_used=insurance,
+                agent_fee_used=self._to_decimal(getattr(target_supplier, "agent_fee", None)),
                 has_customs_used=has_customs,
                 via_novo_used=via_novo,
                 bank_fee_used=option.bank_fee_used,
@@ -589,8 +665,8 @@ class TargetPriceService:
                 move_msk_used=option.move_msk_used,
                 marking_used=option.marking_used,
                 is_excise_used=option.is_excise_used,
-                vat_used=self._to_decimal(self.cost_calculation.get_fixed_costs().vat),
-                money_used=self._to_decimal(self.cost_calculation.get_fixed_costs().money),
+                vat_used=self._to_decimal(fixed.vat),
+                money_used=self._to_decimal(fixed.money),
                 price_date_used=option.price_date_used,
             )
             self.session.add(calc_row)

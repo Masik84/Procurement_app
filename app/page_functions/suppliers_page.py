@@ -63,6 +63,7 @@ class SuppliersPage(QWidget):
             "base_currency",
             "transport_cost_per_l",
             "reexport_percent",
+            "insurance_percent",
             "fx_rate_markup",
             "fx_rate_markup_abs",
             "agent_fee",
@@ -79,7 +80,8 @@ class SuppliersPage(QWidget):
             "Supplier name",
             "Base currency",
             "Transport cost per L",
-            "Reexport percent",
+            "Re-export %",
+            "Insurance %",
             "FX markup %",
             "FX markup abs",
             "Agent fee",
@@ -95,6 +97,7 @@ class SuppliersPage(QWidget):
         self.numeric_columns = {
             "transport_cost_per_l",
             "reexport_percent",
+            "insurance_percent",
             "fx_rate_markup",
             "fx_rate_markup_abs",
             "agent_fee",
@@ -273,6 +276,10 @@ class SuppliersPage(QWidget):
                 changes.get("reexport_percent", 0),
                 "Reexport percent",
             ),
+            insurance_percent=self._to_percent_decimal(
+                changes.get("insurance_percent", 0),
+                "Insurance %",
+            ),
             fx_rate_markup=self._to_percent_decimal(
                 changes.get("fx_rate_markup", 0),
                 "FX markup %",
@@ -330,6 +337,12 @@ class SuppliersPage(QWidget):
             supplier.reexport_percent = self._to_percent_decimal(
                 changes["reexport_percent"],
                 "Reexport percent",
+            )
+
+        if "insurance_percent" in changes:
+            supplier.insurance_percent = self._to_percent_decimal(
+                changes["insurance_percent"],
+                "Insurance %",
             )
 
         if "fx_rate_markup" in changes:
@@ -439,6 +452,7 @@ class SuppliersPage(QWidget):
                     "base_currency": row.base_currency,
                     "transport_cost_per_l": row.transport_cost_per_l,
                     "reexport_percent": row.reexport_percent,
+                    "insurance_percent": row.insurance_percent,
                     "fx_rate_markup": row.fx_rate_markup,
                     "fx_rate_markup_abs": row.fx_rate_markup_abs,
                     "agent_fee": row.agent_fee,
@@ -509,7 +523,7 @@ class SuppliersPage(QWidget):
                     )
                     continue
 
-                if col_name in {"reexport_percent", "fx_rate_markup"}:
+                if col_name in {"reexport_percent", "insurance_percent", "fx_rate_markup"}:
                     text_value = self._format_percent(value)
                 else:
                     text_value = "" if value is None else str(value).replace(".", ",")
@@ -601,6 +615,7 @@ class SuppliersPage(QWidget):
             "base_currency": "",
             "transport_cost_per_l": "0",
             "reexport_percent": "0",
+            "insurance_percent": "0",
             "fx_rate_markup": "0",
             "fx_rate_markup_abs": "0",
             "agent_fee": "0",
@@ -617,6 +632,7 @@ class SuppliersPage(QWidget):
             "base_currency": "",
             "transport_cost_per_l": "0",
             "reexport_percent": "0",
+            "insurance_percent": "0",
             "fx_rate_markup": "0",
             "fx_rate_markup_abs": "0",
             "agent_fee": "0",

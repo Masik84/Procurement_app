@@ -1,6 +1,6 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
@@ -13,6 +13,71 @@ def _product(product_id: int, name: str, brand: str):
 
 
 class ProductMatchingBrandTests(unittest.TestCase):
+    def test_sales_products_exclude_kit_pack_types(self):
+        service = OrderPlanningService(MagicMock())
+        engine = MagicMock()
+        service._sales_engine = MagicMock(return_value=engine)
+
+        with patch(
+            "app.services.order_planning_service.pd.read_sql",
+            return_value=pd.DataFrame(),
+        ) as read_sql:
+            service._read_sales_products()
+
+        query = str(read_sql.call_args.args[0])
+        params = read_sql.call_args.kwargs["params"]
+        self.assertIn('"Вид_упаковки"', query)
+        self.assertEqual(
+            params["excluded_pack_types"],
+            ["комплект", "комплект 4+1"],
+        )
+        engine.connect.assert_called_once_with()
+
+    def test_brand_aliases_have_the_same_automatic_matching_key(self):
+        aliases = {
+            "VAG": ("Volkswagen", "VW", "AUDI", "SKODA", "ŠKODA"),
+            "GM": ("General Motors",),
+        }
+
+        for canonical, variants in aliases.items():
+            canonical_key = ProductMatchingService._brand_key(canonical)
+            for variant in variants:
+                with self.subTest(canonical=canonical, variant=variant):
+                    self.assertEqual(
+                        ProductMatchingService._brand_key(variant),
+                        canonical_key,
+                    )
+
+    def test_article_lookup_accepts_vag_and_gm_aliases(self):
+        matcher = ProductMatchingService(MagicMock())
+        vag = SimpleNamespace(product=_product(1, "VOLKSWAGEN PRODUCT", "VAG"))
+        gm = SimpleNamespace(product=_product(2, "GENERAL MOTORS PRODUCT", "GM"))
+        matcher._article_links_cache = {
+            "vag-article": vag,
+            "gm-article": gm,
+        }
+        matcher._article_links_by_brand_cache = {
+            ("vag-article", ProductMatchingService._brand_key("VAG")): vag,
+            ("gm-article", ProductMatchingService._brand_key("GM")): gm,
+        }
+
+        for source_brand in ("Volkswagen", "VW", "AUDI", "SKODA", "ŠKODA"):
+            with self.subTest(source_brand=source_brand):
+                self.assertIs(
+                    matcher._get_article_link_by_exact_article(
+                        "VAG-ARTICLE",
+                        brand=source_brand,
+                    ),
+                    vag,
+                )
+        self.assertIs(
+            matcher._get_article_link_by_exact_article(
+                "GM-ARTICLE",
+                brand="General Motors",
+            ),
+            gm,
+        )
+
     def test_article_lookup_uses_article_and_brand_as_one_key(self):
         matcher = ProductMatchingService(MagicMock())
         castrol = SimpleNamespace(product=_product(1, "CASTROL PRODUCT", "CASTROL"))

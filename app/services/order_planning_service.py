@@ -20,6 +20,7 @@ from app.utils.text import clean_multi_spaces
 SALES_DB_URI = "postgresql+psycopg2://postgres:qwerty@localhost:5432/report_db?client_encoding=utf8"
 SALES_BRAND_GROUPS_FOR_ORDER_PLANNING = ("Import", "CNRG", "TEBOIL")
 EXCLUDED_SALES_BRANDS_FOR_ORDER_PLANNING = ("-", "Phoenix Oil", "MEVAG")
+EXCLUDED_SALES_PACK_TYPES_FOR_ORDER_PLANNING = ("комплект", "комплект 4+1")
 
 
 @dataclass(slots=True)
@@ -93,11 +94,13 @@ class OrderPlanningService:
         query = (
             f"SELECT {', '.join(cols)} FROM products "
             "WHERE \"Группа_бренда\" = ANY(:brand_groups) "
-            "AND COALESCE(\"Brand\", '') <> ALL(:excluded_brands)"
+            "AND COALESCE(\"Brand\", '') <> ALL(:excluded_brands) "
+            "AND LOWER(TRIM(COALESCE(\"Вид_упаковки\", ''))) <> ALL(:excluded_pack_types)"
         )
         params: dict[str, object] = {
             "brand_groups": list(SALES_BRAND_GROUPS_FOR_ORDER_PLANNING),
             "excluded_brands": list(EXCLUDED_SALES_BRANDS_FOR_ORDER_PLANNING),
+            "excluded_pack_types": list(EXCLUDED_SALES_PACK_TYPES_FOR_ORDER_PLANNING),
         }
         if sales_codes:
             query += ' AND "Код" = ANY(:codes)'
@@ -111,21 +114,30 @@ class OrderPlanningService:
 
     def _read_sales_data(self, period_from: date, period_to: date) -> pd.DataFrame:
         query = """
-            SELECT "Код", "Дата", "Статус", "Кол_во_л"
+            SELECT
+                "Код",
+                SUM(COALESCE("Кол_во_л", 0)) AS "Кол_во_л"
             FROM full_data
             WHERE "Дата" >= :date_from
               AND "Дата" <= :date_to
               AND "Статус" = 'Факт'
+            GROUP BY "Код"
         """
         with self._sales_engine().connect() as conn:
             return pd.read_sql(text(query), conn, params={"date_from": period_from, "date_to": period_to})
 
-    def _product_map(self) -> dict[int, Product]:
-        products = self.session.query(Product).options(joinedload(Product.stock)).all()
+    def _product_map(self, *, load_stock: bool = True) -> dict[int, Product]:
+        query = self.session.query(Product)
+        if load_stock:
+            query = query.options(joinedload(Product.stock))
+        products = query.all()
         return {int(product.id): product for product in products}
 
-    def _link_map(self) -> dict[str, SalesProductLink]:
-        rows = self.session.query(SalesProductLink).options(joinedload(SalesProductLink.product)).all()
+    def _link_map(self, *, load_products: bool = True) -> dict[str, SalesProductLink]:
+        query = self.session.query(SalesProductLink)
+        if load_products:
+            query = query.options(joinedload(SalesProductLink.product))
+        rows = query.all()
         return {row.sales_code: row for row in rows}
 
     def get_brand_values(self) -> list[str]:
@@ -181,7 +193,8 @@ class OrderPlanningService:
         if sales_df.empty:
             return ProductCheckResult([], 0, 0, 0)
 
-        links = self._link_map()
+        product_map = self._product_map(load_stock=False)
+        links = self._link_map(load_products=False)
         rows: list[dict] = []
         auto_matched = 0
         new_count = 0
@@ -207,7 +220,11 @@ class OrderPlanningService:
                 brand=sales_brand,
                 is_excise=sales_excise,
             )
-            linked_product = link.product if link_matches_source and link and link.product else None
+            linked_product = (
+                product_map.get(int(link.product_id))
+                if link_matches_source and link and link.product_id is not None
+                else None
+            )
             product = linked_product
             auto_found = False
 
@@ -366,7 +383,8 @@ class OrderPlanningService:
         days_count = max((period_to - period_from).days + 1, 1)
         grouped["avg_sales_month"] = grouped["Кол_во_л"] / days_count * 30
 
-        links = self._link_map()
+        product_map = self._product_map()
+        links = self._link_map(load_products=False)
         auto_matched = 0
         unmatched = 0
         rows: list[dict] = []
@@ -390,8 +408,13 @@ class OrderPlanningService:
                 brand=sales_brand,
                 is_excise=sales_excise,
             )
-            if link_matches_source and link and link.product:
-                product = link.product
+            linked_product = (
+                product_map.get(int(link.product_id))
+                if link_matches_source and link and link.product_id is not None
+                else None
+            )
+            if linked_product is not None:
+                product = linked_product
             else:
                 product = self.matcher.find_customer_product(
                     sales_article,
@@ -413,11 +436,17 @@ class OrderPlanningService:
                 "sales_is_excise": sales_excise,
                 "product_id": product.id if product else None,
                 "product_name": product.name if product else "",
-                "is_auto_matched": bool(product and not (link_matches_source and link and link.product)),
+                "is_auto_matched": bool(product and linked_product is None),
                 "avg_sales_month": avg_sales,
             })
 
-        return CalculationResult(self.build_display_rows(rows), period_from, period_to, auto_matched, unmatched)
+        return CalculationResult(
+            self.build_display_rows(rows, product_map=product_map),
+            period_from,
+            period_to,
+            auto_matched,
+            unmatched,
+        )
 
     def build_display_rows(
         self,
@@ -428,6 +457,7 @@ class OrderPlanningService:
         family_filter: Optional[list[str]] = None,
         product_filter: Optional[list[int]] = None,
         vol_not_null: bool = False,
+        product_map: Optional[dict[int, Product]] = None,
     ) -> list[dict]:
         # group rows by selected Product.id; unmatched rows remain separate by sales_code
         grouped: dict[object, dict] = {}
@@ -440,7 +470,7 @@ class OrderPlanningService:
                 grouped[key]["avg_sales_month"] = self._to_decimal(grouped[key].get("avg_sales_month")) + self._to_decimal(row.get("avg_sales_month"))
                 grouped[key]["sales_code"] = f"{grouped[key].get('sales_code')}; {row.get('sales_code')}"
 
-        product_map = self._product_map()
+        product_map = product_map if product_map is not None else self._product_map()
 
         # In calculation mode the base rows come from sales. Additionally show
         # products that currently have any available stock/order balance in

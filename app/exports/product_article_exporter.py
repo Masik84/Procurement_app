@@ -5,7 +5,7 @@ from pathlib import Path
 import pythoncom
 import win32com.client as win32
 from app.utils.output_headers import standardize_output_header, apply_header_style_and_formats
-from app.utils.excel_format_rules import FORMATS, set_number_format_safe
+from app.utils.excel_format_rules import FORMATS, set_number_format_safe, save_workbook_xlsx
 
 
 class ProductArticleExporter:
@@ -86,7 +86,7 @@ class ProductArticleExporter:
 
             set_number_format_safe(ws.Columns("B:B"), FORMATS.TEXT)
 
-            wb.SaveAs(Filename=save_path, FileFormat=self._xl_openxml_workbook)
+            save_workbook_xlsx(wb, save_path)
 
         except PermissionError:
             raise

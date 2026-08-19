@@ -104,6 +104,7 @@ class TargetPricesPage(QWidget):
             (self.ui.line_Transport, "Формат: 1,2500"),
             (self.ui.line_AgentFee, "Формат: 0,2500"),
             (self.ui.line_Reexport, "Введите 3,5 для 3,5% — знак % не нужен"),
+            (self.ui.line_Insurance, "Введите 1 для 1% — знак % не нужен"),
             (self.ui.line_FXMarkup, "Введите 3,5 для 3,5% — знак % не нужен"),
             (self.ui.line_FXMarkupAbs, "Формат: 1,5000"),
         ]:
@@ -122,6 +123,7 @@ class TargetPricesPage(QWidget):
         self.ui.line_Transport.editingFinished.connect(self.normalize_transport)
         self.ui.line_AgentFee.editingFinished.connect(self.normalize_agent_fee)
         self.ui.line_Reexport.editingFinished.connect(self.normalize_reexport)
+        self.ui.line_Insurance.editingFinished.connect(self.normalize_insurance)
         self.ui.line_FXMarkup.editingFinished.connect(self.normalize_fx_markup)
         self.ui.line_FXMarkupAbs.editingFinished.connect(self.normalize_fx_markup_abs)
         self.ui.btn_DownFile.clicked.connect(self.download_template)
@@ -153,7 +155,7 @@ class TargetPricesPage(QWidget):
             session.commit()
 
     def eventFilter(self, watched, event):
-        if watched in {self.ui.line_ExchangeRate, self.ui.line_Transport, self.ui.line_AgentFee, self.ui.line_Reexport, self.ui.line_FXMarkup, self.ui.line_FXMarkupAbs}:
+        if watched in {self.ui.line_ExchangeRate, self.ui.line_Transport, self.ui.line_AgentFee, self.ui.line_Reexport, self.ui.line_Insurance, self.ui.line_FXMarkup, self.ui.line_FXMarkupAbs}:
             if event.type() in {QEvent.Enter, QEvent.FocusIn, QEvent.MouseButtonPress}:
                 QToolTip.showText(watched.mapToGlobal(QPoint(0, watched.height())), watched.toolTip(), watched)
         return super().eventFilter(watched, event)
@@ -251,6 +253,7 @@ class TargetPricesPage(QWidget):
         self.ui.line_AgentFee.clear()
         self.set_combo_text(self.ui.cbo_viaNovo, "через Ново")
         self.ui.line_Reexport.setText("0,0%")
+        self.ui.line_Insurance.setText("0,0%")
         self.ui.line_FXMarkup.setText("0,0%")
         self.ui.line_FXMarkupAbs.setText("0,0000")
         self.set_combo_text(self.ui.cbo_Customs, "да")
@@ -268,6 +271,7 @@ class TargetPricesPage(QWidget):
             self.ui.line_Transport.clear()
             self.ui.line_AgentFee.clear()
             self.ui.line_Reexport.setText("0,0%")
+            self.ui.line_Insurance.setText("0,0%")
             self.ui.line_FXMarkup.setText("0,0%")
             self.ui.line_FXMarkupAbs.setText("0,0000")
             self.set_combo_text(self.ui.cbo_Currency, "-")
@@ -303,6 +307,7 @@ class TargetPricesPage(QWidget):
         self.ui.line_AgentFee.setText(self.format_number(data.agent_fee, 4))
         self.set_combo_text(self.ui.cbo_viaNovo, "через Ново" if data.is_via_novo else "в Мск")
         self.ui.line_Reexport.setText(self.format_percent(data.reexport_percent))
+        self.ui.line_Insurance.setText(self.format_percent(data.insurance_percent))
         self.ui.line_FXMarkup.setText(self.format_percent(data.fx_rate_markup))
         self.ui.line_FXMarkupAbs.setText(self.format_number(data.fx_rate_markup_abs, 4))
         self.set_combo_text(self.ui.cbo_Customs, "да" if data.has_import_duty else "нет")
@@ -330,6 +335,7 @@ class TargetPricesPage(QWidget):
             transport_cost_per_l=self.parse_decimal_field(self.ui.line_Transport, "Транспорт"),
             agent_fee=self.parse_decimal_field(self.ui.line_AgentFee, "Agent fee"),
             reexport_percent=self.parse_percent_field(self.ui.line_Reexport, "Реэкспорт"),
+            insurance_percent=self.parse_percent_field(self.ui.line_Insurance, "Insurance %"),
             fx_rate_markup=self.parse_percent_field(self.ui.line_FXMarkup, "FX markup %"),
             fx_rate_markup_abs=self.parse_decimal_field(self.ui.line_FXMarkupAbs, "FX markup abs"),
             is_via_novo=self.ui.cbo_viaNovo.currentText() == "через Ново",
@@ -402,6 +408,7 @@ class TargetPricesPage(QWidget):
     def normalize_transport(self): self._normalize_number_widget(self.ui.line_Transport, 4)
     def normalize_agent_fee(self): self._normalize_number_widget(self.ui.line_AgentFee, 4)
     def normalize_reexport(self): self._normalize_percent_widget(self.ui.line_Reexport)
+    def normalize_insurance(self): self._normalize_percent_widget(self.ui.line_Insurance)
     def normalize_fx_markup(self): self._normalize_percent_widget(self.ui.line_FXMarkup)
     def normalize_fx_markup_abs(self): self._normalize_number_widget(self.ui.line_FXMarkupAbs, 4)
 
@@ -455,6 +462,25 @@ class TargetPricesPage(QWidget):
                 TempTargetPriceImport.batch_id == self.batch_id,
                 TempTargetPriceImport.imported_by == self.imported_by,
             ).order_by(TempTargetPriceImport.import_row_no.asc(), TempTargetPriceImport.id.asc()).all()
+            product_ids = {int(row.selected_product_id) for row in rows if row.selected_product_id}
+            products = (
+                session.query(Product).filter(Product.id.in_(product_ids)).all()
+                if product_ids else []
+            )
+            option_rows = session.query(TempTargetPriceOption).filter(
+                TempTargetPriceOption.batch_id == self.batch_id,
+                TempTargetPriceOption.imported_by == self.imported_by,
+            ).all()
+            self._display_product_names = {int(product.id): product.name or "" for product in products}
+            self._display_option_names = {
+                int(option.id): (int(option.temp_import_id), option.supplier_name or "")
+                for option in option_rows
+            }
+            self._display_manual_costs = {
+                int(option.temp_import_id): option.full_cost_msk
+                for option in option_rows
+                if option.supplier_name == "Manual"
+            }
         self.display_rows(rows)
 
     def display_rows(self, rows: list[TempTargetPriceImport]):
@@ -552,6 +578,9 @@ class TargetPricesPage(QWidget):
     def _get_product_name_by_id(self, product_id: int | None) -> str:
         if not product_id:
             return ""
+        cached = getattr(self, "_display_product_names", {})
+        if int(product_id) in cached:
+            return cached[int(product_id)]
         with self.get_session() as session:
             p = session.query(Product).filter(Product.id == product_id).first()
             return p.name if p else ""
@@ -559,6 +588,9 @@ class TargetPricesPage(QWidget):
     def _get_supplier_option_name(self, row_id: int, option_id: int | None) -> str:
         if not option_id:
             return ""
+        cached = getattr(self, "_display_option_names", {}).get(int(option_id))
+        if cached is not None and cached[0] == int(row_id):
+            return cached[1]
         with self.get_session() as session:
             opt = session.query(TempTargetPriceOption).filter(TempTargetPriceOption.id == option_id, TempTargetPriceOption.temp_import_id == row_id).first()
             return opt.supplier_name if opt else ""
@@ -766,6 +798,9 @@ class TargetPricesPage(QWidget):
         self.show_message("Добавлена колонка Manual Full Cost Msk")
 
     def _get_manual_full_cost(self, row_id: int):
+        cached = getattr(self, "_display_manual_costs", {})
+        if int(row_id) in cached:
+            return cached[int(row_id)]
         with self.get_session() as session:
             opt = session.query(TempTargetPriceOption).filter(
                 TempTargetPriceOption.batch_id == self.batch_id,
@@ -871,6 +906,7 @@ class TargetPricesPage(QWidget):
             fx_rate = self.parse_decimal_field(self.ui.line_ExchangeRate, "Курс")
             transport = self.parse_decimal_field(self.ui.line_Transport, "Транспорт")
             reexport = self.parse_percent_field(self.ui.line_Reexport, "Реэкспорт")
+            insurance = self.parse_percent_field(self.ui.line_Insurance, "Insurance %")
             fx_markup = self.parse_percent_field(self.ui.line_FXMarkup, "FX markup %")
             fx_markup_abs = self.parse_decimal_field(self.ui.line_FXMarkupAbs, "FX markup abs")
             has_customs = self.ui.cbo_Customs.currentText() == "да"
@@ -890,6 +926,7 @@ class TargetPricesPage(QWidget):
                         fx_rate=fx_rate,
                         transport=transport,
                         reexport=reexport,
+                        insurance=insurance,
                         fx_markup=fx_markup,
                         fx_markup_abs=fx_markup_abs,
                         has_customs=has_customs,

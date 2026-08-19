@@ -9,7 +9,8 @@ import pythoncom
 import win32com.client as win32
 
 from app.utils.excel_fast_writer import write_excel_table
-from app.utils.excel_format_rules import FORMATS, set_number_format_safe
+from app.utils.excel_format_rules import FORMATS, set_number_format_safe, save_workbook_xlsx
+from app.utils.parsers import parse_user_percent
 
 
 class CustomerCostReportExporter:
@@ -34,9 +35,12 @@ class CustomerCostReportExporter:
         return result
 
     @staticmethod
-    def _excel_value(value: object) -> Any:
+    def _excel_value(value: object, header: str = "") -> Any:
         if value is None:
             return ""
+        if header in {"FX markup %", "Insurance %"} and isinstance(value, str):
+            parsed = parse_user_percent(value)
+            return "" if parsed is None else float(parsed)
         if isinstance(value, Decimal):
             if value == 0:
                 return ""
@@ -81,8 +85,9 @@ class CustomerCostReportExporter:
             ws,
             headers,
             rows,
-            value_getter=lambda row, _header, col_index: self._excel_value(
+            value_getter=lambda row, header, col_index: self._excel_value(
                 row[col_index] if col_index < len(row) else "",
+                str(header),
             ),
         )
 
@@ -129,7 +134,7 @@ class CustomerCostReportExporter:
             "Storage", "Move Novo", "Move Msk", "Marking",
         ]
         self._format_columns_by_headers(ws, header_map, cost_headers, FORMATS.DECIMAL_2)
-        self._format_columns_by_headers(ws, header_map, ["FX markup %"], FORMATS.PERCENT_FLEX)
+        self._format_columns_by_headers(ws, header_map, ["FX markup %", "Insurance %"], FORMATS.PERCENT_FLEX)
         self._format_columns_by_headers(ws, header_map, ["FX rate"], FORMATS.FX_INTEGER)
         self._format_columns_by_headers(ws, header_map, ["Qty, pcs", "Volume, L"], FORMATS.DECIMAL_2)
         self._format_columns_by_headers(ws, header_map, ["Дата", "Price date"], FORMATS.DATE)
@@ -193,7 +198,7 @@ class CustomerCostReportExporter:
             self._write_table(ws, headers, rows)
             self._apply_header_common(ws, len(headers))
             self._format_report(ws, headers, len(rows))
-            wb.SaveAs(str(target_path))
+            save_workbook_xlsx(wb, target_path)
             return target_path
         finally:
             try:

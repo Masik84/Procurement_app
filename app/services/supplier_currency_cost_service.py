@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, ROUND_HALF_UP
+from typing import Iterable
 
 from sqlalchemy.orm import Session
 
@@ -18,10 +19,34 @@ class SupplierCurrencyCostService:
     converted from the supplier base currency to the saved price currency before cost calculation.
     """
 
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self,
+        session: Session,
+        cost_calculation: CostCalculationService | None = None,
+    ) -> None:
         self.session = session
-        self.cost_calculation = CostCalculationService(session)
+        self.cost_calculation = cost_calculation or CostCalculationService(session)
         self.supplier_service = SupplierService(session)
+        self._rate_to_rub_cache: dict[str, Decimal] = {}
+        self._rates_loaded = False
+
+    def preload_reference_data(
+        self,
+        *,
+        product_ids: Iterable[int] = (),
+        supplier_ids: Iterable[int] = (),
+    ) -> None:
+        self.cost_calculation.preload_reference_data(
+            product_ids=product_ids,
+            supplier_ids=supplier_ids,
+        )
+        if not self._rates_loaded:
+            for rate in self.supplier_service.get_all_exchange_rates():
+                code = self._currency(rate.currency_code)
+                value = self._to_decimal(rate.rate_to_rub)
+                if code and value != 0:
+                    self._rate_to_rub_cache[code] = value
+            self._rates_loaded = True
 
     @staticmethod
     def _to_decimal(value: object) -> Decimal:
@@ -44,10 +69,15 @@ class SupplierCurrencyCostService:
         if not code:
             raise ValueError("Не указана валюта для расчета себестоимости.")
 
-        rate = self.supplier_service.get_rate_to_rub(code)
+        cached = self._rate_to_rub_cache.get(code)
+        if cached is not None:
+            return cached
+
+        rate = None if self._rates_loaded else self.supplier_service.get_rate_to_rub(code)
         rate_value = self._to_decimal(rate)
         if rate_value == 0:
             raise ValueError(f"Для валюты '{code}' не найден корректный курс rate_to_rub.")
+        self._rate_to_rub_cache[code] = rate_value
         return rate_value
 
     def convert_amount(self, amount: object, from_currency: object, to_currency: object) -> Decimal:

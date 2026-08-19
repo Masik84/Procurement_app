@@ -7,7 +7,7 @@ import pythoncom
 import win32com.client as win32
 
 from app.utils.excel_fast_writer import write_excel_table
-from app.utils.excel_format_rules import FORMATS, set_number_format_safe
+from app.utils.excel_format_rules import FORMATS, set_number_format_safe, save_workbook_xlsx
 
 
 class PriceHistoryExporter:
@@ -71,7 +71,7 @@ class PriceHistoryExporter:
             ws.Columns("F:F").ColumnWidth = 12
             ws.Columns("G:G").ColumnWidth = 12
 
-            wb.SaveAs(str(Path(file_path).resolve()))
+            save_workbook_xlsx(wb, file_path)
         except PermissionError:
             raise
         except Exception as e:
@@ -142,7 +142,7 @@ class PriceHistoryExporter:
                 set_number_format_safe(ws.Range(f"C2:C{last_row}"), FORMATS.DATE)
                 set_number_format_safe(ws.Range(f"D2:D{last_row}"), FORMATS.DECIMAL_2_SIMPLE)
 
-            wb.SaveAs(str(Path(file_path).resolve()))
+            save_workbook_xlsx(wb, file_path)
         except PermissionError:
             raise
         except Exception as e:
