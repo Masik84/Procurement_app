@@ -9,6 +9,7 @@ import pythoncom
 import win32com.client as win32
 
 from app.utils.excel_fast_writer import write_excel_table
+from app.utils.excel_freeze import apply_freeze_panes
 from app.utils.excel_format_rules import FORMATS, set_number_format_safe, save_workbook_xlsx
 
 
@@ -304,21 +305,7 @@ class PriceReportExporter:
         self._freeze(ws, split_column=freeze_col)
 
     def _freeze(self, ws, split_column: int) -> None:
-        try:
-            ws.Activate()
-            window = ws.Application.ActiveWindow
-            window.FreezePanes = False
-            window.SplitRow = 1
-            window.SplitColumn = split_column
-            window.ScrollRow = 1
-            window.ScrollColumn = 1
-            window.Zoom = 85
-            window.FreezePanes = True
-            ws.Range("A1").Select()
-            window.ScrollRow = 1
-            window.ScrollColumn = 1
-        except Exception:
-            pass
+        apply_freeze_panes(ws, split_row=1, split_column=split_column, zoom=85)
 
 
     @staticmethod

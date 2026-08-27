@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from app.utils.excel_format_rules import FORMATS, set_number_format_safe
+from app.utils.excel_freeze import apply_freeze_panes
 
 
 DEFAULT_FONT_NAME = "Aptos Narrow"
@@ -479,14 +480,7 @@ def apply_standard_worksheet_format(ws: Any, headers: list[str], *, freeze_cell:
     ws.Rows(1).EntireRow.AutoFit()
     ws.Range(f"A1:{last_col}1").AutoFilter(1)
 
-    try:
-        app = ws.Application
-        app.ActiveWindow.Zoom = zoom
-        ws.Activate()
-        ws.Range(freeze_cell).Select()
-        app.ActiveWindow.FreezePanes = True
-    except Exception:
-        pass
+    apply_freeze_panes(ws, freeze_cell=freeze_cell, zoom=zoom)
 
 
 

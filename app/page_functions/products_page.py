@@ -1053,7 +1053,8 @@ class ProductsPage(QWidget):
         else:
             item_text = display_value
 
-        item = QTableWidgetItem(item_text)
+        item_class = NumericTableWidgetItem if col_name == "id" else QTableWidgetItem
+        item = item_class(item_text)
 
         if col_name in {"id", "abc_category"}:
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)

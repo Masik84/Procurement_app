@@ -566,7 +566,8 @@ class SuppliersPage(QWidget):
         return container
 
     def _build_table_item(self, col_name, value):
-        item = QTableWidgetItem(value)
+        item_class = NumericTableWidgetItem if col_name == "id" else QTableWidgetItem
+        item = item_class(value)
 
         if col_name == "id":
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)

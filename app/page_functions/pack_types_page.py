@@ -307,8 +307,9 @@ class PackTypesPage(QWidget):
         if not data:
             self.show_message("Нет данных по заданным фильтрам")
 
-    def _build_item(self, value, editable=True, align_left=False):
-        item = QTableWidgetItem(format_table_value(value))
+    def _build_item(self, value, editable=True, align_left=False, numeric_sort=False):
+        item_class = NumericTableWidgetItem if numeric_sort else QTableWidgetItem
+        item = item_class(format_table_value(value))
         flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
         if editable:
             flags |= Qt.ItemIsEditable
@@ -332,7 +333,11 @@ class PackTypesPage(QWidget):
         self.table.setHorizontalHeaderLabels(display_headers(self.headers))
 
         for row_index, row_data in enumerate(data):
-            self.table.setItem(row_index, 0, self._build_item(row_data["id"], editable=False, align_left=False))
+            self.table.setItem(
+                row_index,
+                0,
+                self._build_item(row_data["id"], editable=False, align_left=False, numeric_sort=True),
+            )
             self.table.setItem(row_index, 1, self._build_item(row_data["name"], editable=True, align_left=True))
             self.table.setItem(row_index, 2, self._build_item(row_data["volume"], editable=True, align_left=False))
 
@@ -358,7 +363,11 @@ class PackTypesPage(QWidget):
             "volume": "0",
         }
 
-        self.table.setItem(0, 0, self._build_item(row_id, editable=False, align_left=False))
+        self.table.setItem(
+            0,
+            0,
+            self._build_item(row_id, editable=False, align_left=False, numeric_sort=True),
+        )
         self.table.setItem(0, 1, self._build_item("", editable=True, align_left=True))
         self.table.setItem(0, 2, self._build_item("0", editable=True, align_left=False))
 

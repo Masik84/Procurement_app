@@ -4,6 +4,19 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 
 from app.ui.table_scale import register_table_for_scaling
+from app.utils.table_sort import numeric_id_value
+
+
+class NumericTableWidgetItem(QTableWidgetItem):
+    """QTableWidget item whose integer text is compared numerically."""
+
+    def __lt__(self, other) -> bool:
+        if isinstance(other, QTableWidgetItem):
+            left = numeric_id_value(self.data(Qt.ItemDataRole.DisplayRole))
+            right = numeric_id_value(other.data(Qt.ItemDataRole.DisplayRole))
+            if left is not None and right is not None:
+                return left < right
+        return super().__lt__(other)
 
 
 def setup_data_table(table: QTableWidget, *, sorting: bool = True) -> None:
@@ -51,8 +64,10 @@ def build_table_item(
     editable: bool = True,
     align_left: bool = False,
     user_data=None,
+    numeric_sort: bool = False,
 ):
-    item = QTableWidgetItem(format_table_value(value))
+    item_class = NumericTableWidgetItem if numeric_sort else QTableWidgetItem
+    item = item_class(format_table_value(value))
 
     flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
     if editable:

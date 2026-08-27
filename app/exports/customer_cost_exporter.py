@@ -10,6 +10,7 @@ import win32com.client as win32
 from sqlalchemy.orm import Session, joinedload
 
 from app.utils.excel_fast_writer import write_excel_table
+from app.utils.excel_freeze import apply_freeze_panes
 from app.utils.excel_format_rules import FORMATS, set_number_format_safe, save_workbook_xlsx
 
 from app.db.models import TempCustomerCostImport, TempCustomerCostOption
@@ -148,14 +149,8 @@ class CustomerCostExporter:
             self._apply_header_common(ws, len(headers))
             self._apply_kam_layout(ws, headers)
 
-            try:
-                excel.ActiveWindow.Zoom = 85
-                ws.Activate()
-                cost_col = self._excel_column_letter(headers.index("Кост руб л с НДС") + 1)
-                ws.Range(f"{cost_col}2").Select()
-                excel.ActiveWindow.FreezePanes = True
-            except Exception:
-                pass
+            cost_col = self._excel_column_letter(headers.index("Кост руб л с НДС") + 1)
+            apply_freeze_panes(ws, freeze_cell=f"{cost_col}2", zoom=85)
 
             save_workbook_xlsx(wb, target_path)
             return target_path
@@ -460,14 +455,8 @@ class CustomerCostExporter:
             last_col = self._excel_column_letter(len(headers))
             ws.Range(f"A1:{last_col}1").AutoFilter(1)
 
-            try:
-                excel.ActiveWindow.Zoom = 85
-                ws.Activate()
-                freeze_cell = self._excel_column_letter(len(base_headers) + 1) + "2"
-                ws.Range(freeze_cell).Select()
-                excel.ActiveWindow.FreezePanes = True
-            except Exception:
-                pass
+            freeze_cell = self._excel_column_letter(len(base_headers) + 1) + "2"
+            apply_freeze_panes(ws, freeze_cell=freeze_cell, zoom=85)
 
             save_workbook_xlsx(wb, target_path)
             return target_path
@@ -605,14 +594,8 @@ class CustomerCostExporter:
 
             self._apply_kam_layout(ws, headers)
 
-            try:
-                excel.ActiveWindow.Zoom = 85
-                ws.Activate()
-                cost_col = self._excel_column_letter(headers.index("Кост руб л с НДС") + 1)
-                ws.Range(f"{cost_col}2").Select()
-                excel.ActiveWindow.FreezePanes = True
-            except Exception:
-                pass
+            cost_col = self._excel_column_letter(headers.index("Кост руб л с НДС") + 1)
+            apply_freeze_panes(ws, freeze_cell=f"{cost_col}2", zoom=85)
 
             save_workbook_xlsx(wb, target_path)
             return target_path

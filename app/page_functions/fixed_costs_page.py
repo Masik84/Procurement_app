@@ -233,8 +233,9 @@ class FixedCostsPage(QWidget):
         data = self.get_fixed_costs_from_db()
         self._display_data(data)
 
-    def _build_item(self, value, editable=True, align_left=False):
-        item = QTableWidgetItem(format_table_value(value))
+    def _build_item(self, value, editable=True, align_left=False, numeric_sort=False):
+        item_class = NumericTableWidgetItem if numeric_sort else QTableWidgetItem
+        item = item_class(format_table_value(value))
         flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
         if editable:
             flags |= Qt.ItemIsEditable
@@ -266,7 +267,12 @@ class FixedCostsPage(QWidget):
             value = row_data[col_name]
             if col_name in self.PERCENT_COLUMNS:
                 value = self._format_percent(value)
-            item = self._build_item(value, editable=editable, align_left=False)
+            item = self._build_item(
+                value,
+                editable=editable,
+                align_left=False,
+                numeric_sort=col_name == "id",
+            )
             self.table.setItem(0, col_index, item)
 
         self.table.resizeColumnsToContents()

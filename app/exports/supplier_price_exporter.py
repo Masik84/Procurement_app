@@ -14,6 +14,7 @@ from app.services.cost_calculation_service import CostCalculationService
 from app.services.price_repository import PriceRepository
 from app.services.supplier_currency_cost_service import SupplierCurrencyCostService
 from app.utils.excel_fast_writer import write_excel_table
+from app.utils.excel_freeze import apply_freeze_panes
 from app.utils.excel_format_rules import FORMATS, cost_calc_headers, set_number_format_safe, to_invariant_number_format
 
 
@@ -1147,21 +1148,8 @@ class SupplierPriceExporter:
 
             ws.Range(f"A1:{self._excel_column_letter(len(headers))}1").AutoFilter(1)
 
-            try:
-                ws.Activate()
-                window = excel.ActiveWindow
-                window.FreezePanes = False
-                window.SplitRow = 1
-                window.SplitColumn = 7  # category inserted after Pack; keep the same semantic frozen block
-                window.ScrollRow = 1
-                window.ScrollColumn = 1
-                window.Zoom = 85
-                window.FreezePanes = True
-                ws.Range("A1").Select()
-                window.ScrollRow = 1
-                window.ScrollColumn = 1
-            except Exception:
-                pass
+            # Category is inserted after Pack; keep the same semantic frozen block.
+            apply_freeze_panes(ws, split_row=1, split_column=7, zoom=85)
 
             wb.SaveAs(str(output_path.resolve()))
             return output_path

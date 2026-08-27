@@ -555,7 +555,12 @@ class CustomerCostsReportsPage(QWidget):
                     item = self._build_product_display_item(value, calc.product_id)
                 else:
                     editable = header in editable_headers
-                    item = build_table_item(value, editable=editable, align_left=header in {"Менеджер", "Клиент", "Customer Product Name", "Supplier", "Comments"})
+                    item = build_table_item(
+                        value,
+                        editable=editable,
+                        align_left=header in {"Менеджер", "Клиент", "Customer Product Name", "Supplier", "Comments"},
+                        numeric_sort=header.casefold() == "id",
+                    )
                 if header in {"Дата", "Price date"} and isinstance(value, datetime):
                     item.setText(value.strftime("%d.%m.%Y"))
                 if header in {"FX markup %", "Insurance %"} and value is not None:

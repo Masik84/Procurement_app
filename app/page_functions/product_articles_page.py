@@ -1005,7 +1005,8 @@ class ProductArticlesPage(QWidget):
             self._original_values[row_id] = values.copy()
 
             for j, col in enumerate(columns):
-                item = QTableWidgetItem(values[col])
+                item_class = NumericTableWidgetItem if col == "id" else QTableWidgetItem
+                item = item_class(values[col])
                 if col == "id":
                     item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                     item.setTextAlignment(Qt.AlignCenter)
@@ -1047,7 +1048,8 @@ class ProductArticlesPage(QWidget):
 
             for j, col in enumerate(columns):
                 value = "" if row_data[col] is None else str(row_data[col])
-                item = QTableWidgetItem(value)
+                item_class = NumericTableWidgetItem if col == "id" else QTableWidgetItem
+                item = item_class(value)
 
                 if col == "id":
                     item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
@@ -1104,7 +1106,8 @@ class ProductArticlesPage(QWidget):
         }
 
         for j, col in enumerate(columns):
-            item = QTableWidgetItem(values[col])
+            item_class = NumericTableWidgetItem if col == "id" else QTableWidgetItem
+            item = item_class(values[col])
 
             if col == "id":
                 item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)

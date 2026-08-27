@@ -9,6 +9,7 @@ import pythoncom
 import win32com.client as win32
 
 from app.utils.excel_fast_writer import write_excel_table
+from app.utils.excel_freeze import apply_freeze_panes
 from app.utils.excel_format_rules import FORMATS, set_number_format_safe, save_workbook_xlsx
 from app.utils.parsers import parse_user_percent
 
@@ -168,10 +169,7 @@ class CustomerCostReportExporter:
             data_range = ws.Range(f"A2:{last_col}{rows_count + 1}")
             data_range.VerticalAlignment = self._xl_vcenter
         ws.Range(f"A1:{last_col}1").AutoFilter(1)
-        ws.Application.ActiveWindow.SplitRow = 1
-        ws.Application.ActiveWindow.SplitColumn = 5
-        ws.Application.ActiveWindow.FreezePanes = True
-        ws.Application.ActiveWindow.Zoom = 85
+        apply_freeze_panes(ws, split_row=1, split_column=5, zoom=85)
 
     def export_report(self, *, headers: Sequence[str], rows: Sequence[Sequence[object]], output_path: str | Path) -> Path:
         output_path = Path(output_path)
