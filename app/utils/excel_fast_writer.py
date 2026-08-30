@@ -5,8 +5,19 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
+from app.utils.excel_format_rules import FORMATS, set_number_format_safe
+from app.utils.excel_headers import article_text, is_article_header
+
 XL_CALCULATION_MANUAL = -4135
 DEFAULT_CHUNK_SIZE = 5000
+
+
+def _excel_column_letter(col_num: int) -> str:
+    result = ""
+    while col_num > 0:
+        col_num, remainder = divmod(col_num - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
 
 
 def _to_excel_com_value(value: Any) -> Any:
@@ -92,14 +103,25 @@ def write_excel_table(
         return
 
     get_header = header_getter or (lambda header: header)
-    write_excel_matrix(ws, [[get_header(header) for header in header_list]], start_row=start_row, start_col=start_col)
+    visible_headers = [get_header(header) for header in header_list]
+    write_excel_matrix(ws, [visible_headers], start_row=start_row, start_col=start_col)
+
+    article_columns = [index for index, header in enumerate(visible_headers) if is_article_header(header)]
+    for column_index in article_columns:
+        letter = _excel_column_letter(start_col + column_index)
+        # Apply text format before writing data.  Formatting afterwards cannot
+        # restore leading zeroes once Excel has coerced a value to a number.
+        set_number_format_safe(ws.Columns(f"{letter}:{letter}"), FORMATS.TEXT)
 
     excel_row = start_row + 1
     buffer: list[list[Any]] = []
     safe_chunk_size = max(int(chunk_size or DEFAULT_CHUNK_SIZE), 1)
 
     for row in rows:
-        buffer.append(_build_excel_row(row, header_list, value_getter))
+        excel_values = _build_excel_row(row, header_list, value_getter)
+        for column_index in article_columns:
+            excel_values[column_index] = article_text(excel_values[column_index])
+        buffer.append(excel_values)
         if len(buffer) >= safe_chunk_size:
             write_excel_matrix(ws, buffer, start_row=excel_row, start_col=start_col)
             excel_row += len(buffer)

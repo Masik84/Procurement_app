@@ -4,6 +4,7 @@ import re
 from typing import Iterable
 
 from app.utils.excel_format_rules import FORMATS, set_number_format_safe
+from app.utils.excel_headers import is_article_header
 
 # Only user-visible GUI/Excel header text is standardized here.
 # Do not use this for DB column names or business/internal identifiers.
@@ -127,6 +128,8 @@ def base_header(header: object) -> str:
 
 def excel_spec(header: object):
     b = base_header(header)
+    if is_article_header(b):
+        return ((205, 205, 205), None, FORMATS.TEXT)
     if b in HEADER_SPECS:
         return HEADER_SPECS[b]
     if b in _INTEGER_HEADERS:

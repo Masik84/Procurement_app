@@ -6,6 +6,7 @@ from typing import Any
 
 from app.utils.excel_format_rules import FORMATS, set_number_format_safe
 from app.utils.excel_freeze import apply_freeze_panes
+from app.utils.excel_headers import article_text, is_article_header
 
 
 DEFAULT_FONT_NAME = "Aptos Narrow"
@@ -400,6 +401,8 @@ def excel_value_by_header(header: str, value: object) -> Any:
     base = normalize_header(header)
     if value is None:
         return ""
+    if is_article_header(base):
+        return article_text(value)
     if base in DATE_HEADERS:
         return parse_excel_date(value)
     if base in BOOL_HEADERS:
@@ -473,7 +476,7 @@ def apply_standard_worksheet_format(ws: Any, headers: list[str], *, freeze_cell:
 
         fmt = number_format_for_header(header)
         if fmt is None:
-            fmt = "@" if base in TEXT_LEFT_HEADERS else "General"
+            fmt = "@" if base in TEXT_LEFT_HEADERS or is_article_header(base) else "General"
         set_number_format_safe(ws.Columns(f"{col_letter}:{col_letter}"), fmt)
         ws.Columns(f"{col_letter}:{col_letter}").ColumnWidth = width_for_header(header, 12.0)
 

@@ -4,12 +4,14 @@ from datetime import datetime, date
 from pathlib import Path
 
 import pandas as pd
+from openpyxl import Workbook
 from sqlalchemy.orm import Session
 
 from app.db.models import TempProductSearchImport
 from app.services.product_matching_service import ProductMatchingService
 from app.services.temp_cleanup_service import TempCleanupService
 from app.utils.batch import generate_import_batch_id
+from app.utils.excel_export_format import write_openpyxl_dict_sheet
 
 
 class ProductSearchService:
@@ -262,6 +264,9 @@ class ProductSearchService:
 
         df = self.build_export_dataframe(batch_id, imported_by)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
-            df.to_excel(writer, index=False, sheet_name="Sheet1")
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "Sheet1"
+        write_openpyxl_dict_sheet(worksheet, df.to_dict(orient="records"))
+        workbook.save(output_path)
         return output_path

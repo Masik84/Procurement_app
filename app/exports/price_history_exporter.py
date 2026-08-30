@@ -71,6 +71,10 @@ class PriceHistoryExporter:
             ws.Columns("F:F").ColumnWidth = 12
             ws.Columns("G:G").ColumnWidth = 12
 
+            # The template is filled by users later, so the article column must
+            # already be text before any value is entered.
+            set_number_format_safe(ws.Columns("B:B"), FORMATS.TEXT)
+
             save_workbook_xlsx(wb, file_path)
         except PermissionError:
             raise

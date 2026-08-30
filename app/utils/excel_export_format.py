@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping, Sequence
 
-from app.utils.excel_headers import display_header
+from app.utils.excel_headers import article_text, display_header, is_article_header
 from app.utils.excel_fast_writer import write_excel_table
 from app.utils.excel_format_rules import FORMATS, set_number_format_safe
 
@@ -84,6 +84,8 @@ def is_date_header(header: str) -> bool:
 
 
 def is_text_header(header: str) -> bool:
+    if is_article_header(header):
+        return True
     h = normalize_header(header)
     return h in {
         "id", "менеджер", "клиент", "customer product name", "our product name",
@@ -199,6 +201,8 @@ def parse_date(value: Any) -> Any:
 def excel_cell_value(header: str, value: Any) -> Any:
     if value is None or value == "":
         return ""
+    if is_article_header(header):
+        return article_text(value)
     if is_date_header(header):
         return parse_date(value)
     if is_decimal_header(header) or is_integer_header(header):
@@ -340,7 +344,6 @@ def openpyxl_cell_value(header: str, value: Any) -> Any:
 
 
 def openpyxl_number_format(header: str) -> str:
-    h = normalize_header(header)
     if is_date_header(header):
         return FORMATS.DATE
     if is_text_header(header):
@@ -382,6 +385,11 @@ def write_openpyxl_dict_sheet(ws, rows: Sequence[Mapping[str, Any]], *, widths: 
             cell.font = Font(name=FONT_NAME, size=FONT_SIZE, bold=(cell.row == 1))
             if cell.row > 1:
                 cell.number_format = fmt
+                if is_article_header(header):
+                    # openpyxl otherwise treats strings beginning with "=" as
+                    # formulas even when the display number format is text.
+                    cell.value = article_text(cell.value)
+                    cell.data_type = "s"
         if widths and header in widths:
             ws.column_dimensions[col_letter].width = widths[header]
         else:
