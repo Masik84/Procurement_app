@@ -9,7 +9,17 @@ from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
 
 
-SINGLE_ITEM_PACK_MARKERS = ("БОЧ", "ВЕДР", "DRUM", "BUCKET", "PAIL")
+SINGLE_ITEM_PACK_MARKERS = (
+    "БОЧ",
+    "ВЕДР",
+    "КУБ",
+    "КЕГ",
+    "DRUM",
+    "BUCKET",
+    "PAIL",
+    "IBC",
+    "KEG",
+)
 
 
 def normalize_qty_in_box(value: object, *, field_name: str = "Qty in Box") -> int | None:
@@ -28,7 +38,7 @@ def normalize_qty_in_box(value: object, *, field_name: str = "Qty in Box") -> in
 
 
 def default_qty_in_box_for_pack(session: Session, pack: object) -> int | None:
-    """Return the agreed default 1 for drum/bucket pack types, otherwise None."""
+    """Return the agreed default 1 for drum/bucket/cube/keg pack types, otherwise None."""
     pack_number = parse_loose_number(pack)
     if pack_number is None:
         return None

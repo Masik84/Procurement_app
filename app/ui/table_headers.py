@@ -4,7 +4,7 @@ import math
 import re
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QFont, QFontMetricsF, QPainter
+from PySide6.QtGui import QFont, QFontMetricsF, QPainter, QPalette
 from PySide6.QtWidgets import (
     QHeaderView,
     QProxyStyle,
@@ -15,25 +15,62 @@ from PySide6.QtWidgets import (
 )
 
 
-# Header text is changed only while Qt paints the GUI. The model/header values
-# themselves stay untouched, so DB fields, internal names and Excel exports keep
-# their original spelling without line breaks.
+# Единый источник ТОЛЬКО для отображения заголовков в GUI.
+# Настоящие/логические названия колонок в таблицах, БД, импорте и Excel
+# остаются без \n.
+#
+# Подход повторяет идею Daily-Report--new-:
+# явные переносы для известных длинных заголовков + компактный fallback.
+GUI_HEADER_LABELS: dict[str, str] = {
+    "Material number": "Material\nnumber",
+    "Supplier Product Name": "Supplier Product\nName",
+    "Selected Product": "Selected\nProduct",
+    "Supplier article": "Supplier\narticle",
+    "Customer Product Name": "Customer Product\nName",
+
+    "Price, pack": "Price,\npack",
+    "Price, box": "Price,\nbox",
+    "Qty, pcs": "Qty,\npcs",
+    "Qty, box": "Qty,\nbox",
+    "Volume, L": "Volume,\nL",
+    "Qty in Box": "Qty\nin Box",
+
+    "Product Family": "Product\nFamily",
+    "Product name (for new)": "Product name\n(for new)",
+    "Brand (for new)": "Brand\n(for new)",
+    "Pack (for new)": "Pack\n(for new)",
+    "Qty in Box (for new)": "Qty\nin Box\n(for new)",
+    "Excise duty (for new)": "Excise duty\n(for new)",
+
+    "Cost Novo with VAT": "Cost Novo\nwith VAT",
+    "Full Cost Msk": "Full Cost\nMsk",
+    "Target Price, pack": "Target Price,\npack",
+}
+
 GUI_HEADER_MAX_LINE_LENGTH = 14
-GUI_HEADER_MIN_WRAP_LENGTH = 13
+GUI_HEADER_MIN_WRAP_LENGTH = 15
 GUI_HEADER_MAX_LINES = 3
 GUI_HEADER_HORIZONTAL_PADDING = 8
-GUI_HEADER_VERTICAL_PADDING = 6
+GUI_HEADER_VERTICAL_PADDING = 5
 
 _SPACE_RE = re.compile(r"\s+")
 
 
 def format_gui_header(header: object) -> str:
-    """Return a compact GUI-only header with balanced line breaks."""
+    """Вернуть компактную GUI-подпись с реальными переносами строк."""
     text = str(header or "").strip()
-    if not text or "\n" in text:
+    if not text:
+        return text
+
+    if "\n" in text:
         return text
 
     text = _SPACE_RE.sub(" ", text)
+
+    explicit = GUI_HEADER_LABELS.get(text)
+    if explicit is not None:
+        return explicit
+
     words = text.split(" ")
     if len(words) < 2 or len(text) < GUI_HEADER_MIN_WRAP_LENGTH:
         return text
@@ -47,7 +84,7 @@ def format_gui_header(header: object) -> str:
 
 
 def _balanced_lines(words: list[str], line_count: int) -> list[str]:
-    """Split contiguous words into visually balanced lines."""
+    """Разбить последовательность слов на визуально сбалансированные строки."""
     if line_count <= 1 or len(words) <= 1:
         return [" ".join(words)]
 
@@ -57,6 +94,7 @@ def _balanced_lines(words: list[str], line_count: int) -> list[str]:
 
     def search(start: int, remaining: int, current: list[str]) -> None:
         nonlocal best_lines, best_score
+
         if remaining == 1:
             candidate = current + [" ".join(words[start:])]
             lengths = [len(line) for line in candidate]
@@ -93,17 +131,13 @@ def calculate_gui_header_base_height(
     base_font_point_size: float,
     minimum_height: int = 24,
 ) -> int:
-    """Calculate the unscaled height required by the longest GUI header."""
+    """Высота шапки по максимальному числу строк GUI-заголовка."""
     model = table.model()
-    if model is None:
-        return minimum_height
-
-    columns = model.columnCount()
-    if columns <= 0:
+    if model is None or model.columnCount() <= 0:
         return minimum_height
 
     max_lines = 1
-    for column in range(columns):
+    for column in range(model.columnCount()):
         value = model.headerData(
             column,
             Qt.Orientation.Horizontal,
@@ -114,8 +148,8 @@ def calculate_gui_header_base_height(
     font = QFont(table.horizontalHeader().font())
     if base_font_point_size > 0:
         font.setPointSizeF(float(base_font_point_size))
-    metrics = QFontMetricsF(font)
 
+    metrics = QFontMetricsF(font)
     required = math.ceil(
         max_lines * metrics.lineSpacing() + GUI_HEADER_VERTICAL_PADDING * 2
     )
@@ -123,7 +157,12 @@ def calculate_gui_header_base_height(
 
 
 class _GuiHeaderProxyStyle(QProxyStyle):
-    """Draw line breaks in horizontal GUI headers without changing model data."""
+    """Рисует настоящий многострочный текст заголовка.
+
+    Важно: модель таблицы сохраняет исходный однострочный header text.
+    Поэтому существующий код Procurement, который читает
+    horizontalHeaderItem(...).text(), продолжает получать прежнее имя колонки.
+    """
 
     def drawControl(
         self,
@@ -133,14 +172,45 @@ class _GuiHeaderProxyStyle(QProxyStyle):
         widget=None,
     ) -> None:
         if (
-            element == QStyle.ControlElement.CE_HeaderLabel
+            element == QStyle.ControlElement.CE_Header
             and isinstance(option, QStyleOptionHeader)
             and option.orientation == Qt.Orientation.Horizontal
         ):
-            wrapped = QStyleOptionHeader(option)
-            wrapped.text = format_gui_header(option.text)
-            wrapped.textAlignment = Qt.AlignmentFlag.AlignCenter
-            super().drawControl(element, wrapped, painter, widget)
+            display_text = format_gui_header(option.text)
+
+            if "\n" not in display_text:
+                super().drawControl(element, option, painter, widget)
+                return
+
+            # Сначала базовый стиль рисует фон/границы/стрелку сортировки,
+            # но БЕЗ текста.
+            background_option = QStyleOptionHeader(option)
+            background_option.text = ""
+            super().drawControl(element, background_option, painter, widget)
+
+            # Затем текст рисуем сами. В отличие от прежней версии это не
+            # зависит от того, вызывает ли системный стиль CE_HeaderLabel.
+            label_rect = self.subElementRect(
+                QStyle.SubElement.SE_HeaderLabel,
+                option,
+                widget,
+            )
+
+            painter.save()
+            try:
+                if widget is not None:
+                    painter.setFont(widget.font())
+                painter.setPen(
+                    option.palette.color(QPalette.ColorRole.ButtonText)
+                )
+                painter.drawText(
+                    label_rect,
+                    Qt.AlignmentFlag.AlignCenter
+                    | Qt.TextFlag.TextWordWrap,
+                    display_text,
+                )
+            finally:
+                painter.restore()
             return
 
         super().drawControl(element, option, painter, widget)
@@ -157,25 +227,39 @@ class _GuiHeaderProxyStyle(QProxyStyle):
             and isinstance(option, QStyleOptionHeader)
             and option.orientation == Qt.Orientation.Horizontal
         ):
-            wrapped = QStyleOptionHeader(option)
-            wrapped.text = format_gui_header(option.text)
-            size = super().sizeFromContents(
+            display_text = format_gui_header(option.text)
+            lines = display_text.splitlines() or [""]
+
+            # Daily-Report--new- считает ширину по самой длинной строке
+            # заголовка. Критично НЕ брать max() с width от системного стиля,
+            # иначе Windows снова раздувает колонку по исходной длинной строке.
+            blank_option = QStyleOptionHeader(option)
+            blank_option.text = ""
+            base_size = super().sizeFromContents(
                 contents_type,
-                wrapped,
-                contents_size,
+                blank_option,
+                QSize(0, 0),
                 widget,
             )
-            lines = wrapped.text.splitlines() or [""]
-            metrics = wrapped.fontMetrics
-            text_width = max(metrics.horizontalAdvance(line) for line in lines)
+
+            metrics = option.fontMetrics
+            text_width = max(
+                metrics.horizontalAdvance(line)
+                for line in lines
+            )
             text_height = len(lines) * metrics.lineSpacing()
-            size.setWidth(
-                max(size.width(), text_width + GUI_HEADER_HORIZONTAL_PADDING * 2)
+
+            width = (
+                base_size.width()
+                + text_width
+                + GUI_HEADER_HORIZONTAL_PADDING * 2
             )
-            size.setHeight(
-                max(size.height(), text_height + GUI_HEADER_VERTICAL_PADDING * 2)
+            height = max(
+                base_size.height(),
+                text_height + GUI_HEADER_VERTICAL_PADDING * 2,
             )
-            return size
+
+            return QSize(max(24, width), max(24, height))
 
         return super().sizeFromContents(
             contents_type,
@@ -186,7 +270,7 @@ class _GuiHeaderProxyStyle(QProxyStyle):
 
 
 def install_gui_header_style(table: QTableView) -> None:
-    """Install the GUI-only wrapping style once for a table header."""
+    """Подключить многострочную GUI-шапку к таблице один раз."""
     header: QHeaderView = table.horizontalHeader()
     if header.property("gui_header_wrap_style_installed"):
         return
@@ -196,6 +280,6 @@ def install_gui_header_style(table: QTableView) -> None:
     header.setStyle(proxy)
     header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
     header.setProperty("gui_header_wrap_style_installed", True)
-    # Keep a Python reference as well; this avoids premature wrapper cleanup in
-    # some PySide6 versions even though the QObject parent is already assigned.
+
+    # PySide6: держим Python-ссылку, хотя QObject-parent уже назначен.
     header._gui_header_wrap_proxy = proxy

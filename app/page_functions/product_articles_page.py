@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QLineEdit,
-    QPushButton,
 )
 from PySide6.QtCore import Qt, QFile, QTimer
 from PySide6.QtGui import QDesktopServices
@@ -78,7 +77,6 @@ class ProductArticlesPage(QWidget):
 
     def setup_ui(self):
         self.table = self.ui.table
-        self._setup_multi_filter_buttons()
         setup_data_table(self.table, sorting=True)
         from app.utils.gui_table_actions import install_standard_table_context_menu
         install_standard_table_context_menu(self, self.table)
@@ -87,14 +85,12 @@ class ProductArticlesPage(QWidget):
     def setup_connections(self):
         self.table.itemChanged.connect(self.on_item_changed)
 
-        self.ui.line_Brand.currentTextChanged.connect(self.fill_in_prod_fam_list)
-        self.ui.line_Prod_Fam.currentTextChanged.connect(self.fill_in_prod_name_list)
         self.ui.btn_FilterBrand.clicked.connect(self.open_brand_filter)
         self.ui.btn_FilterProductFamily.clicked.connect(self.open_family_filter)
         self.ui.btn_FilterProduct.clicked.connect(self.open_product_filter)
+        self.ui.cbo_FindBrand.currentTextChanged.connect(self.refresh_current_product_combo)
         if hasattr(self.ui, "line_FindProduct"):
             self.ui.line_FindProduct.setToolTip("Фильтр по названию продукта из базы")
-            self.ui.line_FindProduct.textChanged.connect(self.fill_in_prod_name_list)
             self.ui.line_FindProduct.textChanged.connect(self.refresh_current_product_combo)
 
         self.ui.btn_Search.clicked.connect(self.find_product_articles)
@@ -109,31 +105,6 @@ class ProductArticlesPage(QWidget):
             self.ui.btn_Import.clicked.connect(self.import_articles)
         if hasattr(self.ui, "btn_Reset"):
             self.ui.btn_Reset.clicked.connect(self.reset_form)
-
-    def _setup_multi_filter_buttons(self):
-        combo = self.ui.cbo_FindBrand
-        layout = combo.parentWidget().layout()
-        if layout is None:
-            raise RuntimeError("Не найден layout фильтров Базы Артикулов и Названий")
-        index = layout.indexOf(combo)
-        buttons = []
-        for object_name, text in (
-            ("btn_FilterBrand", "все Бренды"),
-            ("btn_FilterProductFamily", "все Product Family"),
-            ("btn_FilterProduct", "все Продукты"),
-        ):
-            button = QPushButton(text, combo.parentWidget())
-            button.setObjectName(object_name)
-            button.setMinimumHeight(25)
-            button.setMaximumHeight(25)
-            buttons.append(button)
-        layout.replaceWidget(combo, buttons[0])
-        layout.insertWidget(index + 1, buttons[1])
-        layout.insertWidget(index + 2, buttons[2])
-        combo.hide()
-        self.ui.btn_FilterBrand, self.ui.btn_FilterProductFamily, self.ui.btn_FilterProduct = buttons
-        if hasattr(self.ui, "label_6"):
-            self.ui.label_6.setText("Фильтры")
 
     def get_session(self):
         return SessionLocal()
@@ -254,14 +225,12 @@ class ProductArticlesPage(QWidget):
     def _get_product_name_values(self):
         filter_text = self._get_product_name_filter_text()
 
+        brand_filter = self._get_product_name_filter_brand()
+
         with self.get_session() as session:
             query = session.query(Product).filter(Product.name.isnot(None), Product.name != "")
-            if self._selected_brand_values is not None:
-                query = query.filter(Product.brand.in_(self._selected_brand_values))
-            if self._selected_family_values is not None:
-                query = query.filter(Product.family.in_(self._selected_family_values))
-            if self._selected_product_ids is not None:
-                query = query.filter(Product.id.in_(self._selected_product_ids))
+            if brand_filter and brand_filter != "-":
+                query = query.filter(Product.brand == brand_filter)
             if filter_text:
                 query = query.filter(Product.name.ilike(f"%{filter_text}%"))
             products = query.all()
@@ -529,15 +498,13 @@ class ProductArticlesPage(QWidget):
     def refresh_all_comboboxes(self):
         self.fill_in_prod_brand_list()
         self.fill_filter_brand_list()
-        self.fill_in_prod_fam_list()
-        self.fill_in_prod_name_list()
 
     def fill_filter_brand_list(self):
         self._prune_filter_selections()
         self._refresh_filter_buttons()
 
     def _get_product_name_filter_brand(self) -> str:
-        return ""
+        return self.clean_multi_spaces(self.ui.cbo_FindBrand.currentText())
 
     def _product_filter_query(self, session, *, ignore: str | None = None):
         query = session.query(Product).filter(Product.name.isnot(None), Product.name != "")
@@ -588,8 +555,6 @@ class ProductArticlesPage(QWidget):
     def _after_multi_filter_change(self):
         self._prune_filter_selections()
         self._refresh_filter_buttons()
-        self.fill_in_prod_name_list()
-        self.refresh_current_product_combo()
 
     def _prune_filter_selections(self):
         with self.get_session() as session:
@@ -624,78 +589,10 @@ class ProductArticlesPage(QWidget):
                 )
 
             brands = [row[0] for row in brands if row[0]]
-            self._fill_combobox(self.ui.line_Brand, brands)
+            self._fill_combobox(self.ui.cbo_FindBrand, brands)
 
         except Exception as e:
             self.show_error_message(f"Ошибка при получении брендов: {str(e)}")
-
-    def fill_in_prod_fam_list(self):
-        brand = self.ui.line_Brand.currentText()
-
-        try:
-            with self.get_session() as session:
-                query = session.query(Product.family).filter(
-                    Product.family.isnot(None),
-                    Product.family != ""
-                )
-
-                if brand != "-":
-                    query = query.filter(Product.brand == brand)
-
-                families = query.distinct().order_by(Product.family).all()
-
-            families = [row[0] for row in families if row[0]]
-            current_value = self.ui.line_Prod_Fam.currentText()
-            self._fill_combobox(self.ui.line_Prod_Fam, families)
-
-            if current_value in families:
-                self.ui.line_Prod_Fam.setCurrentText(current_value)
-
-        except Exception as e:
-            self.show_error_message(f"Ошибка при получении семейств: {str(e)}")
-            self._fill_combobox(self.ui.line_Prod_Fam, [])
-
-    def fill_in_prod_name_list(self):
-        brand = self.ui.line_Brand.currentText()
-        family = self.ui.line_Prod_Fam.currentText()
-        filter_text = self._get_product_name_filter_text()
-
-        try:
-            with self.get_session() as session:
-                query = session.query(Product).filter(Product.name.isnot(None), Product.name != "")
-
-                if self._selected_brand_values is not None:
-                    query = query.filter(Product.brand.in_(self._selected_brand_values))
-                if self._selected_family_values is not None:
-                    query = query.filter(Product.family.in_(self._selected_family_values))
-                if self._selected_product_ids is not None:
-                    query = query.filter(Product.id.in_(self._selected_product_ids))
-                if brand != "-":
-                    query = query.filter(Product.brand == brand)
-                if family != "-":
-                    query = query.filter(Product.family == family)
-                if filter_text:
-                    query = query.filter(Product.name.ilike(f"%{filter_text}%"))
-
-                products = query.all()
-
-            products.sort(
-                key=lambda x: (
-                    (x.family or "").lower(),
-                    -(float(x.pack) if str(x.pack).replace(".", "", 1).isdigit() else -999999)
-                )
-            )
-
-            product_names = [row.name for row in products if row.name]
-            current_value = self.ui.line_Prod_name.currentText()
-            self._fill_combobox(self.ui.line_Prod_name, product_names)
-
-            if current_value in product_names:
-                self.ui.line_Prod_name.setCurrentText(current_value)
-
-        except Exception as e:
-            self.show_error_message(f"Ошибка при получении продуктов: {str(e)}")
-            self._fill_combobox(self.ui.line_Prod_name, [])
 
     def _fill_combobox(self, combobox, items):
         combobox.blockSignals(True)
@@ -1207,9 +1104,7 @@ class ProductArticlesPage(QWidget):
 
         self.table.insertRow(0)
 
-        selected_product_name = self.ui.line_Prod_name.currentText()
-        if selected_product_name == "-":
-            selected_product_name = ""
+        selected_product_name = ""
 
         row_id = self._temp_row_id
         self._temp_row_id -= 1
@@ -1292,7 +1187,6 @@ class ProductArticlesPage(QWidget):
             self.refresh_all_comboboxes()
             if hasattr(self.ui, "line_FindProduct"):
                 self.ui.line_FindProduct.clear()
-            self.fill_in_prod_name_list()
             self.table.clearContents()
             self.table.setRowCount(0)
             self.show_message("Форма очищена")

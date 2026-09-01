@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
     QComboBox,
-    QPushButton,
     QFileDialog,
     QAbstractItemView,
 )
@@ -93,15 +92,6 @@ class ProductsPage(QWidget):
 
     def setup_ui(self):
         self.table = self.ui.table
-        self.ui.btn_FilterBrand = self._replace_filter_combo(
-            self.ui.line_Brand, "btn_FilterBrand", "все Бренды"
-        )
-        self.ui.btn_FilterProductFamily = self._replace_filter_combo(
-            self.ui.line_Prod_Fam, "btn_FilterProductFamily", "все Product Family"
-        )
-        self.ui.btn_FilterProduct = self._replace_filter_combo(
-            self.ui.line_Prod_name, "btn_FilterProduct", "все Продукты"
-        )
         setup_data_table(self.table, sorting=True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -126,19 +116,6 @@ class ProductsPage(QWidget):
             self.ui.btn_Import.clicked.connect(self.import_products)
         if hasattr(self.ui, "btn_Reset"):
             self.ui.btn_Reset.clicked.connect(self.reset_form)
-
-    @staticmethod
-    def _replace_filter_combo(combo: QComboBox, object_name: str, text: str) -> QPushButton:
-        button = QPushButton(text, combo.parentWidget())
-        button.setObjectName(object_name)
-        button.setMinimumSize(combo.minimumSize())
-        button.setMaximumHeight(max(25, combo.maximumHeight()))
-        layout = combo.parentWidget().layout()
-        if layout is None:
-            raise RuntimeError(f"Не найден layout для {combo.objectName()}")
-        layout.replaceWidget(combo, button)
-        combo.hide()
-        return button
 
     def get_session(self):
         return SessionLocal()

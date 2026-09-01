@@ -300,7 +300,7 @@ QScrollBar::handle:vertical {
             <string>Добавить строку</string>
            </property>
            <property name="icon">
-            <iconset resource="../resource.qrc">
+            <iconset>
              <normaloff>:/icon/icon/plus-circle — копия — копия.svg</normaloff>:/icon/icon/plus-circle — копия — копия.svg</iconset>
            </property>
           </widget>
@@ -409,24 +409,21 @@ QScrollBar::handle:vertical {
              </widget>
             </item>
             <item>
-             <widget class="QComboBox" name="line_Brand">
+             <widget class="QPushButton" name="btn_FilterBrand">
               <property name="minimumSize">
                <size>
                 <width>0</width>
-                <height>25</height>
+                <height>26</height>
                </size>
               </property>
               <property name="maximumSize">
                <size>
                 <width>16777215</width>
-                <height>25</height>
+                <height>26</height>
                </size>
               </property>
-              <property name="currentText">
-               <string/>
-              </property>
-              <property name="currentIndex">
-               <number>-1</number>
+              <property name="text">
+               <string>все Бренды</string>
               </property>
              </widget>
             </item>
@@ -446,18 +443,21 @@ QScrollBar::handle:vertical {
              </widget>
             </item>
             <item>
-             <widget class="QComboBox" name="line_Prod_Fam">
+             <widget class="QPushButton" name="btn_FilterProductFamily">
               <property name="minimumSize">
                <size>
                 <width>0</width>
-                <height>25</height>
+                <height>26</height>
                </size>
               </property>
               <property name="maximumSize">
                <size>
                 <width>16777215</width>
-                <height>25</height>
+                <height>26</height>
                </size>
+              </property>
+              <property name="text">
+               <string>все Product Family</string>
               </property>
              </widget>
             </item>
@@ -477,18 +477,21 @@ QScrollBar::handle:vertical {
              </widget>
             </item>
             <item>
-             <widget class="QComboBox" name="line_Prod_name">
+             <widget class="QPushButton" name="btn_FilterProduct">
               <property name="minimumSize">
                <size>
-                <width>200</width>
-                <height>25</height>
+                <width>0</width>
+                <height>26</height>
                </size>
               </property>
               <property name="maximumSize">
                <size>
                 <width>16777215</width>
-                <height>25</height>
+                <height>26</height>
                </size>
+              </property>
+              <property name="text">
+               <string>все Продукты</string>
               </property>
              </widget>
             </item>
@@ -569,7 +572,7 @@ QScrollBar::handle:vertical {
                <string>Search</string>
               </property>
               <property name="icon">
-               <iconset resource="../resource.qrc">
+               <iconset>
                 <normaloff>:/icon/icon/search — копия — копия.svg</normaloff>:/icon/icon/search — копия — копия.svg</iconset>
               </property>
              </widget>
@@ -592,7 +595,7 @@ QScrollBar::handle:vertical {
                <string>Скачать Шаблон</string>
               </property>
               <property name="icon">
-               <iconset resource="../resource.qrc">
+               <iconset>
                 <normaloff>:/icon/icon/arrow-down-circle — копия — копия.svg</normaloff>:/icon/icon/arrow-down-circle — копия — копия.svg</iconset>
               </property>
              </widget>
@@ -615,7 +618,7 @@ QScrollBar::handle:vertical {
                <string>Импорт</string>
               </property>
               <property name="icon">
-               <iconset resource="../resource.qrc">
+               <iconset>
                 <normaloff>:/icon/icon/arrow-up-circle — копия — копия.svg</normaloff>:/icon/icon/arrow-up-circle — копия — копия.svg</iconset>
               </property>
              </widget>
@@ -638,7 +641,7 @@ QScrollBar::handle:vertical {
                <string>Сбросить все</string>
               </property>
               <property name="icon">
-               <iconset resource="../resource.qrc">
+               <iconset>
                 <normaloff>:/icon/icon/sun — копия — копия.svg</normaloff>:/icon/icon/sun — копия — копия.svg</iconset>
               </property>
              </widget>
@@ -868,7 +871,7 @@ QScrollBar::handle:vertical {
                      <string>Сохранить в Excel</string>
                     </property>
                     <property name="icon">
-                     <iconset resource="../resource.qrc">
+                     <iconset>
                       <normaloff>:/icon/icon/download — копия — копия.svg</normaloff>:/icon/icon/download — копия — копия.svg</iconset>
                     </property>
                    </widget>
@@ -924,7 +927,7 @@ QScrollBar::handle:vertical {
                      <string>Сохранить</string>
                     </property>
                     <property name="icon">
-                     <iconset resource="../resource.qrc">
+                     <iconset>
                       <normaloff>:/icon/icon/save — копия — копия.svg</normaloff>:/icon/icon/save — копия — копия.svg</iconset>
                     </property>
                    </widget>

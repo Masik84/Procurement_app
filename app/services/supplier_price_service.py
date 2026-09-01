@@ -257,7 +257,7 @@ class SupplierPriceService:
             )
             if product is not None:
                 row.selected_product_id = product.id
-                row.new_product_name = product.name
+                row.new_product_name = None
                 try:
                     row.new_qty_in_box = normalize_qty_in_box(product.qty_in_box)
                 except ValueError:
@@ -274,7 +274,6 @@ class SupplierPriceService:
             bool((row.new_product_name or "").strip()),
             bool((row.new_brand or "").strip()),
             row.new_pack is not None,
-            row.new_qty_in_box is not None,
         ])
 
     def validate_new_products_before_save(self, batch_id: str, imported_by: str) -> None:
@@ -528,7 +527,7 @@ class SupplierPriceService:
                         db_value=db_qty_raw,
                         calculated=calculated,
                         source=source,
-                        comment="Для упаковки бочка/ведро стандарт Qty in Box = 1; рассчитано другое значение.",
+                        comment="Для упаковки бочка/ведро/куб/кега стандарт Qty in Box = 1; рассчитано другое значение.",
                     )
                 elif not explicit_user_change and db_qty is not None and calculated != db_qty:
                     add_warning(
@@ -554,11 +553,11 @@ class SupplierPriceService:
                         db_value=db_qty_raw,
                         calculated=default_qty,
                         source="Виды Упаковок",
-                        comment="Для упаковки бочка/ведро ожидается Qty in Box = 1; БД не перезаписана.",
+                        comment="Для упаковки бочка/ведро/куб/кега ожидается Qty in Box = 1; БД не перезаписана.",
                     )
 
             effective_qty = normalize_qty_in_box(product.qty_in_box) if product.qty_in_box is not None else None
-            row.new_product_name = product.name
+            row.new_product_name = None
             row.new_qty_in_box = effective_qty
             row.new_is_excise = bool(product.is_excise)
 
