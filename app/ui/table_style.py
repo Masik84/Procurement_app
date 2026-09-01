@@ -3,6 +3,15 @@ from decimal import Decimal
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 
+from app.ui.table_headers import (
+    HEADER_SOURCE_ROLE,
+    GuiHeaderItem,
+    header_display_name,
+    install_gui_table_headers,
+    resize_columns_for_multiline_headers,
+    table_header_name,
+    table_header_names,
+)
 from app.ui.table_scale import register_table_for_scaling
 from app.utils.table_sort import numeric_id_value
 
@@ -20,6 +29,11 @@ class NumericTableWidgetItem(QTableWidgetItem):
 
 
 def setup_data_table(table: QTableWidget, *, sorting: bool = True) -> None:
+    # Install this before any page calls setHorizontalHeaderLabels(). Every
+    # active GUI table goes through setup_data_table(), so the behaviour is
+    # global rather than page-specific.
+    install_gui_table_headers(table)
+
     table.setSelectionBehavior(QTableWidget.SelectItems)
     table.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.EditKeyPressed)
     table.setAlternatingRowColors(True)
@@ -40,6 +54,7 @@ def setup_data_table(table: QTableWidget, *, sorting: bool = True) -> None:
     table.setCornerButtonEnabled(False)
 
     table.resizeColumnsToContents()
+    resize_columns_for_multiline_headers(table)
     register_table_for_scaling(table)
 
 

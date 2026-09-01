@@ -10,7 +10,8 @@ from PySide6.QtGui import QFont, QFontDatabase
 
 from app.ui.table_headers import (
     calculate_gui_header_base_height,
-    install_gui_header_style,
+    install_gui_table_headers,
+    resize_columns_for_multiline_headers,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -129,7 +130,7 @@ class TableScaleManager(QObject):
             self.register_table(table)
 
     def register_table(self, table: QTableView) -> None:
-        install_gui_header_style(table)
+        install_gui_table_headers(table)
         table_id = id(table)
         if table_id in self._states:
             self._capture_missing_columns(self._states[table_id])
@@ -241,6 +242,10 @@ class TableScaleManager(QObject):
             current_state.applying = True
             try:
                 current_state.original_resize_columns_to_contents()
+                # Qt can still size a header by the complete source caption.
+                # Recalculate multi-line columns using the longest visible line
+                # plus sampled cell content, as in Daily-Report--new-.
+                resize_columns_for_multiline_headers(table)
             finally:
                 current_state.applying = False
 
