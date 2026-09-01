@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
     QComboBox,
+    QPushButton,
     QFileDialog,
     QAbstractItemView,
 )
@@ -33,8 +34,10 @@ from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
 from app.workers.excel_export_worker import start_excel_export
 from app.exports.product_exporter import ProductExporter
+from app.services.qty_in_box_service import default_qty_in_box_for_pack, normalize_qty_in_box
 from app.utils.output_headers import display_headers, standardize_output_header
 from app.utils.excel_fast_writer import write_excel_table
+from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -75,9 +78,12 @@ class ProductsPage(QWidget):
         self._temp_row_id = -1
         self._excel_export_thread = None
         self._excel_export_worker = None
+        self._selected_brand_values: set[str] | None = None
+        self._selected_family_values: set[str] | None = None
+        self._selected_product_ids: set[int] | None = None
 
-        self.columns = ["id", "name", "brand", "pack", "abc_category", "is_excise", "family"]
-        self.headers = ["id", "Product name", "Brand", "Pack", "Категория ABC", "Excise duty", "Product Family"]
+        self.columns = ["id", "name", "brand", "pack", "qty_in_box", "abc_category", "is_excise", "family"]
+        self.headers = ["id", "Product name", "Brand", "Pack", "Qty in Box", "Категория ABC", "Excise duty", "Product Family"]
         self.header_to_column = dict(zip(self.headers, self.columns))
         self.text_columns = {"name", "brand", "family", "abc_category"}
 
@@ -87,6 +93,15 @@ class ProductsPage(QWidget):
 
     def setup_ui(self):
         self.table = self.ui.table
+        self.ui.btn_FilterBrand = self._replace_filter_combo(
+            self.ui.line_Brand, "btn_FilterBrand", "все Бренды"
+        )
+        self.ui.btn_FilterProductFamily = self._replace_filter_combo(
+            self.ui.line_Prod_Fam, "btn_FilterProductFamily", "все Product Family"
+        )
+        self.ui.btn_FilterProduct = self._replace_filter_combo(
+            self.ui.line_Prod_name, "btn_FilterProduct", "все Продукты"
+        )
         setup_data_table(self.table, sorting=True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -96,8 +111,9 @@ class ProductsPage(QWidget):
 
     def setup_connections(self):
         self.table.itemChanged.connect(self.on_item_changed)
-        self.ui.line_Brand.currentTextChanged.connect(self.on_brand_filter_changed)
-        self.ui.line_Prod_Fam.currentTextChanged.connect(self.fill_in_prod_name_list)
+        self.ui.btn_FilterBrand.clicked.connect(self.open_brand_filter)
+        self.ui.btn_FilterProductFamily.clicked.connect(self.open_family_filter)
+        self.ui.btn_FilterProduct.clicked.connect(self.open_product_filter)
 
         self.ui.btn_Search.clicked.connect(self.find_Product)
         self.ui.btn_AddLine.clicked.connect(self.add_line)
@@ -111,9 +127,18 @@ class ProductsPage(QWidget):
         if hasattr(self.ui, "btn_Reset"):
             self.ui.btn_Reset.clicked.connect(self.reset_form)
 
-    def on_brand_filter_changed(self):
-        self.fill_in_prod_fam_list()
-        self.fill_in_prod_name_list()
+    @staticmethod
+    def _replace_filter_combo(combo: QComboBox, object_name: str, text: str) -> QPushButton:
+        button = QPushButton(text, combo.parentWidget())
+        button.setObjectName(object_name)
+        button.setMinimumSize(combo.minimumSize())
+        button.setMaximumHeight(max(25, combo.maximumHeight()))
+        layout = combo.parentWidget().layout()
+        if layout is None:
+            raise RuntimeError(f"Не найден layout для {combo.objectName()}")
+        layout.replaceWidget(combo, button)
+        combo.hide()
+        return button
 
     def get_session(self):
         return SessionLocal()
@@ -331,6 +356,7 @@ class ProductsPage(QWidget):
         brand = clean_multi_spaces(changes.get("brand", "")).upper()
         family = clean_multi_spaces(changes.get("family", "")).upper()
         pack = self._to_decimal(changes.get("pack", ""), "Pack")
+        qty_in_box = normalize_qty_in_box(changes.get("qty_in_box"))
         is_excise = bool(changes.get("is_excise", False))
 
         if not name:
@@ -350,6 +376,7 @@ class ProductsPage(QWidget):
             "name": name,
             "brand": brand,
             "pack": pack,
+            "qty_in_box": qty_in_box,
             "is_excise": is_excise,
             "family": family_calc,
         }
@@ -387,14 +414,22 @@ class ProductsPage(QWidget):
             existing.name = data["name"]
             existing.brand = data["brand"]
             existing.pack = data["pack"]
+            if data["qty_in_box"] is not None:
+                existing.qty_in_box = data["qty_in_box"]
+            elif existing.qty_in_box is None:
+                existing.qty_in_box = default_qty_in_box_for_pack(session, data["pack"])
             existing.is_excise = data["is_excise"]
             existing.family = data["family"]
             return
 
+        qty_in_box = data["qty_in_box"]
+        if qty_in_box is None:
+            qty_in_box = default_qty_in_box_for_pack(session, data["pack"])
         product = Product(
             name=data["name"],
             brand=data["brand"],
             pack=data["pack"],
+            qty_in_box=qty_in_box,
             is_excise=data["is_excise"],
             family=data["family"],
         )
@@ -409,6 +444,7 @@ class ProductsPage(QWidget):
             "name": changes.get("name", product.name or ""),
             "brand": changes.get("brand", product.brand or ""),
             "pack": changes.get("pack", product.pack),
+            "qty_in_box": changes.get("qty_in_box", product.qty_in_box),
             "is_excise": changes.get("is_excise", bool(product.is_excise)),
             "family": changes.get("family", product.family or ""),
         }
@@ -431,6 +467,7 @@ class ProductsPage(QWidget):
         product.name = data["name"]
         product.brand = data["brand"]
         product.pack = data["pack"]
+        product.qty_in_box = data["qty_in_box"]
         product.is_excise = data["is_excise"]
         product.family = data["family"]
 
@@ -548,84 +585,94 @@ class ProductsPage(QWidget):
         return [row[0] for row in rows if row[0]]
 
     def refresh_all_comboboxes(self):
-        self.fill_in_prod_brand_list()
-        self.fill_in_prod_fam_list()
-        self.fill_in_prod_name_list()
+        self._prune_filter_selections()
+        self._refresh_filter_buttons()
 
     def fill_in_prod_brand_list(self):
-        try:
-            with self.get_session() as session:
-                brands = (
-                    session.query(Product.brand)
-                    .filter(Product.brand.isnot(None), Product.brand != "")
-                    .distinct()
-                    .order_by(Product.brand)
-                    .all()
-                )
-
-            self._fill_combobox(self.ui.line_Brand, [row[0] for row in brands if row[0]])
-
-        except Exception as e:
-            self.show_error_message(f"Ошибка при получении брендов: {str(e)}")
+        self._refresh_filter_buttons()
 
     def fill_in_prod_fam_list(self):
-        brand = self.ui.line_Brand.currentText()
-
-        try:
-            with self.get_session() as session:
-                query = session.query(Product.family).filter(
-                    Product.family.isnot(None),
-                    Product.family != ""
-                )
-                if brand != "-":
-                    query = query.filter(Product.brand == brand)
-
-                families = query.distinct().order_by(Product.family).all()
-
-            families = [row[0] for row in families if row[0]]
-            current_value = self.ui.line_Prod_Fam.currentText()
-            self._fill_combobox(self.ui.line_Prod_Fam, families)
-
-            if current_value in families:
-                self.ui.line_Prod_Fam.setCurrentText(current_value)
-
-        except Exception as e:
-            self.show_error_message(f"Ошибка при получении семейств: {str(e)}")
-            self._fill_combobox(self.ui.line_Prod_Fam, [])
+        self._refresh_filter_buttons()
 
     def fill_in_prod_name_list(self):
-        brand = self.ui.line_Brand.currentText()
-        family = self.ui.line_Prod_Fam.currentText()
+        self._refresh_filter_buttons()
 
-        try:
-            with self.get_session() as session:
-                query = session.query(Product).filter(Product.name.isnot(None), Product.name != "")
+    def _filter_option_rows(self, *, ignore: str | None = None) -> list[dict]:
+        rows = self.get_Products_from_db()
+        if ignore != "brand" and self._selected_brand_values is not None:
+            rows = [row for row in rows if row["brand"] in self._selected_brand_values]
+        if ignore != "family" and self._selected_family_values is not None:
+            rows = [row for row in rows if row["family"] in self._selected_family_values]
+        if ignore != "product" and self._selected_product_ids is not None:
+            rows = [row for row in rows if int(row["id"]) in self._selected_product_ids]
+        return rows
 
-                if brand != "-":
-                    query = query.filter(Product.brand == brand)
-                if family != "-":
-                    query = query.filter(Product.family == family)
+    def open_brand_filter(self):
+        options = sorted({row["brand"] for row in self._filter_option_rows(ignore="brand") if row["brand"]})
+        accepted, selected = CheckedFilterDialog(
+            self,
+            title="Фильтр по брендам",
+            options=[FilterOption(key=value, label=value) for value in options],
+            selected_keys=self._selected_brand_values,
+        ).exec_and_get_selection()
+        if accepted:
+            self._selected_brand_values = None if selected is None else {str(value) for value in selected}
+            self._prune_filter_selections()
+            self._refresh_filter_buttons()
 
-                products = self._sort_products(query.all())
-                product_names = [row.name for row in products if row.name]
+    def open_family_filter(self):
+        options = sorted({row["family"] for row in self._filter_option_rows(ignore="family") if row["family"]})
+        accepted, selected = CheckedFilterDialog(
+            self,
+            title="Фильтр по Product Family",
+            options=[FilterOption(key=value, label=value) for value in options],
+            selected_keys=self._selected_family_values,
+        ).exec_and_get_selection()
+        if accepted:
+            self._selected_family_values = None if selected is None else {str(value) for value in selected}
+            self._prune_filter_selections()
+            self._refresh_filter_buttons()
 
-            current_value = self.ui.line_Prod_name.currentText()
-            self._fill_combobox(self.ui.line_Prod_name, product_names)
+    def open_product_filter(self):
+        rows = self._filter_option_rows(ignore="product")
+        options = [
+            FilterOption(key=int(row["id"]), label=row["name"], search_text=row["name"])
+            for row in sorted(rows, key=lambda item: (item["name"] or "").casefold())
+            if row["name"]
+        ]
+        accepted, selected = CheckedFilterDialog(
+            self,
+            title="Фильтр по продуктам",
+            options=options,
+            selected_keys=self._selected_product_ids,
+        ).exec_and_get_selection()
+        if accepted:
+            self._selected_product_ids = None if selected is None else {int(value) for value in selected}
+            self._prune_filter_selections()
+            self._refresh_filter_buttons()
 
-            if current_value in product_names:
-                self.ui.line_Prod_name.setCurrentText(current_value)
+    def _prune_filter_selections(self):
+        rows = self.get_Products_from_db()
+        brands = {row["brand"] for row in rows if row["brand"]}
+        families = {row["family"] for row in rows if row["family"]}
+        product_ids = {int(row["id"]) for row in rows}
+        if self._selected_brand_values is not None:
+            self._selected_brand_values &= brands
+        if self._selected_family_values is not None:
+            self._selected_family_values &= families
+        if self._selected_product_ids is not None:
+            self._selected_product_ids &= product_ids
 
-        except Exception as e:
-            self.show_error_message(f"Ошибка при получении продуктов: {str(e)}")
-            self._fill_combobox(self.ui.line_Prod_name, [])
+    def _refresh_filter_buttons(self):
+        self._set_filter_button_text(self.ui.btn_FilterBrand, "все Бренды", self._selected_brand_values)
+        self._set_filter_button_text(
+            self.ui.btn_FilterProductFamily, "все Product Family", self._selected_family_values
+        )
+        self._set_filter_button_text(self.ui.btn_FilterProduct, "все Продукты", self._selected_product_ids)
 
-    def _fill_combobox(self, combobox, items):
-        combobox.blockSignals(True)
-        combobox.clear()
-        combobox.addItem("-")
-        if items:
-            combobox.addItems(sorted(items))
-        combobox.blockSignals(False)
+    @staticmethod
+    def _set_filter_button_text(button: QPushButton, all_text: str, selected: set | None):
+        button.setText(all_text if selected is None else f"{all_text} ({len(selected)})")
 
     def _sort_products(self, products):
         return sorted(
@@ -647,6 +694,7 @@ class ProductsPage(QWidget):
                     "name": row.name,
                     "brand": row.brand,
                     "pack": row.pack,
+                    "qty_in_box": row.qty_in_box,
                     "abc_category": row.abc_category or "-",
                     "is_excise": bool(row.is_excise),
                     "family": row.family,
@@ -666,17 +714,14 @@ class ProductsPage(QWidget):
         if not prod_data:
             return []
 
-        brand = self.ui.line_Brand.currentText().strip()
-        family = self.ui.line_Prod_Fam.currentText().strip()
-        product_name = self.ui.line_Prod_name.currentText().strip()
         find_product_text = self._get_find_product_text()
 
-        if brand != "-":
-            prod_data = [row for row in prod_data if (row["brand"] or "") == brand]
-        if family != "-":
-            prod_data = [row for row in prod_data if (row["family"] or "") == family]
-        if product_name != "-":
-            prod_data = [row for row in prod_data if (row["name"] or "") == product_name]
+        if self._selected_brand_values is not None:
+            prod_data = [row for row in prod_data if row["brand"] in self._selected_brand_values]
+        if self._selected_family_values is not None:
+            prod_data = [row for row in prod_data if row["family"] in self._selected_family_values]
+        if self._selected_product_ids is not None:
+            prod_data = [row for row in prod_data if int(row["id"]) in self._selected_product_ids]
         if find_product_text:
             prod_data = [
                 row for row in prod_data
@@ -783,6 +828,11 @@ class ProductsPage(QWidget):
                     "name": imported["name"],
                     "brand": imported["brand"],
                     "pack": imported["pack"],
+                    "qty_in_box": (
+                        imported.get("qty_in_box")
+                        if imported.get("qty_in_box") is not None
+                        else (existing.qty_in_box if existing is not None else None)
+                    ),
                     "abc_category": (existing.abc_category or "-") if existing is not None else "-",
                     "is_excise": imported["is_excise"],
                     "family": imported["family"],
@@ -804,6 +854,11 @@ class ProductsPage(QWidget):
                     "name": imported["name"],
                     "brand": imported["brand"],
                     "pack": imported["pack"],
+                    "qty_in_box": (
+                        imported.get("qty_in_box")
+                        if imported.get("qty_in_box") is not None
+                        else (existing.qty_in_box if existing is not None else None)
+                    ),
                     "abc_category": (existing.abc_category or "-") if existing is not None else "-",
                     "is_excise": imported["is_excise"],
                     "family": imported["family"],
@@ -888,6 +943,7 @@ class ProductsPage(QWidget):
                 "Product name",
                 "Brand",
                 "Pack",
+                "Qty in Box",
                 "Категория ABC",
                 "Excise duty",
                 "Product Family",
@@ -908,6 +964,8 @@ class ProductsPage(QWidget):
                         except Exception:
                             return str(pack)
                     return ""
+                if header == "Qty in Box":
+                    return row.get("qty_in_box")
                 if header == "Категория ABC":
                     return row.get("abc_category", "-") or "-"
                 if header == "Excise duty":
@@ -921,7 +979,7 @@ class ProductsPage(QWidget):
             ws.Cells.Font.Name = "Aptos Narrow"
             ws.Cells.Font.Size = 11
 
-            header_range = ws.Range("A1:G1")
+            header_range = ws.Range("A1:H1")
             header_range.Font.Name = "Aptos Narrow"
             header_range.Font.Size = 11
             header_range.Font.Bold = True
@@ -933,7 +991,7 @@ class ProductsPage(QWidget):
             ws.Rows(1).EntireRow.AutoFit()
 
             try:
-                ws.Range("A1:G1").AutoFilter(1)
+                ws.Range("A1:H1").AutoFilter(1)
             except Exception:
                 pass
 
@@ -943,7 +1001,8 @@ class ProductsPage(QWidget):
             ws.Columns("D:D").ColumnWidth = 12
             ws.Columns("E:E").ColumnWidth = 12
             ws.Columns("F:F").ColumnWidth = 14
-            ws.Columns("G:G").ColumnWidth = 24
+            ws.Columns("G:G").ColumnWidth = 14
+            ws.Columns("H:H").ColumnWidth = 24
 
             # if rows:
             #     ws.Range(f"D2:D{len(rows) + 1}").NumberFormat = "General"
@@ -1045,7 +1104,7 @@ class ProductsPage(QWidget):
     def _build_table_item(self, col_name, value):
         display_value = "" if value is None else str(value)
 
-        if col_name == "pack":
+        if col_name in {"pack", "qty_in_box"}:
             parsed = parse_loose_number(value)
             if parsed is not None:
                 display_value = self._format_decimal_display(parsed)
@@ -1063,7 +1122,7 @@ class ProductsPage(QWidget):
 
         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
 
-        if col_name == "pack":
+        if col_name in {"pack", "qty_in_box"}:
             item.setTextAlignment(Qt.AlignCenter)
         elif col_name in self.text_columns:
             item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
@@ -1144,13 +1203,16 @@ class ProductsPage(QWidget):
 
         self.table.insertRow(0)
 
-        brand_value = self.ui.line_Brand.currentText()
-        if brand_value == "-":
-            brand_value = ""
-
-        family_value = self.ui.line_Prod_Fam.currentText()
-        if family_value == "-":
-            family_value = ""
+        brand_value = (
+            next(iter(self._selected_brand_values))
+            if self._selected_brand_values is not None and len(self._selected_brand_values) == 1
+            else ""
+        )
+        family_value = (
+            next(iter(self._selected_family_values))
+            if self._selected_family_values is not None and len(self._selected_family_values) == 1
+            else ""
+        )
 
         row_id = self._temp_row_id
         self._temp_row_id -= 1
@@ -1161,6 +1223,7 @@ class ProductsPage(QWidget):
             "name": "",
             "brand": brand_value,
             "pack": "",
+            "qty_in_box": "",
             "abc_category": "-",
             "is_excise": False,
             "family": family_value,
@@ -1170,6 +1233,7 @@ class ProductsPage(QWidget):
             "name": "",
             "brand": brand_value,
             "pack": "",
+            "qty_in_box": "",
             "abc_category": "-",
             "is_excise": False,
             "family": family_value,
@@ -1195,20 +1259,10 @@ class ProductsPage(QWidget):
         self.show_message("Добавлена новая строка")
 
     def _reset_filter_controls_after_save(self):
-        for combo_name in ("line_Brand", "line_Prod_Fam", "line_Prod_name"):
-            combo = getattr(self.ui, combo_name, None)
-            if combo is None:
-                continue
-
-            combo.blockSignals(True)
-            try:
-                index = combo.findText("-")
-                if index >= 0:
-                    combo.setCurrentIndex(index)
-                else:
-                    combo.setCurrentText("-")
-            finally:
-                combo.blockSignals(False)
+        self._selected_brand_values = None
+        self._selected_family_values = None
+        self._selected_product_ids = None
+        self._refresh_filter_buttons()
 
         line_find = getattr(self.ui, "line_FindProduct", None)
         if line_find is not None:
@@ -1216,9 +1270,9 @@ class ProductsPage(QWidget):
 
     def has_active_filters(self):
         return (
-            self.ui.line_Brand.currentText() != "-"
-            or self.ui.line_Prod_Fam.currentText() != "-"
-            or self.ui.line_Prod_name.currentText() != "-"
+            self._selected_brand_values is not None
+            or self._selected_family_values is not None
+            or self._selected_product_ids is not None
             or bool(self._get_find_product_text())
         )
 
@@ -1234,9 +1288,9 @@ class ProductsPage(QWidget):
             self.table.clearContents()
             self.table.setRowCount(0)
 
-            self._fill_combobox(self.ui.line_Brand, [])
-            self._fill_combobox(self.ui.line_Prod_Fam, [])
-            self._fill_combobox(self.ui.line_Prod_name, [])
+            self._selected_brand_values = None
+            self._selected_family_values = None
+            self._selected_product_ids = None
             line_find = getattr(self.ui, "line_FindProduct", None)
             if line_find is not None:
                 line_find.clear()

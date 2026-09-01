@@ -27,11 +27,14 @@ class SupplierPriceImporter:
         "pricel": "price",
         "pricelt": "price",
         "pricepack": "price_pack",
+        "pricebox": "price_box",
         "qtypcs": "qty_pcs",
         "qtypc": "qty_pcs",
         "qtypieces": "qty_pcs",
         "quantitypcs": "qty_pcs",
         "quantity": "qty_pcs",
+        "qtybox": "qty_box",
+        "quantitybox": "qty_box",
         "volumel": "volume_l",
         "volumelt": "volume_l",
         "volume": "volume_l",
@@ -75,7 +78,9 @@ class SupplierPriceImporter:
                 "product_name": None,
                 "price": None,
                 "price_pack": None,
+                "price_box": None,
                 "qty_pcs": None,
+                "qty_box": None,
                 "volume_l": None,
             }
             for index, key in columns.items():
@@ -85,7 +90,7 @@ class SupplierPriceImporter:
                 else:
                     row[key] = self._num(value)
 
-            if any(row.get(k) not in (None, "") for k in ("supplier_article", "product_name", "price", "price_pack", "qty_pcs", "volume_l")):
+            if any(row.get(k) not in (None, "") for k in ("supplier_article", "product_name", "price", "price_pack", "price_box", "qty_pcs", "qty_box", "volume_l")):
                 rows.append(row)
 
         wb.close()

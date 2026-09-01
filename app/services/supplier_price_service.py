@@ -8,7 +8,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session, joinedload
 
-from app.db.models import SupplierPriceCalculation, TempPriceImport
+from app.db.models import Product, SupplierPriceCalculation, TempPriceImport
 from app.exports.supplier_price_exporter import SupplierPriceExporter
 from app.imports.supplier_price_importer import SupplierPriceImporter
 from app.services.supplier_service import SupplierService, SupplierUpsertData
@@ -18,6 +18,13 @@ from app.services.price_repository import PriceRepository
 from app.services.product_matching_service import ProductMatchingService
 from app.services.temp_cleanup_service import TempCleanupService
 from app.utils.batch import generate_import_batch_id
+from app.services.qty_in_box_service import (
+    calculate_qty_in_box_candidates,
+    default_qty_in_box_for_pack,
+    normalize_qty_in_box,
+    whole_qty_in_box_candidate,
+)
+from app.utils.text import clean_multi_spaces
 
 
 @dataclass(slots=True)
@@ -161,7 +168,9 @@ class SupplierPriceService:
             product_name=None,
             price=None,
             price_pack=None,
+            price_box=None,
             qty_pcs=None,
+            qty_box=None,
             volume_l=None,
             supplier_id=supplier_id,
             import_date=import_date,
@@ -172,6 +181,7 @@ class SupplierPriceService:
             new_product_name=None,
             new_brand=None,
             new_pack=None,
+            new_qty_in_box=None,
             new_is_excise=False,
         )
         self.session.add(row)
@@ -202,7 +212,9 @@ class SupplierPriceService:
                 product_name=row.get("product_name") or None,
                 price=row.get("price"),
                 price_pack=row.get("price_pack"),
+                price_box=row.get("price_box"),
                 qty_pcs=row.get("qty_pcs"),
+                qty_box=row.get("qty_box"),
                 volume_l=row.get("volume_l"),
                 supplier_id=supplier_id,
                 import_date=import_date,
@@ -213,6 +225,7 @@ class SupplierPriceService:
                 new_product_name=None,
                 new_brand=None,
                 new_pack=None,
+                new_qty_in_box=None,
                 new_is_excise=False,
             )
             created_rows.append(temp_row)
@@ -244,6 +257,12 @@ class SupplierPriceService:
             )
             if product is not None:
                 row.selected_product_id = product.id
+                row.new_product_name = product.name
+                try:
+                    row.new_qty_in_box = normalize_qty_in_box(product.qty_in_box)
+                except ValueError:
+                    row.new_qty_in_box = None
+                row.new_is_excise = bool(product.is_excise)
                 matched_count += 1
 
         self.session.flush()
@@ -255,6 +274,7 @@ class SupplierPriceService:
             bool((row.new_product_name or "").strip()),
             bool((row.new_brand or "").strip()),
             row.new_pack is not None,
+            row.new_qty_in_box is not None,
         ])
 
     def validate_new_products_before_save(self, batch_id: str, imported_by: str) -> None:
@@ -284,6 +304,7 @@ class SupplierPriceService:
                 "new_product_name": row.new_product_name,
                 "new_brand": row.new_brand,
                 "new_pack": row.new_pack,
+                "new_qty_in_box": row.new_qty_in_box,
                 "new_is_excise": row.new_is_excise,
                 "selected_product_id": row.selected_product_id,
             }
@@ -295,6 +316,7 @@ class SupplierPriceService:
                     brand=row.new_brand,
                     pack=row.new_pack,
                     is_excise=row.new_is_excise,
+                    qty_in_box=row.new_qty_in_box,
                 )
             except Exception as e:
                 raise ValueError(
@@ -330,6 +352,7 @@ class SupplierPriceService:
                 "new_product_name": row.new_product_name,
                 "new_brand": row.new_brand,
                 "new_pack": row.new_pack,
+                "new_qty_in_box": row.new_qty_in_box,
                 "new_is_excise": row.new_is_excise,
                 "selected_product_id_before": row.selected_product_id,
                 "status": "",
@@ -362,6 +385,7 @@ class SupplierPriceService:
                     name=row.new_product_name,
                     brand=row.new_brand,
                     pack=row.new_pack,
+                    qty_in_box=row.new_qty_in_box,
                     is_excise=bool(row.new_is_excise) if row.new_is_excise is not None else False,
                 )
                 row.selected_product_id = product.id
@@ -383,6 +407,181 @@ class SupplierPriceService:
 
         self.session.flush()
         return created_count
+
+    def prepare_box_data_and_update_products(self, batch_id: str, imported_by: str) -> list[dict]:
+        """Apply permitted product edits, resolve Qty in Box and fill box quantities."""
+        rows = (
+            self.session.query(TempPriceImport)
+            .options(joinedload(TempPriceImport.selected_product))
+            .filter(
+                TempPriceImport.batch_id == batch_id,
+                TempPriceImport.imported_by == imported_by,
+                TempPriceImport.selected_product_id.isnot(None),
+            )
+            .order_by(TempPriceImport.import_row_no.asc(), TempPriceImport.id.asc())
+            .all()
+        )
+        warnings: list[dict] = []
+        missing_rows: list[str] = []
+
+        def add_warning(row, product, *, db_value, calculated, source, comment):
+            warnings.append({
+                "Import row": row.import_row_no,
+                "Product ID": int(product.id),
+                "Product Name": product.name or "",
+                "Pack": product.pack,
+                "Qty in Box DB": db_value,
+                "Qty in Box calculated": calculated,
+                "Source": source,
+                "Comment": comment,
+            })
+
+        for row in rows:
+            product = row.selected_product
+            if product is None:
+                continue
+
+            new_name = clean_multi_spaces(row.new_product_name).upper()
+            if new_name and new_name != clean_multi_spaces(product.name).upper():
+                duplicate = (
+                    self.session.query(Product)
+                    .filter(Product.id != product.id, Product.name == new_name)
+                    .first()
+                )
+                if duplicate is not None:
+                    raise ValueError(
+                        f"Строка {row.import_row_no}: название '{new_name}' уже используется продуктом id={duplicate.id}."
+                    )
+                self.product_matching_service.validate_product_name_pack_format(
+                    product_name=new_name,
+                    pack_value=product.pack,
+                )
+                product.name = new_name
+                product.family = self.product_matching_service.build_product_family_from_name(
+                    new_name, product.pack
+                )
+
+            if row.new_is_excise is not None:
+                product.is_excise = bool(row.new_is_excise)
+
+            db_qty_raw = product.qty_in_box
+            try:
+                db_qty = normalize_qty_in_box(db_qty_raw)
+            except ValueError:
+                db_qty = None
+                add_warning(
+                    row,
+                    product,
+                    db_value=db_qty_raw,
+                    calculated=None,
+                    source="DB",
+                    comment="В БД указано нулевое, отрицательное или дробное Qty in Box.",
+                )
+
+            user_qty = normalize_qty_in_box(
+                row.new_qty_in_box,
+                field_name="Qty in Box (for new)",
+            )
+            explicit_user_change = user_qty is not None and user_qty != db_qty
+            if explicit_user_change:
+                product.qty_in_box = user_qty
+                db_qty = user_qty
+
+            default_qty = default_qty_in_box_for_pack(self.session, product.pack)
+            formula_candidates = calculate_qty_in_box_candidates(
+                qty_pcs=row.qty_pcs,
+                qty_box=row.qty_box,
+                volume_l=row.volume_l,
+                pack=product.pack,
+            )
+            whole_candidates = {
+                source: whole_qty_in_box_candidate(value)
+                for source, value in formula_candidates.items()
+            }
+
+            formula_values = {value for value in formula_candidates.values()}
+            if len(formula_values) > 1:
+                add_warning(
+                    row,
+                    product,
+                    db_value=db_qty_raw,
+                    calculated="; ".join(f"{source} = {value}" for source, value in formula_candidates.items()),
+                    source="Несколько формул",
+                    comment="Расчёты Qty in Box дают разные значения; БД не изменена.",
+                )
+            elif formula_candidates:
+                source, calculated_raw = next(iter(formula_candidates.items()))
+                calculated = whole_candidates[source]
+                if calculated is None:
+                    add_warning(
+                        row,
+                        product,
+                        db_value=db_qty_raw,
+                        calculated=calculated_raw,
+                        source=source,
+                        comment="Расчёт дал нецелое или неположительное значение; округление не выполнялось.",
+                    )
+                elif default_qty is not None and calculated != default_qty:
+                    add_warning(
+                        row,
+                        product,
+                        db_value=db_qty_raw,
+                        calculated=calculated,
+                        source=source,
+                        comment="Для упаковки бочка/ведро стандарт Qty in Box = 1; рассчитано другое значение.",
+                    )
+                elif not explicit_user_change and db_qty is not None and calculated != db_qty:
+                    add_warning(
+                        row,
+                        product,
+                        db_value=db_qty_raw,
+                        calculated=calculated,
+                        source=source,
+                        comment="Рассчитанное значение отличается от БД; БД не перезаписана.",
+                    )
+                elif db_qty is None and default_qty is None:
+                    product.qty_in_box = calculated
+                    db_qty = calculated
+
+            if not explicit_user_change and default_qty is not None:
+                if db_qty is None:
+                    product.qty_in_box = default_qty
+                    db_qty = default_qty
+                elif db_qty != default_qty:
+                    add_warning(
+                        row,
+                        product,
+                        db_value=db_qty_raw,
+                        calculated=default_qty,
+                        source="Виды Упаковок",
+                        comment="Для упаковки бочка/ведро ожидается Qty in Box = 1; БД не перезаписана.",
+                    )
+
+            effective_qty = normalize_qty_in_box(product.qty_in_box) if product.qty_in_box is not None else None
+            row.new_product_name = product.name
+            row.new_qty_in_box = effective_qty
+            row.new_is_excise = bool(product.is_excise)
+
+            qty_box = self._to_decimal(row.qty_box)
+            if qty_box > 0 and effective_qty is not None:
+                if self._to_decimal(row.qty_pcs) <= 0:
+                    row.qty_pcs = qty_box * Decimal(effective_qty)
+                if self._to_decimal(row.volume_l) <= 0 and self._to_decimal(row.qty_pcs) > 0:
+                    row.volume_l = self._to_decimal(row.qty_pcs) * self._to_decimal(product.pack)
+
+            if self._is_positive_price(row.price_box) and effective_qty is None:
+                missing_rows.append(
+                    f"строка {row.import_row_no}: id={product.id}, {product.name}"
+                )
+
+        if missing_rows:
+            raise ValueError(
+                "Для расчёта Price, box не заполнено Qty in Box. Заполните 'Qty in Box (for new)':\n"
+                + "\n".join(missing_rows)
+            )
+
+        self.session.flush()
+        return warnings
 
     def create_or_update_product_articles(self, batch_id: str, imported_by: str) -> int:
         rows = (
@@ -443,7 +642,6 @@ class SupplierPriceService:
                 TempPriceImport.batch_id == batch_id,
                 TempPriceImport.imported_by == imported_by,
                 TempPriceImport.selected_product_id.isnot(None),
-                TempPriceImport.price_pack.isnot(None),
             )
             .all()
         )
@@ -459,14 +657,21 @@ class SupplierPriceService:
             if self._is_positive_price(row.price):
                 continue
 
-            if not self._is_positive_price(row.price_pack):
-                continue
-
             pack = self._to_decimal(row.selected_product.pack)
             if pack <= Decimal("0"):
                 continue
 
-            row.price = self._round4(self._to_decimal(row.price_pack) / pack)
+            if self._is_positive_price(row.price_pack):
+                row.price = self._round4(self._to_decimal(row.price_pack) / pack)
+            elif self._is_positive_price(row.price_box):
+                qty_in_box = normalize_qty_in_box(row.selected_product.qty_in_box)
+                if qty_in_box is None:
+                    continue
+                row.price = self._round4(
+                    self._to_decimal(row.price_box) / pack / Decimal(qty_in_box)
+                )
+            else:
+                continue
             filled_count += 1
 
         self.session.flush()
@@ -619,6 +824,7 @@ class SupplierPriceService:
         matched_count = self.automatch_temp_rows(batch_id, imported_by)
         self.validate_new_products_before_save(batch_id, imported_by)
         created_products_count = self.create_products_from_temp(batch_id, imported_by)
+        self.prepare_box_data_and_update_products(batch_id, imported_by)
         product_articles_count = self.create_or_update_product_articles(batch_id, imported_by)
         filled_prices_count = self.fill_price_from_price_pack(batch_id, imported_by)
         saved_prices_count = self.save_prices_to_history_and_current(

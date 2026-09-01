@@ -8,6 +8,7 @@ from decimal import Decimal
 from sqlalchemy.orm import Session
 
 from app.db.models import Product, ProductArticle
+from app.services.qty_in_box_service import default_qty_in_box_for_pack, normalize_qty_in_box
 from app.utils.excel_import import excel_text
 from app.utils.parsers import parse_loose_number
 from app.utils.text import (
@@ -23,6 +24,7 @@ class ProductCreateData:
     brand: str
     pack: float
     is_excise: bool
+    qty_in_box: int | None = None
 
 
 class ProductMatchingService:
@@ -566,6 +568,7 @@ class ProductMatchingService:
         brand: object,
         pack: object,
         is_excise: object,
+        qty_in_box: object = None,
     ) -> None:
         clean_name = clean_multi_spaces(product_name).upper()
         clean_brand = clean_multi_spaces(brand)
@@ -587,6 +590,8 @@ class ProductMatchingService:
             raise ValueError(
                 f"Для '{clean_name}' поле 'Упаковка' должно быть числом."
             )
+
+        normalize_qty_in_box(qty_in_box)
 
         cls.validate_product_name_pack_format(
             product_name=clean_name,
@@ -638,6 +643,7 @@ class ProductMatchingService:
         brand: object,
         pack: object,
         is_excise: object,
+        qty_in_box: object = None,
     ) -> Product:
         return self.get_or_create_products_batch([
             ProductCreateData(
@@ -645,6 +651,7 @@ class ProductMatchingService:
                 brand=brand,
                 pack=pack,
                 is_excise=is_excise,
+                qty_in_box=qty_in_box,
             )
         ])[0]
 
@@ -662,11 +669,13 @@ class ProductMatchingService:
             clean_name = clean_multi_spaces(item.name).upper()
             clean_brand = clean_multi_spaces(item.brand)
             pack_num = parse_loose_number(item.pack)
+            qty_in_box = normalize_qty_in_box(item.qty_in_box)
             self.validate_new_product_fields(
                 product_name=clean_name,
                 brand=clean_brand,
                 pack=pack_num,
                 is_excise=item.is_excise,
+                qty_in_box=qty_in_box,
             )
 
             product = exact_cache.get(clean_name)
@@ -674,10 +683,13 @@ class ProductMatchingService:
                 product = normalized_cache.get(normalize_product_name(clean_name))
 
             if product is None:
+                if qty_in_box is None:
+                    qty_in_box = default_qty_in_box_for_pack(self.session, pack_num)
                 product = Product(
                     name=clean_name,
                     brand=clean_brand,
                     pack=pack_num,
+                    qty_in_box=qty_in_box,
                     is_excise=bool(item.is_excise),
                     family=self.build_product_family_from_name(clean_name, pack_num),
                 )
@@ -689,6 +701,12 @@ class ProductMatchingService:
                 brand_key = self._brand_key(clean_brand)
                 exact_by_brand[(clean_name, brand_key)] = product
                 normalized_by_brand[(normalized_name, brand_key)] = product
+            elif product.qty_in_box is None:
+                resolved_qty_in_box = qty_in_box
+                if resolved_qty_in_box is None:
+                    resolved_qty_in_box = default_qty_in_box_for_pack(self.session, product.pack)
+                if resolved_qty_in_box is not None:
+                    product.qty_in_box = resolved_qty_in_box
 
             resolved.append(product)
 

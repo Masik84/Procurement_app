@@ -55,7 +55,7 @@ class TableScaleManager(QObject):
 
     At 100% every table uses a common 10 pt base size and 22 px row height.
     The table font is resolved in this order: Aptos Narrow -> Arial Narrow ->
-    Tahoma.  If Aptos Narrow is available only in the local Microsoft Office
+    Tahoma. If Aptos Narrow is available only in the local Microsoft Office
     font cache, it is registered for this application without installing it
     system-wide.
     """
@@ -139,9 +139,9 @@ class TableScaleManager(QObject):
         header = table.horizontalHeader()
         header_height = max(header.height(), header.sizeHint().height(), 24)
 
-        # One base size for every table.  Previously a table could inherit 7/8/9
+        # One base size for every table. Previously a table could inherit 7/8/9
         # pt from QSS/.ui and then scale from that value, which made otherwise
-        # identical tables look different.  The reference project uses a fixed
+        # identical tables look different. The reference project uses a fixed
         # 10 pt base for both body and header, so Procurement now does the same.
         state = _TableScaleState(
             table=table,
@@ -467,11 +467,14 @@ class TableScaleManager(QObject):
         if not isinstance(widget, (QLineEdit, QComboBox, QDateEdit, QSpinBox, QDoubleSpinBox)):
             return
 
+        table = self._find_parent_table(widget)
+        if table is None:
+            return
+
         base_font_size = widget.property("table_scale_base_font_size")
         current_font = QFont(widget.font())
         if base_font_size is None:
-            table = self._find_parent_table(widget)
-            table_state = self._states.get(id(table)) if table is not None else None
+            table_state = self._states.get(id(table))
             if table_state is not None:
                 base_font_size = table_state.base_item_font_pt
             else:
@@ -486,6 +489,28 @@ class TableScaleManager(QObject):
         current_font.setItalic(False)
         current_font.setPointSizeF(max(5.0, float(base_font_size) * self.scale_factor))
         widget.setFont(current_font)
+
+        # Qt can create a delegate editor with its own sizeHint after a double
+        # click.  CSS min/max-height alone is not enough: for one event cycle the
+        # editor may become taller than the row and visually push the cell down.
+        # Resolve the actual table row under the editor and pin the editor to the
+        # real row height (minus 2 px for the cell frame), as agreed for all GUI
+        # tables rather than only Supplier Price.
+        index = table.indexAt(widget.mapTo(table.viewport(), widget.rect().center()))
+        if not index.isValid():
+            current_index = table.currentIndex()
+            if current_index.isValid():
+                index = current_index
+
+        if index.isValid():
+            row_height = table.rowHeight(index.row())
+        else:
+            row_height = table.verticalHeader().defaultSectionSize()
+
+        editor_height = max(1, int(row_height) - 2)
+        widget.setMinimumHeight(editor_height)
+        widget.setMaximumHeight(editor_height)
+        widget.setFixedHeight(editor_height)
 
     @staticmethod
     def _column_count(table: QTableView) -> int:
@@ -549,7 +574,7 @@ class TableScaleManager(QObject):
     def _load_local_office_aptos_narrow(cls) -> None:
         """Register Aptos Narrow faces found in the local Microsoft Office cache.
 
-        The font is added only to this running Qt application.  Nothing is
+        The font is added only to this running Qt application. Nothing is
         copied to Windows Fonts and no system-wide installation is performed.
         All matching faces are loaded so that a Bold/Semibold file cannot be
         mistaken for the regular face.

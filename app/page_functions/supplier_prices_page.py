@@ -37,6 +37,7 @@ from app.services.supplier_price_service import SupplierPriceService
 from app.utils.batch import get_current_username
 from app.utils.parsers import parse_flexible_date, parse_loose_number, parse_user_percent
 from app.utils.text import clean_multi_spaces
+from app.services.qty_in_box_service import normalize_qty_in_box
 from app.ui.table_style import *
 from app.workers.excel_export_worker import start_excel_export
 
@@ -91,11 +92,14 @@ class SupplierPricesPage(QWidget):
             "product_name",
             "price",
             "price_pack",
+            "price_box",
             "qty_pcs",
+            "qty_box",
             "volume_l",
             "new_product_name",
             "new_brand",
             "new_pack",
+            "new_qty_in_box",
             "new_is_excise",
         ]
         self.headers = [
@@ -104,14 +108,19 @@ class SupplierPricesPage(QWidget):
             "Supplier Product Name",
             "Price, L",
             "Price, pack",
+            "Price, box",
             "Qty, pcs",
+            "Qty, box",
             "Volume, L",
             "Product name (for new)",
             "Brand (for new)",
             "Pack (for new)",
+            "Qty in Box (for new)",
             "Excise duty (for new)",
         ]
-        self.numeric_columns = {"price", "price_pack", "qty_pcs", "volume_l", "new_pack"}
+        self.numeric_columns = {
+            "price", "price_pack", "price_box", "qty_pcs", "qty_box", "volume_l", "new_pack", "new_qty_in_box"
+        }
 
         self.setup_ui()
         self.setup_connections()
@@ -780,17 +789,20 @@ class SupplierPricesPage(QWidget):
             self.table.setItem(row_index, 2, self.build_table_item("product_name", supplier_product_name_text))
             self.table.setItem(row_index, 3, self.build_table_item("price", self.value_to_text(row.price)))
             self.table.setItem(row_index, 4, self.build_table_item("price_pack", self.value_to_text(row.price_pack)))
-            self.table.setItem(row_index, 5, self.build_table_item("qty_pcs", self.value_to_text(row.qty_pcs)))
-            self.table.setItem(row_index, 6, self.build_table_item("volume_l", self.value_to_text(row.volume_l)))
-            self.table.setItem(row_index, 7, self.build_table_item("new_product_name", new_product_name_text))
+            self.table.setItem(row_index, 5, self.build_table_item("price_box", self.value_to_text(row.price_box)))
+            self.table.setItem(row_index, 6, self.build_table_item("qty_pcs", self.value_to_text(row.qty_pcs)))
+            self.table.setItem(row_index, 7, self.build_table_item("qty_box", self.value_to_text(row.qty_box)))
+            self.table.setItem(row_index, 8, self.build_table_item("volume_l", self.value_to_text(row.volume_l)))
+            self.table.setItem(row_index, 9, self.build_table_item("new_product_name", new_product_name_text))
 
             brand_item = self.build_display_item(row.id, "new_brand", brand_text)
-            self.table.setItem(row_index, 8, brand_item)
+            self.table.setItem(row_index, 10, brand_item)
 
-            self.table.setItem(row_index, 9, self.build_table_item("new_pack", self.value_to_text(row.new_pack)))
+            self.table.setItem(row_index, 11, self.build_table_item("new_pack", self.value_to_text(row.new_pack)))
+            self.table.setItem(row_index, 12, self.build_table_item("new_qty_in_box", self.value_to_text(row.new_qty_in_box)))
             self.table.setCellWidget(
                 row_index,
-                10,
+                13,
                 self.build_checkbox_widget(row.id, bool(row.new_is_excise)),
             )
 
@@ -801,7 +813,7 @@ class SupplierPricesPage(QWidget):
         if self._updating_table:
             return
 
-        if column not in (0, 8):
+        if column not in (0, 10):
             return
 
         if row < 0 or row >= len(self._table_row_ids):
@@ -819,7 +831,7 @@ class SupplierPricesPage(QWidget):
             combo.setFocus()
             QTimer.singleShot(0, combo.showPopup)
 
-        elif column == 8:
+        elif column == 10:
             current_brand = self._get_row_brand(row_id)
             combo = self.build_brand_combo(row_id, current_brand)
             combo.activated.connect(
@@ -889,14 +901,18 @@ class SupplierPricesPage(QWidget):
 
         self._pending_changes.setdefault(row_id, {})
         self._pending_changes[row_id]["selected_product_id"] = product_id
-        self._pending_changes[row_id]["new_product_name"] = None
         self._pending_changes[row_id]["new_brand"] = None
         self._pending_changes[row_id]["new_pack"] = None
-        self._pending_changes[row_id]["new_is_excise"] = False
 
         with self.get_session() as session:
             product = session.query(Product).filter(Product.id == product_id).first()
             product_name = product.name if product else ""
+            qty_in_box = product.qty_in_box if product else None
+            is_excise = bool(product.is_excise) if product else False
+
+        self._pending_changes[row_id]["new_product_name"] = product_name or None
+        self._pending_changes[row_id]["new_qty_in_box"] = qty_in_box
+        self._pending_changes[row_id]["new_is_excise"] = is_excise
 
         self._updating_table = True
         self.table.removeCellWidget(row, 0)
@@ -905,6 +921,14 @@ class SupplierPricesPage(QWidget):
             0,
             self.build_display_item(row_id, "selected_product_id", product_name),
         )
+        self.table.setItem(row, 9, self.build_table_item("new_product_name", product_name))
+        self.table.setItem(row, 10, self.build_display_item(row_id, "new_brand", ""))
+        self.table.setItem(row, 11, self.build_table_item("new_pack", ""))
+        self.table.setItem(row, 12, self.build_table_item("new_qty_in_box", self.value_to_text(qty_in_box)))
+        old_checkbox = self.table.cellWidget(row, 13)
+        if old_checkbox is not None:
+            self.table.removeCellWidget(row, 13)
+        self.table.setCellWidget(row, 13, self.build_checkbox_widget(row_id, is_excise))
         self._updating_table = False
         self.table.resizeColumnsToContents()
 
@@ -915,10 +939,10 @@ class SupplierPricesPage(QWidget):
         self._pending_changes[row_id]["new_brand"] = text
 
         self._updating_table = True
-        self.table.removeCellWidget(row, 8)
+        self.table.removeCellWidget(row, 10)
         self.table.setItem(
             row,
-            8,
+            10,
             self.build_display_item(row_id, "new_brand", text or ""),
         )
         self._updating_table = False
@@ -1166,7 +1190,7 @@ class SupplierPricesPage(QWidget):
 
     def _commit_open_editors(self):
         for row in range(self.table.rowCount()):
-            for column in (0, 8):
+            for column in (0, 10):
                 widget = self.table.cellWidget(row, column)
                 if not isinstance(widget, QComboBox):
                     continue
@@ -1175,7 +1199,7 @@ class SupplierPricesPage(QWidget):
                 row_id = self._table_row_ids[row]
                 if column == 0:
                     self.finish_product_edit(row, row_id, widget)
-                elif column == 8:
+                elif column == 10:
                     self.finish_brand_edit(row, row_id, widget)
 
     def save_pending_changes_to_temp(self):
@@ -1205,17 +1229,17 @@ class SupplierPricesPage(QWidget):
                                 row.selected_product_id = int(value)
                             except (TypeError, ValueError):
                                 continue
-                    elif key in {"price", "price_pack", "qty_pcs", "volume_l", "new_pack"}:
+                    elif key in {"price", "price_pack", "price_box", "qty_pcs", "qty_box", "volume_l", "new_pack", "new_qty_in_box"}:
                         parsed = parse_loose_number(value)
+                        if key == "new_qty_in_box":
+                            parsed = normalize_qty_in_box(parsed, field_name="Qty in Box (for new)")
                         setattr(row, key, parsed if parsed is not None else None)
                     else:
                         setattr(row, key, value)
 
                 if row.selected_product_id is not None:
-                    row.new_product_name = None
                     row.new_brand = None
                     row.new_pack = None
-                    row.new_is_excise = False
                 else:
                     has_new_product_data = any([
                         bool(clean_multi_spaces(row.new_product_name)),
@@ -1265,6 +1289,7 @@ class SupplierPricesPage(QWidget):
 
             saved_prices_count = 0
             saved_calculations_count = 0
+            qty_in_box_warnings: list[dict] = []
 
             with self.get_session() as session:
                 service = SupplierPriceService(session)
@@ -1286,17 +1311,17 @@ class SupplierPricesPage(QWidget):
                                 setattr(row, key, int(value))
                             except (TypeError, ValueError):
                                 continue
-                        elif key in {"price", "price_pack", "qty_pcs", "volume_l", "new_pack"}:
+                        elif key in {"price", "price_pack", "price_box", "qty_pcs", "qty_box", "volume_l", "new_pack", "new_qty_in_box"}:
                             parsed = parse_loose_number(value)
+                            if key == "new_qty_in_box":
+                                parsed = normalize_qty_in_box(parsed, field_name="Qty in Box (for new)")
                             setattr(row, key, parsed if parsed is not None else None)
                         else:
                             setattr(row, key, value)
 
                     if row.selected_product_id is not None:
-                        row.new_product_name = None
                         row.new_brand = None
                         row.new_pack = None
-                        row.new_is_excise = False
                     else:
                         has_new_product_data = any([
                             bool(clean_multi_spaces(row.new_product_name)),
@@ -1315,6 +1340,9 @@ class SupplierPricesPage(QWidget):
 
                 service.validate_new_products_before_save(self.batch_id, self.imported_by)
                 service.create_products_from_temp(self.batch_id, self.imported_by)
+                qty_in_box_warnings = service.prepare_box_data_and_update_products(
+                    self.batch_id, self.imported_by
+                )
                 service.create_or_update_product_articles(self.batch_id, self.imported_by)
                 service.fill_price_from_price_pack(self.batch_id, self.imported_by)
 
@@ -1342,6 +1370,13 @@ class SupplierPricesPage(QWidget):
                 session.commit()
 
             export_error_text = None
+            warning_path = None
+            if qty_in_box_warnings:
+                try:
+                    warning_path = self.export_qty_in_box_warnings(qty_in_box_warnings)
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(str(warning_path)))
+                except Exception as warning_error:
+                    export_error_text = f"Warning-файл не удалось сохранить: {warning_error}"
             self._export_quick_order_months = locals().get("quick_order_months", locals().get("quick_months"))
             self._export_safe_stock_months = locals().get("safe_stock_months", locals().get("safe_months", locals().get("order_months")))
 
@@ -1371,6 +1406,15 @@ class SupplierPricesPage(QWidget):
                 self.show_error_message(f"Данные сохранены, но Excel не удалось выгрузить:\n{export_error_text}")
         except Exception as e:
             self.show_error_message(str(e))
+
+    def export_qty_in_box_warnings(self, rows: list[dict]) -> Path:
+        if self.selected_file_path:
+            output_dir = Path(self.selected_file_path).resolve().parent
+        else:
+            output_dir = BASE_DIR
+        output_path = output_dir / f"Warning_Qty_in_Box_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
+        with self.get_session() as session:
+            return SupplierPriceExporter(session).export_qty_in_box_warnings(rows, output_path)
 
     def cleanup_current_batch(self, start_new_batch_after: bool = False):
         current_batch_id = self.batch_id

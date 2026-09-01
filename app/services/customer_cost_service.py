@@ -95,6 +95,7 @@ class CustomerCostService:
                 new_product_name=None,
                 new_brand=None,
                 new_pack=None,
+                new_qty_in_box=None,
                 new_is_excise=None,
             )
             self.session.add(row)
@@ -127,6 +128,7 @@ class CustomerCostService:
         row.new_product_name = None
         row.new_brand = None
         row.new_pack = None
+        row.new_qty_in_box = None
         row.new_is_excise = None
         return changed
 
@@ -162,6 +164,7 @@ class CustomerCostService:
                 brand=row.new_brand,
                 pack=row.new_pack,
                 is_excise=row.new_is_excise,
+                qty_in_box=row.new_qty_in_box,
             )
 
     def create_products_from_temp(self, batch_id: str, imported_by: str) -> int:
@@ -182,6 +185,7 @@ class CustomerCostService:
                 brand=row.new_brand,
                 pack=row.new_pack,
                 is_excise=bool(row.new_is_excise),
+                qty_in_box=row.new_qty_in_box,
             )
             row.selected_product_id = product.id
             created_count += 1

@@ -30,6 +30,7 @@ from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
 from app.ui.table_style import *
 from app.workers.excel_export_worker import start_excel_export
+from app.services.qty_in_box_service import normalize_qty_in_box
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -40,7 +41,7 @@ TEMPLATE_PATH = BASE_DIR / "Price request_template.xlsx"
 COL_SUPPLIER_OPTION = 0
 COL_PRODUCT = 1
 COL_BRAND = 12
-BASE_HEADERS_COUNT = 15
+BASE_HEADERS_COUNT = 16
 PRODUCT_SEARCH_RESULT_LIMIT = 500
 PRODUCT_SEARCH_DEBOUNCE_MS = 250
 
@@ -96,6 +97,7 @@ class CustomerCostsPage(QWidget):
             "new_product_name",
             "new_brand",
             "new_pack",
+            "new_qty_in_box",
             "new_is_excise",
         ]
         self.headers = [
@@ -113,9 +115,10 @@ class CustomerCostsPage(QWidget):
             "Product name (for new)",
             "Brand (for new)",
             "Pack (for new)",
+            "Qty in Box (for new)",
             "Excise duty (for new)",
         ]
-        self.numeric_headers = {"Pack (req)", "Qty, pcs", "Volume, Lt", "Pack (for new)"}
+        self.numeric_headers = {"Pack (req)", "Qty, pcs", "Volume, Lt", "Pack (for new)", "Qty in Box (for new)"}
         self.editable_field_map = {
             "Manager name": "manager_name",
             "Customer name": "customer_name",
@@ -128,6 +131,7 @@ class CustomerCostsPage(QWidget):
             "Payment Terms (request)": "payment_terms",
             "Product name (for new)": "new_product_name",
             "Pack (for new)": "new_pack",
+            "Qty in Box (for new)": "new_qty_in_box",
         }
 
         self.setup_ui()
@@ -443,9 +447,10 @@ class CustomerCostsPage(QWidget):
                 )
 
                 self.table.setItem(row_index, 13, self.build_table_item(row_id, "new_pack", self._format_number_text(row.new_pack), align_left=False))
+                self.table.setItem(row_index, 14, self.build_table_item(row_id, "new_qty_in_box", self._format_number_text(row.new_qty_in_box), align_left=False))
                 self.table.setCellWidget(
                     row_index,
-                    14,
+                    15,
                     self.build_checkbox_widget(row_id, bool(row.new_is_excise) if row.new_is_excise is not None else False),
                 )
 
@@ -862,6 +867,8 @@ class CustomerCostsPage(QWidget):
                 if row is None:
                     return
 
+                if field_name == "new_qty_in_box":
+                    value = normalize_qty_in_box(value, field_name="Qty in Box (for new)")
                 setattr(row, field_name, value)
 
                 if field_name == "selected_product_id":
@@ -869,10 +876,11 @@ class CustomerCostsPage(QWidget):
                         row.new_product_name = None
                         row.new_brand = None
                         row.new_pack = None
+                        row.new_qty_in_box = None
                         row.new_is_excise = None
                     row.selected_option_id = None
 
-                elif field_name in {"new_product_name", "new_brand", "new_pack", "new_is_excise"}:
+                elif field_name in {"new_product_name", "new_brand", "new_pack", "new_qty_in_box", "new_is_excise"}:
                     if value not in (None, ""):
                         row.selected_product_id = None
                         if row.new_is_excise is None:

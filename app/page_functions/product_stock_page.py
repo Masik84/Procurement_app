@@ -40,6 +40,7 @@ from app.utils.batch import get_current_username
 from app.utils.excel_export_format import write_openpyxl_dict_sheet
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
+from app.services.qty_in_box_service import normalize_qty_in_box
 from app.ui.table_style import *
 from app.utils.output_headers import display_headers
 
@@ -80,6 +81,7 @@ COLUMN_DEFS: dict[str, list[ColumnDef]] = {
         ColumnDef("new_product_name", "Product name (new)", editable=True),
         ColumnDef("new_brand", "Brand (new)", kind="brand_combo"),
         ColumnDef("new_pack", "Pack (new)", editable=True),
+        ColumnDef("new_qty_in_box", "Qty in Box (new)", editable=True),
         ColumnDef("new_is_excise", "Excise (new)", kind="checkbox"),
     ],
     MODE_ORDERS: [
@@ -93,6 +95,7 @@ COLUMN_DEFS: dict[str, list[ColumnDef]] = {
         ColumnDef("new_product_name", "Product name (new)", editable=True),
         ColumnDef("new_brand", "Brand (new)", kind="brand_combo"),
         ColumnDef("new_pack", "Pack (new)", editable=True),
+        ColumnDef("new_qty_in_box", "Qty in Box (new)", editable=True),
         ColumnDef("new_is_excise", "Excise (new)", kind="checkbox"),
     ],
     MODE_IS: [
@@ -105,6 +108,7 @@ COLUMN_DEFS: dict[str, list[ColumnDef]] = {
         ColumnDef("new_product_name", "Product name (new)", editable=True),
         ColumnDef("new_brand", "Brand (new)", kind="brand_combo"),
         ColumnDef("new_pack", "Pack (new)", editable=True),
+        ColumnDef("new_qty_in_box", "Qty in Box (new)", editable=True),
         ColumnDef("new_is_excise", "Excise (new)", kind="checkbox"),
     ],
 }
@@ -112,7 +116,7 @@ COLUMN_DEFS: dict[str, list[ColumnDef]] = {
 
 NUMERIC_FIELDS = {
     "stock_qty", "markdown_qty", "reserve_qty", "reserve_ecomm_qty", "lpc", "landed_cost", "distr_price", "promo_price",
-    "transit_qty", "order_qty", "is_order_qty", "is_confirmed_order_qty", "confirmed_qty", "remains_qty", "new_pack",
+    "transit_qty", "order_qty", "is_order_qty", "is_confirmed_order_qty", "confirmed_qty", "remains_qty", "new_pack", "new_qty_in_box",
 }
 
 
@@ -338,6 +342,7 @@ class ProductStockPage(QWidget):
             "new_product_name": row.new_product_name if show_new_product_fields else None,
             "new_brand": row.new_brand if show_new_product_fields else None,
             "new_pack": row.new_pack if show_new_product_fields else None,
+            "new_qty_in_box": row.new_qty_in_box if show_new_product_fields else None,
             "new_is_excise": bool(row.new_is_excise) if show_new_product_fields and row.new_is_excise is not None else False,
         }
         if isinstance(row, TempStockImport):
@@ -403,7 +408,7 @@ class ProductStockPage(QWidget):
             return self._format_int_like(value, blank_zero=True)
         if field_name in {"lpc", "landed_cost", "distr_price", "promo_price"}:
             return self._format_decimal1(value, blank_zero=True)
-        if field_name == "new_pack":
+        if field_name in {"new_pack", "new_qty_in_box"}:
             num = self._safe_float(value)
             if num is None:
                 return ""
@@ -765,12 +770,12 @@ class ProductStockPage(QWidget):
         elif value == "":
             value = None
 
-        clear_selected = col.key in {"new_product_name", "new_pack"}
+        clear_selected = col.key in {"new_product_name", "new_pack", "new_qty_in_box"}
         self.update_temp_field(row_id, col.key, value, reload=False, clear_selected=clear_selected)
 
         if col.key in {"source_article", "source_product_name"}:
             self.try_auto_match_row(row_id)
-        elif col.key in {"new_product_name", "new_brand", "new_pack", "new_is_excise"}:
+        elif col.key in {"new_product_name", "new_brand", "new_pack", "new_qty_in_box", "new_is_excise"}:
             self.refresh_counters()
 
     def _normalize_new_product_text(self, field_name: str, value: Any) -> Any:
@@ -793,16 +798,19 @@ class ProductStockPage(QWidget):
                 row = self._get_row_by_id(session, row_id)
                 if row is None:
                     return
+                if field_name == "new_qty_in_box":
+                    value = normalize_qty_in_box(value, field_name="Qty in Box (new)")
                 setattr(row, field_name, value)
                 if clear_selected and value not in (None, ""):
                     row.selected_product_id = None
-                if field_name in {"new_product_name", "new_brand", "new_pack"} and value not in (None, ""):
+                if field_name in {"new_product_name", "new_brand", "new_pack", "new_qty_in_box"} and value not in (None, ""):
                     if row.new_is_excise is None:
                         row.new_is_excise = False
                 if field_name == "selected_product_id" and value is not None:
                     row.new_product_name = None
                     row.new_brand = None
                     row.new_pack = None
+                    row.new_qty_in_box = None
                     row.new_is_excise = None
                 session.commit()
         except Exception as e:
@@ -830,6 +838,7 @@ class ProductStockPage(QWidget):
                     row.new_product_name = None
                     row.new_brand = None
                     row.new_pack = None
+                    row.new_qty_in_box = None
                     row.new_is_excise = None
                     session.commit()
                     self.load_table()

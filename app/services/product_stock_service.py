@@ -127,6 +127,7 @@ class ProductStockService:
                 new_product_name=r.get("new_product_name"),
                 new_brand=r.get("new_brand"),
                 new_pack=r.get("new_pack"),
+                new_qty_in_box=r.get("new_qty_in_box"),
                 new_is_excise=r.get("new_is_excise"),
             ))
 
@@ -159,6 +160,7 @@ class ProductStockService:
                 new_product_name=r.get("new_product_name"),
                 new_brand=r.get("new_brand"),
                 new_pack=r.get("new_pack"),
+                new_qty_in_box=r.get("new_qty_in_box"),
                 new_is_excise=r.get("new_is_excise"),
             ))
 
@@ -189,6 +191,7 @@ class ProductStockService:
                 new_product_name=None,
                 new_brand=None,
                 new_pack=None,
+                new_qty_in_box=None,
                 new_is_excise=None,
             ))
 
@@ -207,6 +210,7 @@ class ProductStockService:
                 brand=row.new_brand,
                 pack=row.new_pack,
                 is_excise=row.new_is_excise,
+                qty_in_box=row.new_qty_in_box,
             )
 
     def validate_new_stock_products_before_save(self, batch_id: str, imported_by: str) -> None:
@@ -243,6 +247,7 @@ class ProductStockService:
                 brand=row.new_brand,
                 pack=row.new_pack,
                 is_excise=bool(row.new_is_excise),
+                qty_in_box=row.new_qty_in_box,
             )
             for row in rows
         ])
@@ -320,6 +325,7 @@ class ProductStockService:
         row.new_product_name = None
         row.new_brand = None
         row.new_pack = None
+        row.new_qty_in_box = None
         row.new_is_excise = None
 
     def automatch_stock_rows(self, batch_id: str, imported_by: str) -> int:

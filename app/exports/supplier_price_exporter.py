@@ -7,6 +7,8 @@ from typing import Any
 
 import pythoncom
 import win32com.client as win32
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
 from sqlalchemy.orm import Session
 
 from app.db.models import PriceHistory, Product, ProductStock, Supplier, SupplierPriceCalculation, TempPriceImport, OrderPlanningCalculation
@@ -990,19 +992,31 @@ class SupplierPriceExporter:
             ws = wb.Worksheets(1)
             ws.Name = "Sheet1"
 
-            headers = ["Material number", "Material", "Price, L", "Price, pack", "Qty, pcs", "Volume, L"]
+            headers = [
+                "Material number",
+                "Material",
+                "Price, L",
+                "Price, pack",
+                "Price, box",
+                "Qty, pcs",
+                "Qty, box",
+                "Volume, L",
+            ]
             for col_index, header in enumerate(headers, start=1):
                 ws.Cells(1, col_index).Value = header
 
             self._apply_header_common(ws, len(headers))
-            ws.Range("A1:F1").Interior.Color = 0xCDCDCD
+            ws.Range("A1:H1").Interior.Color = 0xCDCDCD
+            # Excel COM colors use BGR integer order; this is RGB #153D64.
+            ws.Range("C1:E1").Interior.Color = 0x643D15
+            ws.Range("C1:E1").Font.Color = 0xFFFFFF
 
             ws.Columns("A:A").ColumnWidth = 18
             ws.Columns("B:B").ColumnWidth = 31.14
-            ws.Columns("C:F").ColumnWidth = 12
+            ws.Columns("C:H").ColumnWidth = 12
 
             set_number_format_safe(ws.Columns("A:A"), FORMATS.TEXT)
-            set_number_format_safe(ws.Columns("C:F"), FORMATS.DECIMAL_2_SIMPLE)
+            set_number_format_safe(ws.Columns("C:H"), FORMATS.DECIMAL_2_SIMPLE)
 
             wb.SaveAs(str(target_path))
             return target_path
@@ -1018,6 +1032,43 @@ class SupplierPriceExporter:
             except Exception:
                 pass
             pythoncom.CoUninitialize()
+
+    def export_qty_in_box_warnings(self, rows: list[dict], file_path: str | Path) -> Path:
+        target_path = Path(file_path)
+        if target_path.suffix.lower() != ".xlsx":
+            target_path = target_path.with_suffix(".xlsx")
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        headers = [
+            "Import row",
+            "Product ID",
+            "Product Name",
+            "Pack",
+            "Qty in Box DB",
+            "Qty in Box calculated",
+            "Source",
+            "Comment",
+        ]
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.title = "Warning"
+        worksheet.append(headers)
+        for row in rows:
+            worksheet.append([self._excel_value(row.get(header)) for header in headers])
+
+        fill = PatternFill("solid", fgColor="153D64")
+        for cell in worksheet[1]:
+            cell.fill = fill
+            cell.font = Font(name="Aptos Narrow", size=11, bold=True, color="FFFFFF")
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        widths = [12, 12, 42, 12, 18, 24, 28, 70]
+        for index, width in enumerate(widths, start=1):
+            worksheet.column_dimensions[self._excel_column_letter(index)].width = width
+        worksheet.freeze_panes = "A2"
+        worksheet.auto_filter.ref = worksheet.dimensions
+        workbook.save(target_path)
+        return target_path
 
 
     def export_calculated(

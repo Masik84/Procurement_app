@@ -142,6 +142,7 @@ class TargetPriceService:
                 brand=row.new_brand,
                 pack=row.new_pack,
                 is_excise=row.new_is_excise,
+                qty_in_box=row.new_qty_in_box,
             )
 
     def create_products_from_temp(self, batch_id: str, imported_by: str) -> int:
@@ -161,6 +162,7 @@ class TargetPriceService:
                 brand=row.new_brand,
                 pack=row.new_pack,
                 is_excise=bool(row.new_is_excise),
+                qty_in_box=row.new_qty_in_box,
             )
             row.selected_product_id = product.id
             created += 1

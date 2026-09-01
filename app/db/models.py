@@ -28,6 +28,7 @@ class Product(Base):
     name = Column(String(500), nullable=False, unique=True, index=True)
     family = Column(String(500), nullable=True, index=True)
     pack = Column(Numeric, nullable=False)
+    qty_in_box = Column(Integer, nullable=True)
     abc_category = Column(String(50), nullable=False, default="-")
     is_excise = Column(Boolean, nullable=False, default=False)
 
@@ -371,7 +372,9 @@ class TempPriceImport(Base):
 
     price = Column(Numeric, nullable=True)
     price_pack = Column(Numeric, nullable=True)
+    price_box = Column(Numeric, nullable=True)
     qty_pcs = Column(Numeric, nullable=True)
+    qty_box = Column(Numeric, nullable=True)
     volume_l = Column(Numeric, nullable=True)
 
     supplier_id = Column(
@@ -397,6 +400,7 @@ class TempPriceImport(Base):
     new_product_name = Column(String(500), nullable=True)
     new_brand = Column(String(255), nullable=True)
     new_pack = Column(Numeric, nullable=True)
+    new_qty_in_box = Column(Integer, nullable=True)
     new_is_excise = Column(Boolean, nullable=True)
 
     supplier = relationship("Supplier", back_populates="temp_price_import_rows")
@@ -444,6 +448,7 @@ class TempCustomerCostImport(Base):
     new_product_name = Column(String(500), nullable=True)
     new_brand = Column(String(255), nullable=True)
     new_pack = Column(Numeric, nullable=True)
+    new_qty_in_box = Column(Integer, nullable=True)
     new_is_excise = Column(Boolean, nullable=True)
 
     selected_product = relationship("Product", back_populates="temp_customer_cost_rows")
@@ -574,6 +579,7 @@ class TempStockImport(Base):
     new_product_name = Column(String(500), nullable=True)
     new_brand = Column(String(255), nullable=True)
     new_pack = Column(Numeric, nullable=True)
+    new_qty_in_box = Column(Integer, nullable=True)
     new_is_excise = Column(Boolean, nullable=True)
 
     selected_product = relationship("Product", back_populates="temp_stock_import_rows")
@@ -612,6 +618,7 @@ class TempSupplierOrdersImport(Base):
     new_product_name = Column(String(500), nullable=True)
     new_brand = Column(String(255), nullable=True)
     new_pack = Column(Numeric, nullable=True)
+    new_qty_in_box = Column(Integer, nullable=True)
     new_is_excise = Column(Boolean, nullable=True)
 
     selected_product = relationship("Product", back_populates="temp_supplier_orders_rows")
@@ -648,6 +655,7 @@ class TempIsImport(Base):
     new_product_name = Column(String(500), nullable=True)
     new_brand = Column(String(255), nullable=True)
     new_pack = Column(Numeric, nullable=True)
+    new_qty_in_box = Column(Integer, nullable=True)
     new_is_excise = Column(Boolean, nullable=True)
 
     selected_product = relationship("Product", back_populates="temp_is_rows")
@@ -680,6 +688,7 @@ class TempProductSearchImport(Base):
     new_product_name = Column(String(500), nullable=True)
     new_brand = Column(String(255), nullable=True)
     new_pack = Column(Numeric, nullable=True)
+    new_qty_in_box = Column(Integer, nullable=True)
     new_is_excise = Column(Boolean, nullable=True)
 
     selected_product = relationship("Product", back_populates="temp_product_search_rows")
@@ -721,6 +730,7 @@ class TempTargetPriceImport(Base):
     new_product_name = Column(String(500), nullable=True)
     new_brand = Column(String(255), nullable=True)
     new_pack = Column(Numeric, nullable=True)
+    new_qty_in_box = Column(Integer, nullable=True)
     new_is_excise = Column(Boolean, nullable=True)
 
     target_supplier = relationship(

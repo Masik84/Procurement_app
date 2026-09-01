@@ -33,6 +33,7 @@ from app.utils.batch import get_current_username
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
 from app.workers.excel_export_worker import start_excel_export
+from app.services.qty_in_box_service import normalize_qty_in_box
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -62,7 +63,8 @@ class ProductSearchPage(QWidget):
     COL_NEW_PRODUCT_NAME = 3
     COL_BRAND = 4
     COL_PACK = 5
-    COL_EXCISE = 6
+    COL_QTY_IN_BOX = 6
+    COL_EXCISE = 7
 
     def __init__(self):
         super().__init__()
@@ -90,6 +92,7 @@ class ProductSearchPage(QWidget):
             "new_product_name",
             "new_brand",
             "new_pack",
+            "new_qty_in_box",
             "new_is_excise",
         ]
         self.headers = [
@@ -99,9 +102,10 @@ class ProductSearchPage(QWidget):
             "Product name (for new)",
             "Brand (for new)",
             "Pack (for new)",
+            "Qty in Box (for new)",
             "Excise duty (for new)",
         ]
-        self.numeric_columns = {"new_pack"}
+        self.numeric_columns = {"new_pack", "new_qty_in_box"}
 
         self.setup_ui()
         self.setup_connections()
@@ -296,6 +300,11 @@ class ProductSearchPage(QWidget):
                 row_index,
                 self.COL_PACK,
                 self.build_table_item("new_pack", self.value_to_text(row.new_pack), editable=True, align_left=False),
+            )
+            self.table.setItem(
+                row_index,
+                self.COL_QTY_IN_BOX,
+                self.build_table_item("new_qty_in_box", self.value_to_text(row.new_qty_in_box), editable=True, align_left=False),
             )
             self.table.setCellWidget(
                 row_index,
@@ -637,6 +646,7 @@ class ProductSearchPage(QWidget):
                     "product_name": product.name if product else (row.new_product_name or ""),
                     "brand": product.brand if product else (row.new_brand or ""),
                     "pack": product.pack if product else row.new_pack,
+                    "qty_in_box": product.qty_in_box if product else row.new_qty_in_box,
                     "abc_category": (product.abc_category or "-") if product else "-",
                     "is_excise": product.is_excise if product else row.new_is_excise,
                 }
@@ -675,8 +685,10 @@ class ProductSearchPage(QWidget):
                     continue
 
                 for key, value in changes.items():
-                    if key == "new_pack":
+                    if key in {"new_pack", "new_qty_in_box"}:
                         parsed = parse_loose_number(value)
+                        if key == "new_qty_in_box":
+                            parsed = normalize_qty_in_box(parsed, field_name="Qty in Box (for new)")
                         setattr(row, key, parsed if parsed is not None else None)
                     else:
                         setattr(row, key, value)
@@ -693,6 +705,7 @@ class ProductSearchPage(QWidget):
                     row.new_product_name = None
                     row.new_brand = None
                     row.new_pack = None
+                    row.new_qty_in_box = None
                     row.new_is_excise = None
 
             session.flush()
@@ -813,8 +826,10 @@ class ProductSearchPage(QWidget):
                         continue
 
                     for key, value in changes.items():
-                        if key == "new_pack":
+                        if key in {"new_pack", "new_qty_in_box"}:
                             parsed = parse_loose_number(value)
+                            if key == "new_qty_in_box":
+                                parsed = normalize_qty_in_box(parsed, field_name="Qty in Box (for new)")
                             setattr(row, key, parsed if parsed is not None else None)
                         else:
                             setattr(row, key, value)
@@ -831,6 +846,7 @@ class ProductSearchPage(QWidget):
                         row.new_product_name = None
                         row.new_brand = None
                         row.new_pack = None
+                        row.new_qty_in_box = None
                         row.new_is_excise = None
 
                 session.flush()

@@ -23,6 +23,7 @@ from app.utils.parsers import parse_loose_number, parse_user_percent
 from app.utils.text import clean_multi_spaces
 from app.ui.table_style import *
 from app.workers.excel_export_worker import start_excel_export
+from app.services.qty_in_box_service import normalize_qty_in_box
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -72,6 +73,7 @@ class TargetPricesPage(QWidget):
             "Product name (for new)",
             "Brand (for new)",
             "Pack (for new)",
+            "Qty in Box (for new)",
             "Excise duty (for new)",
         ]
         self.calc_headers = [
@@ -80,7 +82,7 @@ class TargetPricesPage(QWidget):
             "Supplier Article",
             "Supplier Product Name",
         ]
-        self.numeric_headers = {"Pack (for new)"}
+        self.numeric_headers = {"Pack (for new)", "Qty in Box (for new)"}
 
         self.setup_ui()
         self.setup_connections()
@@ -514,7 +516,8 @@ class TargetPricesPage(QWidget):
                     self.table.setItem(row_index, 3, self.build_table_item(row_id, "new_product_name", self._clean_table_text(row.new_product_name), True))
                     self.table.setItem(row_index, 4, self.build_display_item(row_id, "new_brand", self._clean_table_text(row.new_brand)))
                     self.table.setItem(row_index, 5, self.build_table_item(row_id, "new_pack", self._format_number_text(row.new_pack), False))
-                    self.table.setCellWidget(row_index, 6, self.build_checkbox_widget(row_id, bool(row.new_is_excise) if row.new_is_excise is not None else False))
+                    self.table.setItem(row_index, 6, self.build_table_item(row_id, "new_qty_in_box", self._format_number_text(row.new_qty_in_box), False))
+                    self.table.setCellWidget(row_index, 7, self.build_checkbox_widget(row_id, bool(row.new_is_excise) if row.new_is_excise is not None else False))
             self.table.resizeColumnsToContents()
         finally:
             self._updating_table = False
@@ -754,12 +757,14 @@ class TargetPricesPage(QWidget):
             with self.get_session() as session:
                 row = session.query(TempTargetPriceImport).filter(TempTargetPriceImport.id == row_id).first()
                 if row is None: return
+                if field_name == "new_qty_in_box":
+                    value = normalize_qty_in_box(value, field_name="Qty in Box (for new)")
                 setattr(row, field_name, value)
                 if field_name == "selected_product_id":
                     if value is not None:
-                        row.new_product_name = row.new_brand = row.new_pack = row.new_is_excise = None
+                        row.new_product_name = row.new_brand = row.new_pack = row.new_qty_in_box = row.new_is_excise = None
                     row.selected_option_id = None
-                elif field_name in {"new_product_name", "new_brand", "new_pack", "new_is_excise"}:
+                elif field_name in {"new_product_name", "new_brand", "new_pack", "new_qty_in_box", "new_is_excise"}:
                     if value not in (None, ""):
                         row.selected_product_id = None
                         if row.new_is_excise is None: row.new_is_excise = False

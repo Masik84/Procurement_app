@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QLineEdit,
+    QPushButton,
 )
 from PySide6.QtCore import Qt, QFile, QTimer
 from PySide6.QtGui import QDesktopServices
@@ -27,6 +28,7 @@ from app.workers.excel_export_worker import start_excel_export
 from app.utils.output_headers import display_headers, standardize_output_header
 from app.utils.excel_fast_writer import write_excel_table
 from app.utils.excel_format_rules import FORMATS, set_number_format_safe, save_workbook_xlsx
+from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -66,6 +68,9 @@ class ProductArticlesPage(QWidget):
         self._temp_row_id = -1
         self._excel_export_thread = None
         self._excel_export_worker = None
+        self._selected_brand_values: set[str] | None = None
+        self._selected_family_values: set[str] | None = None
+        self._selected_product_ids: set[int] | None = None
 
         self.setup_ui()
         self.setup_connections()
@@ -73,6 +78,7 @@ class ProductArticlesPage(QWidget):
 
     def setup_ui(self):
         self.table = self.ui.table
+        self._setup_multi_filter_buttons()
         setup_data_table(self.table, sorting=True)
         from app.utils.gui_table_actions import install_standard_table_context_menu
         install_standard_table_context_menu(self, self.table)
@@ -83,9 +89,9 @@ class ProductArticlesPage(QWidget):
 
         self.ui.line_Brand.currentTextChanged.connect(self.fill_in_prod_fam_list)
         self.ui.line_Prod_Fam.currentTextChanged.connect(self.fill_in_prod_name_list)
-        if hasattr(self.ui, "cbo_FindBrand"):
-            self.ui.cbo_FindBrand.currentTextChanged.connect(self.fill_in_prod_name_list)
-            self.ui.cbo_FindBrand.currentTextChanged.connect(self.refresh_current_product_combo)
+        self.ui.btn_FilterBrand.clicked.connect(self.open_brand_filter)
+        self.ui.btn_FilterProductFamily.clicked.connect(self.open_family_filter)
+        self.ui.btn_FilterProduct.clicked.connect(self.open_product_filter)
         if hasattr(self.ui, "line_FindProduct"):
             self.ui.line_FindProduct.setToolTip("Фильтр по названию продукта из базы")
             self.ui.line_FindProduct.textChanged.connect(self.fill_in_prod_name_list)
@@ -104,6 +110,31 @@ class ProductArticlesPage(QWidget):
         if hasattr(self.ui, "btn_Reset"):
             self.ui.btn_Reset.clicked.connect(self.reset_form)
 
+    def _setup_multi_filter_buttons(self):
+        combo = self.ui.cbo_FindBrand
+        layout = combo.parentWidget().layout()
+        if layout is None:
+            raise RuntimeError("Не найден layout фильтров Базы Артикулов и Названий")
+        index = layout.indexOf(combo)
+        buttons = []
+        for object_name, text in (
+            ("btn_FilterBrand", "все Бренды"),
+            ("btn_FilterProductFamily", "все Product Family"),
+            ("btn_FilterProduct", "все Продукты"),
+        ):
+            button = QPushButton(text, combo.parentWidget())
+            button.setObjectName(object_name)
+            button.setMinimumHeight(25)
+            button.setMaximumHeight(25)
+            buttons.append(button)
+        layout.replaceWidget(combo, buttons[0])
+        layout.insertWidget(index + 1, buttons[1])
+        layout.insertWidget(index + 2, buttons[2])
+        combo.hide()
+        self.ui.btn_FilterBrand, self.ui.btn_FilterProductFamily, self.ui.btn_FilterProduct = buttons
+        if hasattr(self.ui, "label_6"):
+            self.ui.label_6.setText("Фильтры")
+
     def get_session(self):
         return SessionLocal()
 
@@ -120,11 +151,9 @@ class ProductArticlesPage(QWidget):
             if not id_item:
                 return
 
-            row_id_text = id_item.text().strip()
-            if not row_id_text:
+            row_id = self._row_id_from_item(id_item)
+            if row_id is None:
                 return
-
-            row_id = int(row_id_text)
 
             if header == "id":
                 return
@@ -159,11 +188,9 @@ class ProductArticlesPage(QWidget):
         if not id_item:
             return
 
-        row_id_text = id_item.text().strip()
-        if not row_id_text:
+        row_id = self._row_id_from_item(id_item)
+        if row_id is None:
             return
-
-        row_id = int(row_id_text)
         product_col = 1
 
         current_item = self.table.item(row, product_col)
@@ -216,6 +243,7 @@ class ProductArticlesPage(QWidget):
         self.table.removeCellWidget(row, product_col)
 
         item = QTableWidgetItem(text)
+        item.setData(Qt.UserRole, int(row_id))
         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
         item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.table.setItem(row, product_col, item)
@@ -224,13 +252,16 @@ class ProductArticlesPage(QWidget):
         self.table.resizeColumnsToContents()
 
     def _get_product_name_values(self):
-        filter_brand = self._get_product_name_filter_brand()
         filter_text = self._get_product_name_filter_text()
 
         with self.get_session() as session:
             query = session.query(Product).filter(Product.name.isnot(None), Product.name != "")
-            if filter_brand:
-                query = query.filter(Product.brand == filter_brand)
+            if self._selected_brand_values is not None:
+                query = query.filter(Product.brand.in_(self._selected_brand_values))
+            if self._selected_family_values is not None:
+                query = query.filter(Product.family.in_(self._selected_family_values))
+            if self._selected_product_ids is not None:
+                query = query.filter(Product.id.in_(self._selected_product_ids))
             if filter_text:
                 query = query.filter(Product.name.ilike(f"%{filter_text}%"))
             products = query.all()
@@ -244,6 +275,37 @@ class ProductArticlesPage(QWidget):
         )
 
         return [row.name for row in products if row.name]
+
+    @staticmethod
+    def _row_id_from_item(item: QTableWidgetItem) -> int | None:
+        value = item.data(Qt.UserRole)
+        if value is None:
+            value = item.text().strip()
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _pause_sorting(self):
+        enabled = self.table.isSortingEnabled()
+        header = self.table.horizontalHeader()
+        state = (enabled, header.sortIndicatorSection(), header.sortIndicatorOrder())
+        if enabled:
+            self.table.setSortingEnabled(False)
+        return state
+
+    def _restore_sorting(self, state) -> None:
+        enabled, section, order = state
+        self.table.setSortingEnabled(enabled)
+        if enabled and 0 <= section < self.table.columnCount():
+            self.table.sortItems(section, order)
+
+    def _find_row_by_id(self, row_id: int) -> int:
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item is not None and self._row_id_from_item(item) == row_id:
+                return row
+        return -1
 
     def _get_product_name_filter_text(self) -> str:
         widget = getattr(self.ui, "line_FindProduct", None)
@@ -471,37 +533,84 @@ class ProductArticlesPage(QWidget):
         self.fill_in_prod_name_list()
 
     def fill_filter_brand_list(self):
-        widget = getattr(self.ui, "cbo_FindBrand", None)
-        if widget is None:
-            return
-
-        try:
-            current_value = widget.currentText()
-            with self.get_session() as session:
-                brands = (
-                    session.query(Product.brand)
-                    .filter(Product.brand.isnot(None), Product.brand != "")
-                    .distinct()
-                    .order_by(Product.brand)
-                    .all()
-                )
-
-            values = [row[0] for row in brands if row[0]]
-            self._fill_combobox(widget, values)
-            if current_value in values:
-                widget.setCurrentText(current_value)
-            else:
-                widget.setCurrentText("-")
-
-        except Exception as e:
-            self.show_error_message(f"Ошибка при получении брендов для фильтра продуктов: {str(e)}")
+        self._prune_filter_selections()
+        self._refresh_filter_buttons()
 
     def _get_product_name_filter_brand(self) -> str:
-        widget = getattr(self.ui, "cbo_FindBrand", None)
-        if widget is None:
-            return ""
-        value = self.clean_multi_spaces(widget.currentText())
-        return value if value and value != "-" else ""
+        return ""
+
+    def _product_filter_query(self, session, *, ignore: str | None = None):
+        query = session.query(Product).filter(Product.name.isnot(None), Product.name != "")
+        if ignore != "brand" and self._selected_brand_values is not None:
+            query = query.filter(Product.brand.in_(self._selected_brand_values))
+        if ignore != "family" and self._selected_family_values is not None:
+            query = query.filter(Product.family.in_(self._selected_family_values))
+        if ignore != "product" and self._selected_product_ids is not None:
+            query = query.filter(Product.id.in_(self._selected_product_ids))
+        return query
+
+    def open_brand_filter(self):
+        with self.get_session() as session:
+            rows = self._product_filter_query(session, ignore="brand").with_entities(Product.brand).distinct().order_by(Product.brand).all()
+        options = [FilterOption(key=value, label=value) for (value,) in rows if value]
+        accepted, selected = CheckedFilterDialog(
+            self, title="Фильтр по брендам", options=options, selected_keys=self._selected_brand_values
+        ).exec_and_get_selection()
+        if accepted:
+            self._selected_brand_values = None if selected is None else {str(value) for value in selected}
+            self._after_multi_filter_change()
+
+    def open_family_filter(self):
+        with self.get_session() as session:
+            rows = self._product_filter_query(session, ignore="family").with_entities(Product.family).distinct().order_by(Product.family).all()
+        options = [FilterOption(key=value, label=value) for (value,) in rows if value]
+        accepted, selected = CheckedFilterDialog(
+            self, title="Фильтр по Product Family", options=options, selected_keys=self._selected_family_values
+        ).exec_and_get_selection()
+        if accepted:
+            self._selected_family_values = None if selected is None else {str(value) for value in selected}
+            self._after_multi_filter_change()
+
+    def open_product_filter(self):
+        with self.get_session() as session:
+            rows = self._product_filter_query(session, ignore="product").order_by(Product.name).all()
+        options = [
+            FilterOption(key=int(row.id), label=row.name, search_text=row.name)
+            for row in rows if row.id is not None and row.name
+        ]
+        accepted, selected = CheckedFilterDialog(
+            self, title="Фильтр по продуктам", options=options, selected_keys=self._selected_product_ids
+        ).exec_and_get_selection()
+        if accepted:
+            self._selected_product_ids = None if selected is None else {int(value) for value in selected}
+            self._after_multi_filter_change()
+
+    def _after_multi_filter_change(self):
+        self._prune_filter_selections()
+        self._refresh_filter_buttons()
+        self.fill_in_prod_name_list()
+        self.refresh_current_product_combo()
+
+    def _prune_filter_selections(self):
+        with self.get_session() as session:
+            products = session.query(Product.id, Product.brand, Product.family).all()
+        brands = {brand for _id, brand, _family in products if brand}
+        families = {family for _id, _brand, family in products if family}
+        product_ids = {int(product_id) for product_id, _brand, _family in products if product_id is not None}
+        if self._selected_brand_values is not None:
+            self._selected_brand_values &= brands
+        if self._selected_family_values is not None:
+            self._selected_family_values &= families
+        if self._selected_product_ids is not None:
+            self._selected_product_ids &= product_ids
+
+    def _refresh_filter_buttons(self):
+        for button, text, selected in (
+            (self.ui.btn_FilterBrand, "все Бренды", self._selected_brand_values),
+            (self.ui.btn_FilterProductFamily, "все Product Family", self._selected_family_values),
+            (self.ui.btn_FilterProduct, "все Продукты", self._selected_product_ids),
+        ):
+            button.setText(text if selected is None else f"{text} ({len(selected)})")
 
     def fill_in_prod_brand_list(self):
         try:
@@ -549,16 +658,19 @@ class ProductArticlesPage(QWidget):
     def fill_in_prod_name_list(self):
         brand = self.ui.line_Brand.currentText()
         family = self.ui.line_Prod_Fam.currentText()
-        filter_brand = self._get_product_name_filter_brand()
         filter_text = self._get_product_name_filter_text()
 
         try:
             with self.get_session() as session:
                 query = session.query(Product).filter(Product.name.isnot(None), Product.name != "")
 
-                if filter_brand:
-                    query = query.filter(Product.brand == filter_brand)
-                elif brand != "-":
+                if self._selected_brand_values is not None:
+                    query = query.filter(Product.brand.in_(self._selected_brand_values))
+                if self._selected_family_values is not None:
+                    query = query.filter(Product.family.in_(self._selected_family_values))
+                if self._selected_product_ids is not None:
+                    query = query.filter(Product.id.in_(self._selected_product_ids))
+                if brand != "-":
                     query = query.filter(Product.brand == brand)
                 if family != "-":
                     query = query.filter(Product.family == family)
@@ -605,6 +717,7 @@ class ProductArticlesPage(QWidget):
             for article_row, product_row in rows:
                 data.append({
                     "id": article_row.id,
+                    "product_id": product_row.id,
                     "product_name": product_row.name,
                     "article": article_row.article,
                     "variant_name": article_row.name,
@@ -707,18 +820,15 @@ class ProductArticlesPage(QWidget):
                 widget.clear()
 
     def _apply_current_filters(self, article_data):
-        brand = self.ui.line_Brand.currentText()
-        family = self.ui.line_Prod_Fam.currentText()
-        product_name = self.ui.line_Prod_name.currentText()
         name_search = self._get_name_search_text().lower()
         article_search = self._get_article_search_text().lower()
 
-        if brand != "-":
-            article_data = [row for row in article_data if (row["brand"] or "") == brand]
-        if family != "-":
-            article_data = [row for row in article_data if (row["family"] or "") == family]
-        if product_name != "-":
-            article_data = [row for row in article_data if (row["product_name"] or "") == product_name]
+        if self._selected_brand_values is not None:
+            article_data = [row for row in article_data if row["brand"] in self._selected_brand_values]
+        if self._selected_family_values is not None:
+            article_data = [row for row in article_data if row["family"] in self._selected_family_values]
+        if self._selected_product_ids is not None:
+            article_data = [row for row in article_data if int(row["product_id"]) in self._selected_product_ids]
         if name_search:
             article_data = [
                 row for row in article_data
@@ -932,7 +1042,7 @@ class ProductArticlesPage(QWidget):
 
     def _load_imported_articles(self, rows):
         self._updating_table = True
-        self.table.setSortingEnabled(False)
+        sort_state = self._pause_sorting()
 
         self._pending_changes.clear()
         self._pending_deletes.clear()
@@ -1014,6 +1124,7 @@ class ProductArticlesPage(QWidget):
             for j, col in enumerate(columns):
                 item_class = NumericTableWidgetItem if col == "id" else QTableWidgetItem
                 item = item_class(values[col])
+                item.setData(Qt.UserRole, int(row_id))
                 if col == "id":
                     item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                     item.setTextAlignment(Qt.AlignCenter)
@@ -1028,14 +1139,17 @@ class ProductArticlesPage(QWidget):
                 self.table.setColumnWidth(i, 120)
 
         self._updating_table = False
+        self._restore_sorting(sort_state)
         return len(valid_rows), skipped_names
 
     def _display_data(self, data):
+        sort_state = self._pause_sorting()
         self.table.clear()
         self.table.setColumnCount(0)
         self.table.setRowCount(0)
 
         if not data:
+            self._restore_sorting(sort_state)
             self.show_message("Нет данных для отображения")
             return
 
@@ -1057,6 +1171,7 @@ class ProductArticlesPage(QWidget):
                 value = "" if row_data[col] is None else str(row_data[col])
                 item_class = NumericTableWidgetItem if col == "id" else QTableWidgetItem
                 item = item_class(value)
+                item.setData(Qt.UserRole, int(row_id))
 
                 if col == "id":
                     item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
@@ -1075,12 +1190,13 @@ class ProductArticlesPage(QWidget):
                 self.table.setColumnWidth(i, 120)
 
         self._updating_table = False
+        self._restore_sorting(sort_state)
 
     def add_line(self):
         self.clear_message()
         self._updating_table = True
 
-        self.table.setSortingEnabled(False)
+        sort_state = self._pause_sorting()
 
         columns = ["id", "product_name", "article", "variant_name"]
         headers = ["id", "Product name", "Article", "Product name (variant)"]
@@ -1115,6 +1231,7 @@ class ProductArticlesPage(QWidget):
         for j, col in enumerate(columns):
             item_class = NumericTableWidgetItem if col == "id" else QTableWidgetItem
             item = item_class(values[col])
+            item.setData(Qt.UserRole, int(row_id))
 
             if col == "id":
                 item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
@@ -1130,14 +1247,17 @@ class ProductArticlesPage(QWidget):
                 self.table.setColumnWidth(i, 120)
 
         self._updating_table = False
-        self.table.setCurrentCell(0, 1)
+        self._restore_sorting(sort_state)
+        current_row = self._find_row_by_id(row_id)
+        if current_row >= 0:
+            self.table.setCurrentCell(current_row, 1)
         self.show_message("Добавлена новая строка")
 
     def has_active_filters(self):
         return (
-            self.ui.line_Brand.currentText() != "-"
-            or self.ui.line_Prod_Fam.currentText() != "-"
-            or self.ui.line_Prod_name.currentText() != "-"
+            self._selected_brand_values is not None
+            or self._selected_family_values is not None
+            or self._selected_product_ids is not None
             or bool(self._get_name_search_text())
             or bool(self._get_article_search_text())
         )
@@ -1164,11 +1284,12 @@ class ProductArticlesPage(QWidget):
             self._new_rows.clear()
             self._original_values.clear()
             self._temp_row_id = -1
+            self._selected_brand_values = None
+            self._selected_family_values = None
+            self._selected_product_ids = None
 
             self._clear_search_fields()
             self.refresh_all_comboboxes()
-            if hasattr(self.ui, "cbo_FindBrand"):
-                self.ui.cbo_FindBrand.setCurrentText("-")
             if hasattr(self.ui, "line_FindProduct"):
                 self.ui.line_FindProduct.clear()
             self.fill_in_prod_name_list()

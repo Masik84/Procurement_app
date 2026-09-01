@@ -74,7 +74,7 @@ class ProductExporter:
             ws = wb.Worksheets(1)
             ws.Name = "Sheet1"
 
-            headers = ["ID", "Product name", "Brand", "Pack", "is_excise"]
+            headers = ["ID", "Product name", "Brand", "Pack", "Qty in Box", "is_excise"]
             for col_index, header in enumerate(headers, start=1):
                 ws.Cells(1, col_index).Value = standardize_output_header(header)
 
@@ -84,7 +84,8 @@ class ProductExporter:
             ws.Columns("B:B").ColumnWidth = 34
             ws.Columns("C:C").ColumnWidth = 22
             ws.Columns("D:D").ColumnWidth = 12
-            ws.Columns("E:E").ColumnWidth = 14
+            ws.Columns("E:E").ColumnWidth = 12
+            ws.Columns("F:F").ColumnWidth = 14
 
             save_workbook_xlsx(wb, save_path)
 
