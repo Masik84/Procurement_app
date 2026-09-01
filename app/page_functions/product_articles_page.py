@@ -334,7 +334,14 @@ class ProductArticlesPage(QWidget):
                             .first()
                         )
                         if not product_article:
-                            raise Exception(f"Не найден ProductArticle id={row_id}")
+                            raise Exception(
+                                f"Не найден ProductArticle id={row_id}\n\n"
+                                f"row_id in pending_deletes: {row_id in self._pending_deletes}\n"
+                                f"pending_deletes: {sorted(self._pending_deletes)}\n"
+                                f"pending_changes ids: {sorted(self._pending_changes.keys())}\n"
+                                f"new_rows: {sorted(self._new_rows)}\n"
+                                f"changes for id={row_id}: {changes}"
+                            )
 
                         current_product_id = product_article.product_id
                         current_article_value = product_article.article
