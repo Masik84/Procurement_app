@@ -5,7 +5,7 @@ from datetime import datetime, date
 from decimal import Decimal
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QFile, QEvent, QPoint, QDate, QTimer
+from PySide6.QtCore import Qt, QFile, QEvent, QPoint, QDate, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
@@ -783,6 +783,16 @@ class SupplierPricesPage(QWidget):
             article_text = self._clean_table_text(row.supplier_article)
             supplier_product_name_text = self._clean_table_text(row.product_name)
             new_product_name_text = self._clean_table_text(row.new_product_name)
+            # Старые версии могли автоматически записать имя уже выбранного
+            # существующего продукта в Product name (for new). Это не явный
+            # запрос пользователя на переименование, поэтому такое значение
+            # в GUI не показываем.
+            if (
+                row.selected_product
+                and clean_multi_spaces(new_product_name_text).casefold()
+                == clean_multi_spaces(row.selected_product.name).casefold()
+            ):
+                new_product_name_text = ""
             brand_text = self._clean_table_text(row.new_brand)
 
             self.table.setItem(row_index, 1, self.build_table_item("supplier_article", article_text))
@@ -910,9 +920,25 @@ class SupplierPricesPage(QWidget):
             qty_in_box = product.qty_in_box if product else None
             is_excise = bool(product.is_excise) if product else False
 
-        self._pending_changes[row_id]["new_product_name"] = product_name or None
+        # Выбор существующего продукта НЕ является запросом на изменение его названия.
+        # Product name (for new) остается пустым, пока пользователь сам явно не введет новое имя.
+        self._pending_changes[row_id]["new_product_name"] = None
         self._pending_changes[row_id]["new_qty_in_box"] = qty_in_box
         self._pending_changes[row_id]["new_is_excise"] = is_excise
+
+        # Сохраняем выбранный существующий продукт сразу в temp-строку.
+        # Тогда даже если пользователь сразу нажмет «Сохранить», строка не попадет
+        # в валидацию создания нового продукта и не потребует Brand / Pack.
+        with self.get_session() as session:
+            temp_row = session.query(TempPriceImport).filter(TempPriceImport.id == row_id).first()
+            if temp_row is not None:
+                temp_row.selected_product_id = product_id
+                temp_row.new_product_name = None
+                temp_row.new_brand = None
+                temp_row.new_pack = None
+                temp_row.new_qty_in_box = qty_in_box
+                temp_row.new_is_excise = is_excise
+                session.commit()
 
         self._updating_table = True
         self.table.removeCellWidget(row, 0)
@@ -921,7 +947,7 @@ class SupplierPricesPage(QWidget):
             0,
             self.build_display_item(row_id, "selected_product_id", product_name),
         )
-        self.table.setItem(row, 9, self.build_table_item("new_product_name", product_name))
+        self.table.setItem(row, 9, self.build_table_item("new_product_name", ""))
         self.table.setItem(row, 10, self.build_display_item(row_id, "new_brand", ""))
         self.table.setItem(row, 11, self.build_table_item("new_pack", ""))
         self.table.setItem(row, 12, self.build_table_item("new_qty_in_box", self.value_to_text(qty_in_box)))

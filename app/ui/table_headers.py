@@ -26,6 +26,15 @@ GUI_HEADER_LABELS: dict[str, str] = {
     "Customer Product Name": "Customer\nProduct Name",
     "Product Family": "Product\nFamily",
     "Product name (variant)": "Product name\n(variant)",
+    "Категория ABC": "Категория \nABC",
+    "Excise duty": "Excise \nduty",
+    
+    "Base currency": "Base \ncurrency",
+    "FX markup %": "FX markup \n%",
+    "FX markup abs": "FX markup \nabs",
+    "Import duty": "Import \nduty",
+    "Rating calc": "Rating \ncalc",
+    "Marks for us": "Marks \nfor us",
 
     "Price, pack": "Price,\npack",
     "Price, box": "Price,\nbox",
