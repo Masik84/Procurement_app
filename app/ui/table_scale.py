@@ -3,16 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
-from typing import Callable
 
 from PySide6.QtCore import QEvent, QObject, QSettings, QTimer, Qt, Signal
 from PySide6.QtGui import QFont, QFontDatabase
 
-from app.ui.table_headers import (
-    calculate_gui_header_base_height,
-    install_gui_table_headers,
-    resize_columns_for_multiline_headers,
-)
+from app.ui.table_headers import calculate_gui_header_base_height
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -46,8 +41,6 @@ class _TableScaleState:
     base_header_height: int = 24
     base_item_font_pt: float = BASE_TABLE_FONT_PT
     base_style_sheet: str = ""
-    original_resize_columns_to_contents: Callable | None = None
-    original_set_column_width: Callable | None = None
     applying: bool = False
 
 
@@ -136,7 +129,6 @@ class TableScaleManager(QObject):
         if not isinstance(table, QTableWidget):
             return
 
-        install_gui_table_headers(table)
         table_id = id(table)
         if table_id in self._states:
             self._capture_missing_columns(self._states[table_id])
@@ -155,13 +147,10 @@ class TableScaleManager(QObject):
             base_header_height=header_height,
             base_item_font_pt=BASE_TABLE_FONT_PT,
             base_style_sheet=table.styleSheet(),
-            original_resize_columns_to_contents=table.resizeColumnsToContents,
-            original_set_column_width=table.setColumnWidth,
         )
         self._states[table_id] = state
 
         self._capture_column_widths(state, sizes_are_scaled=False)
-        self._install_width_wrappers(state)
         self._connect_model_signals(state)
 
         header.sectionResized.connect(
@@ -192,9 +181,6 @@ class TableScaleManager(QObject):
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         event_type = event.type()
-
-        if event_type == QEvent.Type.Show and isinstance(obj, QTableWidget):
-            self.register_table(obj)
 
         if event_type == QEvent.Type.Wheel:
             table = self._find_parent_table(obj)
@@ -235,48 +221,6 @@ class TableScaleManager(QObject):
         if state is None:
             return
         self._apply_table_scale(state)
-
-    def _install_width_wrappers(self, state: _TableScaleState) -> None:
-        table = state.table
-        table_id = id(table)
-
-        def scaled_resize_columns_to_contents() -> None:
-            current_state = self._states.get(table_id)
-            if current_state is None or current_state.original_resize_columns_to_contents is None:
-                return
-
-            current_state.applying = True
-            try:
-                current_state.original_resize_columns_to_contents()
-                # Qt can still size a header by the complete source caption.
-                # Recalculate multi-line columns using the longest visible line
-                # plus sampled cell content, as in Daily-Report--new-.
-                resize_columns_for_multiline_headers(table)
-            finally:
-                current_state.applying = False
-
-            self._capture_column_widths(current_state, sizes_are_scaled=True)
-            self._apply_column_widths(current_state)
-
-        def scaled_set_column_width(column: int, width: int) -> None:
-            current_state = self._states.get(table_id)
-            if current_state is None or current_state.original_set_column_width is None:
-                return
-
-            base_width = max(1, int(width))
-            current_state.base_column_widths[int(column)] = base_width
-            scaled_width = max(1, round(base_width * self.scale_factor))
-
-            current_state.applying = True
-            try:
-                current_state.original_set_column_width(int(column), scaled_width)
-            finally:
-                current_state.applying = False
-
-        # Pages already call these methods directly. Wrapping them here keeps all
-        # existing page code unchanged while treating its dimensions as 100% values.
-        table.resizeColumnsToContents = scaled_resize_columns_to_contents
-        table.setColumnWidth = scaled_set_column_width
 
     def _apply_table_scale(self, state: _TableScaleState) -> None:
         table = state.table
@@ -338,14 +282,11 @@ class TableScaleManager(QObject):
         table.horizontalHeader().viewport().update()
 
     def _apply_column_widths(self, state: _TableScaleState) -> None:
-        if state.original_set_column_width is None:
-            return
-
         self._capture_missing_columns(state)
         state.applying = True
         try:
             for column, base_width in state.base_column_widths.items():
-                state.original_set_column_width(
+                state.table.setColumnWidth(
                     column,
                     max(1, round(base_width * self.scale_factor)),
                 )
@@ -507,14 +448,22 @@ class TableScaleManager(QObject):
         # Resolve the actual table row under the editor and pin the editor to the
         # real row height (minus 2 px for the cell frame), as agreed for all GUI
         # tables rather than only Supplier Price.
-        # Do not use widget.mapTo(table.viewport(), ...): the viewport is not
-        # guaranteed to be in the widget's parent hierarchy (for example for
-        # some delegate/cell editors). Qt then prints:
-        # QWidget::mapTo(): parent must be in parent hierarchy
-        center = widget.rect().center()
-        global_pos = widget.mapToGlobal(center)
-        viewport_pos = table.viewport().mapFromGlobal(global_pos)
-        index = table.indexAt(viewport_pos)
+        # Map only when the table viewport is a real ancestor. This avoids
+        # QWidget::mapTo() warnings and also avoids global-coordinate calls on
+        # transient popup/editor widgets during Qt polish/show events.
+        viewport = table.viewport()
+        current = widget
+        viewport_is_ancestor = False
+        while current is not None:
+            if current is viewport:
+                viewport_is_ancestor = True
+                break
+            current = current.parentWidget()
+
+        if viewport_is_ancestor:
+            index = table.indexAt(widget.mapTo(viewport, widget.rect().center()))
+        else:
+            index = table.currentIndex()
         if not index.isValid():
             current_index = table.currentIndex()
             if current_index.isValid():
@@ -538,10 +487,10 @@ class TableScaleManager(QObject):
         return model.columnCount() if model is not None else 0
 
     @staticmethod
-    def _find_parent_table(obj: QObject) -> QTableView | None:
+    def _find_parent_table(obj: QObject) -> QTableWidget | None:
         current = obj if isinstance(obj, QWidget) else None
         while current is not None:
-            if isinstance(current, QTableView):
+            if isinstance(current, QTableWidget):
                 return current
             current = current.parentWidget()
         return None

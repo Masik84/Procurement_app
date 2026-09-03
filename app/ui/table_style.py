@@ -4,8 +4,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 
 from app.ui.table_headers import (
-    HEADER_SOURCE_ROLE,
-    GuiHeaderItem,
     header_display_name,
     install_gui_table_headers,
     resize_columns_for_multiline_headers,
