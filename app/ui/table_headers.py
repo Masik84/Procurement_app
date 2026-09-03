@@ -26,15 +26,7 @@ GUI_HEADER_LABELS: dict[str, str] = {
     "Customer Product Name": "Customer\nProduct Name",
     "Product Family": "Product\nFamily",
     "Product name (variant)": "Product name\n(variant)",
-    "Категория ABC": "Категория \nABC",
-    "Excise duty": "Excise \nduty",
-    
     "Base currency": "Base \ncurrency",
-    "FX markup %": "FX markup \n%",
-    "FX markup abs": "FX markup \nabs",
-    "Import duty": "Import \nduty",
-    "Rating calc": "Rating \ncalc",
-    "Marks for us": "Marks \nfor us",
 
     "Price, pack": "Price,\npack",
     "Price, box": "Price,\nbox",
@@ -210,13 +202,15 @@ def _logical_name_from_item(item: QTableWidgetItem) -> str:
     return " ".join(str(QTableWidgetItem.text(item)).splitlines()).strip()
 
 
-def install_gui_table_headers(table: QTableWidget) -> None:
-    """Install Daily-Report-style multi-line headers on one table.
+def install_gui_table_headers(table: QTableView) -> None:
+    """Install Daily-Report-style multi-line headers on a QTableWidget.
 
-    Every active Procurement table calls setup_data_table(), so installing the
-    wrappers there applies the behaviour to every application window and to
-    dynamically created headers as well.
+    Ordinary QTableView instances (including internal combo-box popup views)
+    do not provide QTableWidget header-item APIs and must be left untouched.
     """
+    if not isinstance(table, QTableWidget):
+        return
+
     if table.property("procurement_multiline_headers_installed"):
         return
 

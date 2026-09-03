@@ -123,13 +123,19 @@ class TableScaleManager(QObject):
         self.scale_changed.emit(value)
 
     def register_tables(self, root: QWidget) -> None:
-        if isinstance(root, QTableView):
+        # Procurement data grids are QTableWidget. Do not register every
+        # QTableView: QComboBox and other Qt widgets create internal views too,
+        # and those are not application tables.
+        if isinstance(root, QTableWidget):
             self.register_table(root)
 
-        for table in root.findChildren(QTableView):
+        for table in root.findChildren(QTableWidget):
             self.register_table(table)
 
     def register_table(self, table: QTableView) -> None:
+        if not isinstance(table, QTableWidget):
+            return
+
         install_gui_table_headers(table)
         table_id = id(table)
         if table_id in self._states:
@@ -187,7 +193,7 @@ class TableScaleManager(QObject):
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         event_type = event.type()
 
-        if event_type == QEvent.Type.Show and isinstance(obj, QTableView):
+        if event_type == QEvent.Type.Show and isinstance(obj, QTableWidget):
             self.register_table(obj)
 
         if event_type == QEvent.Type.Wheel:
@@ -501,7 +507,14 @@ class TableScaleManager(QObject):
         # Resolve the actual table row under the editor and pin the editor to the
         # real row height (minus 2 px for the cell frame), as agreed for all GUI
         # tables rather than only Supplier Price.
-        index = table.indexAt(widget.mapTo(table.viewport(), widget.rect().center()))
+        # Do not use widget.mapTo(table.viewport(), ...): the viewport is not
+        # guaranteed to be in the widget's parent hierarchy (for example for
+        # some delegate/cell editors). Qt then prints:
+        # QWidget::mapTo(): parent must be in parent hierarchy
+        center = widget.rect().center()
+        global_pos = widget.mapToGlobal(center)
+        viewport_pos = table.viewport().mapFromGlobal(global_pos)
+        index = table.indexAt(viewport_pos)
         if not index.isValid():
             current_index = table.currentIndex()
             if current_index.isValid():
@@ -654,5 +667,5 @@ def get_table_scale_manager() -> TableScaleManager | None:
 
 
 def register_table_for_scaling(table: QAbstractItemView) -> None:
-    if _manager is not None and isinstance(table, QTableView):
+    if _manager is not None and isinstance(table, QTableWidget):
         _manager.register_table(table)
