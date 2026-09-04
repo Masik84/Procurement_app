@@ -135,7 +135,7 @@ class FixedCostsPage(QWidget):
             if not header_item:
                 return
 
-            column_name = self.header_to_column.get(header_item.text())
+            column_name = self.header_to_column.get(table_header_name(self.table, item.column()))
             if not column_name or column_name == "id":
                 return
 

@@ -338,9 +338,18 @@ class TableScaleManager(QObject):
             )
             return
 
-        # A direct programmatic resizeSection call is treated as a 100% dimension.
-        state.base_column_widths[logical_index] = max(1, int(new_size))
-        self._apply_column_widths(state)
+        # Programmatic autosize/resize works with the CURRENT visible font and
+        # therefore produces a width at the CURRENT scale.  Store its unscaled
+        # base equivalent, but do not immediately scale the visible width again.
+        #
+        # Previously a width calculated at 90% (for example 200 px) was stored
+        # as the 100% base and immediately multiplied by 0.90, shrinking it to
+        # 180 px.  That made values such as Product name end with "...".
+        factor = self.scale_factor or 1.0
+        state.base_column_widths[logical_index] = max(
+            1,
+            round(new_size / factor),
+        )
 
     def _refresh_columns(self, table_id: int) -> None:
         state = self._states.get(table_id)

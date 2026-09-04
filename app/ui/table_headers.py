@@ -1,36 +1,31 @@
 from __future__ import annotations
 
 import math
-import re
 
-from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QFont, QFontMetricsF, QPainter
-from PySide6.QtWidgets import (
-    QHeaderView,
-    QStyle,
-    QStyleOptionHeader,
-    QTableView,
-    QTableWidget,
-)
+from PySide6.QtCore import QObject, QSignalBlocker, QTimer, Qt
+from PySide6.QtGui import QFont, QFontMetricsF
+from PySide6.QtWidgets import QTableView, QTableWidget, QTableWidgetItem
 
 
-# Kept for compatibility with page code that may already use the role.  The
-# safe implementation below does NOT replace QTableWidgetItem objects and does
-# not override their text()/setText() methods.
+# Same approach as Daily-Report--new-:
+# - keep the standard QHeaderView from the .ui file;
+# - put real \n into the QTableWidget header item;
+# - keep the logical/original name in a separate role.
+# No custom QHeaderView, paintSection, QProxyStyle or live-method monkey patching.
 HEADER_SOURCE_ROLE = Qt.UserRole + 705
 
 
-# GUI-only captions. DB/Excel/logical column names stay unchanged in the model.
 GUI_HEADER_LABELS: dict[str, str] = {
     "Material number": "Material\nnumber",
-    "Supplier Product Name": "Supplier\nProduct Name",
+    "Supplier Product Name": "Supplier Product\nName",
     "Selected Product": "Selected\nProduct",
     "Supplier article": "Supplier\narticle",
     "Supplier Article": "Supplier\nArticle",
-    "Customer Product Name": "Customer\nProduct Name",
+    "Customer Product Name": "Customer Product\nName",
     "Product Family": "Product\nFamily",
     "Product name (variant)": "Product name\n(variant)",
-    "Base currency": "Base \ncurrency",
+    "Base currency": "Base\ncurrency",
+    "Mark for us": "Mark for\nus",
 
     "Price, pack": "Price,\npack",
     "Price, box": "Price,\nbox",
@@ -39,11 +34,11 @@ GUI_HEADER_LABELS: dict[str, str] = {
     "Volume, L": "Volume,\nL",
     "Qty in Box": "Qty\nin Box",
 
-    "Product name (for new)": "Product\nname\n(for new)",
+    "Product name (for new)": "Product name\n(for new)",
     "Brand (for new)": "Brand\n(for new)",
     "Pack (for new)": "Pack\n(for new)",
     "Qty in Box (for new)": "Qty\nin Box\n(for new)",
-    "Excise duty (for new)": "Excise\nduty\n(for new)",
+    "Excise duty (for new)": "Excise duty\n(for new)",
 
     "Cost Novo with VAT": "Cost Novo\nwith VAT",
     "Cost Novo with VAT (prev)": "Cost Novo\nwith VAT (prev)",
@@ -67,169 +62,57 @@ GUI_HEADER_LABELS: dict[str, str] = {
     "Volume to take": "Volume\nto take",
     "Purchase Order": "Purchase\nOrder",
     "Reserve E-Comm": "Reserve\nE-Comm",
+    "Transport cost per L": "Transport\ncost per L",
+    "Re-export %": "Re-export\n%",
+    "Insurance %": "Insurance\n%",
+    "FX markup %": "FX markup\n%",
+    "FX markup abs": "FX markup\nabs",
+    "Agent fee": "Agent\nfee",
 }
 
-GUI_HEADER_MAX_LINE_LENGTH = 14
-GUI_HEADER_MIN_WRAP_LENGTH = 15
-GUI_HEADER_MAX_LINES = 3
-GUI_HEADER_HORIZONTAL_PADDING = 28
-GUI_CELL_HORIZONTAL_PADDING = 20
+GUI_HEADER_HORIZONTAL_PADDING = 14
+GUI_HEADER_SORT_INDICATOR_EXTRA = 16
 GUI_COLUMN_MIN_WIDTH = 55
-GUI_COLUMN_MAX_WIDTH = 300
-AUTOSIZE_FULL_SCAN_ROWS = 300
-AUTOSIZE_SAMPLE_ROWS = 120
-
-_SPACE_RE = re.compile(r"\\s+")
 
 
-def header_display_name(header: object) -> str:
-    """Return a GUI-only caption with real line breaks."""
-    text = str(header or "").strip()
-    if not text:
-        return text
-    if "\n" in text:
-        return text
+def header_display_name(column_name: object) -> str:
+    """Return only the visible GUI header caption."""
+    source = str(column_name or "").strip()
+    if not source:
+        return source
+    if "\n" in source:
+        return source
 
-    text = _SPACE_RE.sub(" ", text)
-    explicit = GUI_HEADER_LABELS.get(text)
+    explicit = GUI_HEADER_LABELS.get(source)
     if explicit is not None:
         return explicit
 
-    words = text.split(" ")
-    if len(words) < 2 or len(text) < GUI_HEADER_MIN_WRAP_LENGTH:
-        return text
-
-    two_lines = _balanced_lines(words, 2)
-    if max(map(len, two_lines)) <= GUI_HEADER_MAX_LINE_LENGTH:
-        return "\n".join(two_lines)
-
-    line_count = min(GUI_HEADER_MAX_LINES, len(words))
-    return "\n".join(_balanced_lines(words, line_count))
+    # Same general rule as Daily-Report--new-: a header of exactly two words
+    # is shown in two lines. Longer captions are wrapped only by the explicit
+    # map above, so the GUI remains predictable.
+    parts = source.split()
+    if len(parts) == 2:
+        return "\n".join(parts)
+    return source
 
 
-def _balanced_lines(words: list[str], line_count: int) -> list[str]:
-    if line_count <= 1 or len(words) <= 1:
-        return [" ".join(words)]
-
-    line_count = min(line_count, len(words))
-    best_lines: list[str] | None = None
-    best_score: tuple[int, int, int] | None = None
-
-    def search(start: int, remaining: int, current: list[str]) -> None:
-        nonlocal best_lines, best_score
-        if remaining == 1:
-            candidate = current + [" ".join(words[start:])]
-            lengths = [len(line) for line in candidate]
-            score = (
-                max(lengths),
-                max(lengths) - min(lengths),
-                sum(length * length for length in lengths),
-            )
-            if best_score is None or score < best_score:
-                best_score = score
-                best_lines = candidate
-            return
-
-        last_start = len(words) - remaining + 1
-        for end in range(start + 1, last_start + 1):
-            search(end, remaining - 1, current + [" ".join(words[start:end])])
-
-    search(0, line_count, [])
-    return best_lines or [" ".join(words)]
+def set_table_header(table: QTableWidget, column: int, column_name: object) -> None:
+    """Set one visible multiline header and preserve its logical name."""
+    source = str(column_name or "")
+    item = QTableWidgetItem(header_display_name(source))
+    item.setData(HEADER_SOURCE_ROLE, source)
+    item.setTextAlignment(Qt.AlignCenter)
+    table.setHorizontalHeaderItem(column, item)
 
 
-class MultilineHeaderView(QHeaderView):
-    """Paint wrapped captions without modifying model/header item data.
-
-    This is deliberately a normal Qt header subclass.  No Qt method is replaced
-    on a live QTableWidget instance and no QTableWidgetItem virtual method is
-    overridden, which avoids the PySide lifetime problems that caused the
-    native 0xC0000005 startup crash.
-    """
-
-    def paintSection(self, painter: QPainter, rect, logical_index: int) -> None:
-        if not rect.isValid():
-            return
-
-        option = QStyleOptionHeader()
-        self.initStyleOptionForIndex(option, logical_index)
-        option.rect = rect
-        option.text = header_display_name(option.text)
-        option.textAlignment = Qt.AlignmentFlag.AlignCenter
-        self.style().drawControl(
-            QStyle.ControlElement.CE_Header,
-            option,
-            painter,
-            self,
-        )
-
-    def sectionSizeFromContents(self, logical_index: int) -> QSize:
-        base = super().sectionSizeFromContents(logical_index)
-        model = self.model()
-        if model is None:
-            return base
-
-        source = model.headerData(
-            logical_index,
-            Qt.Orientation.Horizontal,
-            Qt.ItemDataRole.DisplayRole,
-        )
-        visible = header_display_name(source)
-        lines = visible.splitlines() or [""]
-        if len(lines) <= 1:
-            return base
-
-        metrics = self.fontMetrics()
-        width = max(metrics.horizontalAdvance(line) for line in lines)
-        width += GUI_HEADER_HORIZONTAL_PADDING
-        height = len(lines) * metrics.lineSpacing() + 10
-
-        return QSize(
-            max(GUI_COLUMN_MIN_WIDTH, min(int(width), GUI_COLUMN_MAX_WIDTH)),
-            max(base.height(), int(height)),
-        )
-
-
-def install_gui_table_headers(table: QTableView) -> None:
-    """Install safe wrapped rendering on Procurement QTableWidget headers."""
-    if not isinstance(table, QTableWidget):
-        return
-
-    old_header = table.horizontalHeader()
-    if isinstance(old_header, MultilineHeaderView):
-        return
-
-    # Read properties before setHorizontalHeader(); Qt owns/deletes the old
-    # header when it is replaced.
-    sections_clickable = old_header.sectionsClickable()
-    sections_movable = old_header.sectionsMovable()
-    highlight_sections = old_header.highlightSections()
-    stretch_last = old_header.stretchLastSection()
-    default_alignment = old_header.defaultAlignment()
-    minimum_section_size = old_header.minimumSectionSize()
-    default_section_size = old_header.defaultSectionSize()
-    sort_indicator_shown = old_header.isSortIndicatorShown()
-    sort_section = old_header.sortIndicatorSection()
-    sort_order = old_header.sortIndicatorOrder()
-
-    header = MultilineHeaderView(Qt.Orientation.Horizontal, table)
-    header.setSectionsClickable(sections_clickable)
-    header.setSectionsMovable(sections_movable)
-    header.setHighlightSections(highlight_sections)
-    header.setStretchLastSection(stretch_last)
-    header.setDefaultAlignment(default_alignment)
-    header.setMinimumSectionSize(minimum_section_size)
-    header.setDefaultSectionSize(default_section_size)
-    header.setSortIndicatorShown(sort_indicator_shown)
-    if sort_section >= 0:
-        header.setSortIndicator(sort_section, sort_order)
-
-    table.setHorizontalHeader(header)
-    table.setProperty("procurement_multiline_headers_installed", True)
+def set_table_headers(table: QTableWidget, columns) -> None:
+    """Set all table headers using the Daily-Report--new- scheme."""
+    for column, column_name in enumerate(columns):
+        set_table_header(table, column, column_name)
 
 
 def table_header_name(table: QTableWidget, column: int) -> str:
-    """Return the logical header name. Model/header item text is never wrapped."""
+    """Return the logical header name without GUI line breaks."""
     item = table.horizontalHeaderItem(column)
     if item is None:
         return ""
@@ -243,15 +126,111 @@ def table_header_names(table: QTableWidget) -> list[str]:
     return [table_header_name(table, column) for column in range(table.columnCount())]
 
 
+class _HeaderItemSync(QObject):
+    """Convert ordinary setHorizontalHeaderLabels() calls to safe header items.
+
+    Existing Procurement pages already call setHorizontalHeaderLabels() in many
+    places. Replacing those live Qt methods caused the previous PySide crashes.
+    Instead we listen to the model's normal header-change signals and, after the
+    change completes, rewrite only the header items. The standard QHeaderView
+    itself is never replaced, so all .ui/QSS styling remains untouched.
+    """
+
+    def __init__(self, table: QTableWidget):
+        super().__init__(table)
+        self._table = table
+        self._scheduled = False
+        self._applying = False
+
+        model = table.model()
+        model.headerDataChanged.connect(self.schedule)
+        model.modelReset.connect(self.schedule)
+        model.columnsInserted.connect(self.schedule)
+        model.columnsRemoved.connect(self.schedule)
+        model.rowsInserted.connect(self.schedule)
+        model.rowsRemoved.connect(self.schedule)
+        model.dataChanged.connect(self.schedule)
+        self.schedule()
+
+    def schedule(self, *_args) -> None:
+        if self._scheduled or self._applying:
+            return
+        self._scheduled = True
+        QTimer.singleShot(0, self.apply)
+
+    def apply(self) -> None:
+        self._scheduled = False
+        if self._applying:
+            return
+
+        table = self._table
+        if table is None:
+            return
+
+        self._applying = True
+        try:
+            model = table.model()
+            blocker = QSignalBlocker(model)
+            try:
+                for column in range(table.columnCount()):
+                    item = table.horizontalHeaderItem(column)
+                    if item is None:
+                        raw = model.headerData(
+                            column,
+                            Qt.Horizontal,
+                            Qt.DisplayRole,
+                        )
+                        if raw is None:
+                            continue
+                        source = str(raw)
+                    else:
+                        stored = item.data(HEADER_SOURCE_ROLE)
+                        source = (
+                            str(stored)
+                            if stored is not None
+                            else " ".join(str(item.text()).splitlines()).strip()
+                        )
+
+                    visible = header_display_name(source)
+                    if item is None:
+                        item = QTableWidgetItem(visible)
+                        table.setHorizontalHeaderItem(column, item)
+                    elif item.text() != visible:
+                        item.setText(visible)
+
+                    item.setData(HEADER_SOURCE_ROLE, source)
+                    item.setTextAlignment(Qt.AlignCenter)
+            finally:
+                del blocker
+
+            header = table.horizontalHeader()
+            header.setDefaultAlignment(Qt.AlignCenter)
+            header.updateGeometry()
+            header.viewport().update()
+            resize_columns_for_multiline_headers(table)
+        finally:
+            self._applying = False
+
+
+def install_gui_table_headers(table: QTableView) -> None:
+    """Enable multiline header items while keeping the original QHeaderView."""
+    if not isinstance(table, QTableWidget):
+        return
+    if table.property("procurement_multiline_header_items_installed"):
+        return
+
+    sync = _HeaderItemSync(table)
+    table._procurement_header_item_sync = sync
+    table.setProperty("procurement_multiline_header_items_installed", True)
+
+
 def _source_header_text(table: QTableView, column: int) -> str:
+    if isinstance(table, QTableWidget):
+        return table_header_name(table, column)
     model = table.model()
     if model is None:
         return ""
-    value = model.headerData(
-        column,
-        Qt.Orientation.Horizontal,
-        Qt.ItemDataRole.DisplayRole,
-    )
+    value = model.headerData(column, Qt.Horizontal, Qt.DisplayRole)
     return str(value or "")
 
 
@@ -261,6 +240,7 @@ def calculate_gui_header_base_height(
     base_font_point_size: float,
     minimum_height: int = 24,
 ) -> int:
+    """Calculate height from the same visible text used by header items."""
     model = table.model()
     if model is None or model.columnCount() <= 0:
         return minimum_height
@@ -274,63 +254,44 @@ def calculate_gui_header_base_height(
     if base_font_point_size > 0:
         font.setPointSizeF(float(base_font_point_size))
     metrics = QFontMetricsF(font)
-    required = math.ceil(max_lines * metrics.lineSpacing() + 10)
+    required = math.ceil(max_lines * metrics.lineSpacing() + 6)
     return max(int(minimum_height), required)
 
 
-def _sample_row_indexes(row_count: int) -> list[int]:
-    if row_count <= AUTOSIZE_FULL_SCAN_ROWS:
-        return list(range(row_count))
-    if row_count <= 0:
-        return []
-
-    first_count = min(60, row_count)
-    indexes = list(range(first_count))
-    remaining = AUTOSIZE_SAMPLE_ROWS - first_count
-    if remaining <= 0:
-        return indexes
-
-    step = max(1, row_count // remaining)
-    indexes.extend(range(first_count, row_count, step))
-    return sorted(set(indexes[:AUTOSIZE_SAMPLE_ROWS]))
-
-
 def resize_columns_for_multiline_headers(table: QTableView) -> None:
-    """Compact wrapped-header columns without modifying header data."""
+    """Size every column to the larger of header text or cell contents.
+
+    Qt first calculates the natural width from the actual cells/widgets.  We
+    then enforce a minimum based on the longest visible line of the GUI header.
+    This keeps short-data columns wide enough to show their complete captions
+    while still allowing long cell values to determine a larger width.
+    """
     model = table.model()
     if model is None:
         return
 
-    header_metrics = table.horizontalHeader().fontMetrics()
-    body_metrics = table.fontMetrics()
-    sample_rows = _sample_row_indexes(model.rowCount())
+    header = table.horizontalHeader()
+    header_metrics = header.fontMetrics()
 
     for column in range(model.columnCount()):
-        visible = header_display_name(_source_header_text(table, column))
-        lines = visible.splitlines() or [""]
-        if len(lines) <= 1:
+        if table.isColumnHidden(column):
             continue
 
-        width = max(header_metrics.horizontalAdvance(line) for line in lines)
-        width += GUI_HEADER_HORIZONTAL_PADDING
+        # Let Qt calculate the width required by the current cell contents,
+        # delegates and cell widgets.  Unlike the previous implementation this
+        # is done for ALL columns, not only those whose caption contains \n.
+        table.resizeColumnToContents(column)
+        content_width = header.sectionSize(column)
 
-        for row in sample_rows:
-            index = model.index(row, column)
-            value = model.data(index, Qt.ItemDataRole.DisplayRole)
-            if value is not None:
-                cell_text = str(value)
-                if len(cell_text) > 80:
-                    cell_text = cell_text[:80]
-                width = max(
-                    width,
-                    body_metrics.horizontalAdvance(cell_text)
-                    + GUI_CELL_HORIZONTAL_PADDING,
-                )
+        visible = header_display_name(_source_header_text(table, column))
+        lines = visible.splitlines() or [""]
+        header_width = max(header_metrics.horizontalAdvance(line) for line in lines)
+        header_width += GUI_HEADER_HORIZONTAL_PADDING
 
-            if isinstance(table, QTableWidget):
-                widget = table.cellWidget(row, column)
-                if widget is not None:
-                    width = max(width, widget.sizeHint().width() + 10)
+        # Sorting arrows occupy part of a header section. Reserve space so the
+        # final letters of the caption do not disappear under the indicator.
+        if header.isSortIndicatorShown():
+            header_width += GUI_HEADER_SORT_INDICATOR_EXTRA
 
-        width = max(GUI_COLUMN_MIN_WIDTH, min(int(width), GUI_COLUMN_MAX_WIDTH))
-        table.horizontalHeader().resizeSection(column, width)
+        final_width = max(GUI_COLUMN_MIN_WIDTH, int(content_width), int(header_width))
+        header.resizeSection(column, final_width)

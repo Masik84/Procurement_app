@@ -152,7 +152,7 @@ class MarkingRatesPage(QWidget):
             if row_key is None:
                 return
 
-            column_name = self.header_to_column.get(header_item.text())
+            column_name = self.header_to_column.get(table_header_name(self.table, item.column()))
             if not column_name:
                 return
 

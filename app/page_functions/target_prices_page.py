@@ -728,7 +728,7 @@ class TargetPricesPage(QWidget):
                 self._manual_full_costs[int(row_id)] = manual_value
                 self._sync_manual_full_cost_to_temp(int(row_id), manual_value)
             return
-        header = self.table.horizontalHeaderItem(item.column()).text()
+        header = table_header_name(self.table, item.column())
         if header in self.numeric_headers:
             value = parse_loose_number(value)
         elif value == "":

@@ -116,7 +116,7 @@ class ProductArticlesPage(QWidget):
         try:
             row = item.row()
             column = item.column()
-            header = self.table.horizontalHeaderItem(column).text()
+            header = table_header_name(self.table, column)
             id_item = self.table.item(row, 0)
 
             if not id_item:
@@ -150,7 +150,7 @@ class ProductArticlesPage(QWidget):
         if not header_item:
             return
 
-        header = header_item.text()
+        header = table_header_name(self.table, column)
         if header == "Product name":
             self.start_product_edit(row)
 

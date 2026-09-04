@@ -149,7 +149,7 @@ class SuppliersPage(QWidget):
                 return
 
             row_id = int(row_id_text)
-            header = header_item.text()
+            header = table_header_name(self.table, column)
             column_name = self.header_to_column.get(header)
 
             if not column_name or column_name == "id":
