@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>1332</width>
-    <height>823</height>
+    <height>808</height>
    </rect>
   </property>
   <property name="minimumSize">
@@ -225,7 +225,7 @@ QScrollBar::handle:vertical {
             <string>Добавить строку</string>
            </property>
            <property name="icon">
-            <iconset resource="../resource.qrc">
+            <iconset>
              <normaloff>:/icon/icon/plus-circle — копия — копия.svg</normaloff>:/icon/icon/plus-circle — копия — копия.svg</iconset>
            </property>
           </widget>
@@ -334,18 +334,61 @@ QScrollBar::handle:vertical {
              </widget>
             </item>
             <item>
-             <widget class="QComboBox" name="line_Suppl1">
+             <widget class="QPushButton" name="btn_FilterSupplier">
               <property name="minimumSize">
                <size>
                 <width>0</width>
-                <height>25</height>
+                <height>28</height>
                </size>
               </property>
               <property name="maximumSize">
                <size>
                 <width>16777215</width>
-                <height>25</height>
+                <height>16777215</height>
                </size>
+              </property>
+              <property name="toolTip">
+               <string>Открыть фильтр по поставщикам</string>
+              </property>
+              <property name="text">
+               <string>все Поставщики</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="label_country_filter">
+              <property name="font">
+               <font>
+                <family>Tahoma</family>
+                <pointsize>10</pointsize>
+                <italic>false</italic>
+                <bold>false</bold>
+               </font>
+              </property>
+              <property name="text">
+               <string>Country</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="btn_FilterCountry">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>28</height>
+               </size>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>16777215</width>
+                <height>26</height>
+               </size>
+              </property>
+              <property name="toolTip">
+               <string>Открыть фильтр по странам</string>
+              </property>
+              <property name="text">
+               <string>все Страны</string>
               </property>
              </widget>
             </item>
@@ -380,7 +423,7 @@ QScrollBar::handle:vertical {
                <string>Search</string>
               </property>
               <property name="icon">
-               <iconset resource="../resource.qrc">
+               <iconset>
                 <normaloff>:/icon/icon/search — копия — копия.svg</normaloff>:/icon/icon/search — копия — копия.svg</iconset>
               </property>
              </widget>
@@ -607,7 +650,7 @@ QScrollBar::handle:vertical {
                      <string>Сохранить</string>
                     </property>
                     <property name="icon">
-                     <iconset resource="../resource.qrc">
+                     <iconset>
                       <normaloff>:/icon/icon/save — копия — копия.svg</normaloff>:/icon/icon/save — копия — копия.svg</iconset>
                     </property>
                    </widget>

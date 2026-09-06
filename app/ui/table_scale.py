@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QSettings, QTimer, Qt, Signal
 from PySide6.QtGui import QFont, QFontDatabase
+from shiboken6 import isValid as is_qt_object_valid
 
 from app.ui.table_headers import calculate_gui_header_base_height
 from PySide6.QtWidgets import (
@@ -42,6 +43,9 @@ class _TableScaleState:
     base_item_font_pt: float = BASE_TABLE_FONT_PT
     base_style_sheet: str = ""
     applying: bool = False
+    header_refresh_timer: QTimer | None = None
+    columns_refresh_timer: QTimer | None = None
+    event_target_ids: set[int] = field(default_factory=set)
 
 
 class TableScaleManager(QObject):
@@ -68,11 +72,16 @@ class TableScaleManager(QObject):
             )
         )
         self._states: dict[int, _TableScaleState] = {}
+        self._event_targets: dict[int, int] = {}
 
         self._load_local_office_aptos_narrow()
         self._table_font_family, self._table_font_style = self._resolve_table_font()
 
-        app.installEventFilter(self)
+        # Event filtering is installed only on registered data tables.
+        # A Python event filter on QApplication receives teardown events from
+        # every transient Qt object (dialogs, popup views, delegate editors)
+        # and is unnecessary for table zoom. Keeping the filter local avoids
+        # native PySide/Shiboken access violations during object destruction.
 
     @property
     def scale_percent(self) -> int:
@@ -150,6 +159,20 @@ class TableScaleManager(QObject):
         )
         self._states[table_id] = state
 
+        # Per-table, owned timers replace static QTimer.singleShot callbacks.
+        # They are destroyed automatically with the table and therefore cannot
+        # call back into Python after the QWidget/C++ object has gone away.
+        state.header_refresh_timer = QTimer(table)
+        state.header_refresh_timer.setSingleShot(True)
+        state.header_refresh_timer.timeout.connect(
+            lambda current_id=table_id: self._refresh_header(current_id)
+        )
+        state.columns_refresh_timer = QTimer(table)
+        state.columns_refresh_timer.setSingleShot(True)
+        state.columns_refresh_timer.timeout.connect(
+            lambda current_id=table_id: self._refresh_columns(current_id)
+        )
+
         self._capture_column_widths(state, sizes_are_scaled=False)
         self._connect_model_signals(state)
 
@@ -162,11 +185,18 @@ class TableScaleManager(QObject):
             )
         )
         header.sectionCountChanged.connect(
-            lambda _old_count, _new_count, current_id=table_id: QTimer.singleShot(
-                0,
-                lambda: self._refresh_columns(current_id),
-            )
+            lambda _old_count, _new_count, current_id=table_id: self._schedule_columns_refresh(current_id)
         )
+
+        # Ctrl+wheel zoom only needs events from the actual table and viewport.
+        # Do not install this filter on QApplication.
+        viewport = table.viewport()
+        for target in (table, viewport):
+            target.installEventFilter(self)
+            target_id = id(target)
+            self._event_targets[target_id] = table_id
+            state.event_target_ids.add(target_id)
+
         table.destroyed.connect(lambda _obj=None, current_id=table_id: self._remove_state(current_id))
 
         self._apply_table_scale(state)
@@ -180,26 +210,35 @@ class TableScaleManager(QObject):
         self._apply_table_scale(state)
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
-        event_type = event.type()
+        # This filter is attached ONLY to registered QTableWidget objects and
+        # their viewports.  Avoid walking arbitrary QWidget parent chains and
+        # avoid touching popup/dialog objects during Qt teardown.
+        table_id = self._event_targets.get(id(obj))
+        if table_id is None:
+            return False
 
-        if event_type == QEvent.Type.Wheel:
-            table = self._find_parent_table(obj)
-            if table is not None and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-                if event.angleDelta().y() > 0:
-                    self.increase()
-                elif event.angleDelta().y() < 0:
-                    self.decrease()
-                event.accept()
-                return True
+        state = self._states.get(table_id)
+        if state is None:
+            return False
 
-        if event_type in (QEvent.Type.Show, QEvent.Type.Polish):
-            widget = obj if isinstance(obj, QWidget) else None
-            if widget is not None:
-                table = self._find_parent_table(widget)
-                if table is not None and table is not widget:
-                    self._scale_table_editor(widget)
+        try:
+            if event.type() == QEvent.Type.Wheel:
+                table = state.table
+                if not is_qt_object_valid(table):
+                    self._remove_state(table_id)
+                    return False
+                if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                    if event.angleDelta().y() > 0:
+                        self.increase()
+                    elif event.angleDelta().y() < 0:
+                        self.decrease()
+                    event.accept()
+                    return True
+        except RuntimeError:
+            self._remove_state(table_id)
+            return False
 
-        return super().eventFilter(obj, event)
+        return False
 
     def _connect_model_signals(self, state: _TableScaleState) -> None:
         model = state.table.model()
@@ -209,12 +248,30 @@ class TableScaleManager(QObject):
         table_id = id(state.table)
 
         def schedule_refresh(*_args) -> None:
-            QTimer.singleShot(0, lambda: self._refresh_header(table_id))
+            self._schedule_header_refresh(table_id)
 
         model.headerDataChanged.connect(schedule_refresh)
         model.modelReset.connect(schedule_refresh)
         model.columnsInserted.connect(schedule_refresh)
         model.columnsRemoved.connect(schedule_refresh)
+
+    def _schedule_header_refresh(self, table_id: int) -> None:
+        state = self._states.get(table_id)
+        if state is None:
+            return
+        timer = state.header_refresh_timer
+        if timer is None or not is_qt_object_valid(timer):
+            return
+        timer.start(0)
+
+    def _schedule_columns_refresh(self, table_id: int) -> None:
+        state = self._states.get(table_id)
+        if state is None:
+            return
+        timer = state.columns_refresh_timer
+        if timer is None or not is_qt_object_valid(timer):
+            return
+        timer.start(0)
 
     def _refresh_header(self, table_id: int) -> None:
         state = self._states.get(table_id)
@@ -224,6 +281,10 @@ class TableScaleManager(QObject):
 
     def _apply_table_scale(self, state: _TableScaleState) -> None:
         table = state.table
+        if not is_qt_object_valid(table):
+            self._remove_state(id(table))
+            return
+
         factor = self.scale_factor
         row_height = max(13, round(BASE_ROW_HEIGHT * factor))
         required_header_height = calculate_gui_header_base_height(
@@ -495,17 +556,12 @@ class TableScaleManager(QObject):
         model = table.model()
         return model.columnCount() if model is not None else 0
 
-    @staticmethod
-    def _find_parent_table(obj: QObject) -> QTableWidget | None:
-        current = obj if isinstance(obj, QWidget) else None
-        while current is not None:
-            if isinstance(current, QTableWidget):
-                return current
-            current = current.parentWidget()
-        return None
-
     def _remove_state(self, table_id: int) -> None:
-        self._states.pop(table_id, None)
+        state = self._states.pop(table_id, None)
+        if state is None:
+            return
+        for target_id in state.event_target_ids:
+            self._event_targets.pop(target_id, None)
 
     @staticmethod
     def _normalise_scale(value: int) -> int:

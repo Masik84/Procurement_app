@@ -28,6 +28,8 @@ from app.db.models import Product, TempProductSearchImport
 from app.exports.product_search_exporter import ProductSearchExporter
 from app.imports.product_search_importer import ProductSearchImporter
 from app.services.product_search_service import ProductSearchService
+from app.services.product_matching_service import MissingPackTypeError
+from app.utils.pack_type_prompt import resolve_missing_pack_for_temp_rows
 from app.ui.table_style import *
 from app.utils.batch import get_current_username
 from app.utils.parsers import parse_loose_number
@@ -933,6 +935,16 @@ class ProductSearchPage(QWidget):
             if save_to_db_only:
                 self.show_message("Строка удалена")
 
+        except MissingPackTypeError as e:
+            if resolve_missing_pack_for_temp_rows(
+                self,
+                e,
+                model=TempProductSearchImport,
+                batch_id=self.batch_id,
+                imported_by=self.imported_by,
+                pending_changes=self._pending_changes,
+            ):
+                self.apply_pending_changes(save_to_db_only=save_to_db_only)
         except Exception as e:
             self.show_error_message(str(e))
 

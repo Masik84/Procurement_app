@@ -34,7 +34,8 @@ from app.db.models import (
     TempSupplierOrdersImport,
 )
 from app.exports.product_stock_exporter import ProductStockExporter
-from app.services.product_matching_service import ProductMatchingService
+from app.services.product_matching_service import ProductMatchingService, MissingPackTypeError
+from app.utils.pack_type_prompt import resolve_missing_pack_for_temp_rows
 from app.services.product_stock_service import ProductStockService
 from app.utils.batch import get_current_username
 from app.utils.excel_export_format import write_openpyxl_dict_sheet
@@ -1114,6 +1115,16 @@ class ProductStockPage(QWidget):
             self.clear_table()
             self.refresh_counters()
             self.show_message(msg)
+        except MissingPackTypeError as e:
+            if resolve_missing_pack_for_temp_rows(
+                self,
+                e,
+                model=self._temp_model(),
+                batch_id=self._batch_id,
+                imported_by=self._imported_by,
+            ):
+                self.load_table()
+                self.save_all()
         except Exception as e:
             self.show_error_message(str(e))
 

@@ -34,6 +34,8 @@ from app.utils.text import clean_multi_spaces
 from app.workers.excel_export_worker import start_excel_export
 from app.exports.product_exporter import ProductExporter
 from app.services.qty_in_box_service import default_qty_in_box_for_pack, normalize_qty_in_box
+from app.services.product_matching_service import ProductMatchingService, MissingPackTypeError
+from app.utils.pack_type_prompt import ask_pack_type
 from app.utils.output_headers import display_headers, standardize_output_header
 from app.utils.excel_fast_writer import write_excel_table
 from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
@@ -328,6 +330,20 @@ class ProductsPage(QWidget):
         if changed:
             session.flush()
 
+    def _resolve_pack_type_for_changes(self, session, changes: dict) -> None:
+        name = clean_multi_spaces(changes.get("name", "")).upper()
+        pack = self._to_decimal(changes.get("pack", ""), "Pack")
+        if pack is None:
+            return
+        matcher = ProductMatchingService(session)
+        try:
+            matcher.validate_pack_type_exists(product_name=name, pack=pack)
+        except MissingPackTypeError as error:
+            selected_pack = ask_pack_type(self, error)
+            if selected_pack is None:
+                raise ValueError("Сохранение продукта отменено: вид упаковки не выбран.")
+            changes["pack"] = selected_pack
+
     def _normalize_product_changes(self, changes: dict) -> dict:
         name = clean_multi_spaces(changes.get("name", "")).upper()
         brand = clean_multi_spaces(changes.get("brand", "")).upper()
@@ -379,6 +395,7 @@ class ProductsPage(QWidget):
         )
 
     def _insert_or_update_imported_product(self, session, row_id, changes):
+        self._resolve_pack_type_for_changes(session, changes)
         data = self._normalize_product_changes(changes)
         existing = self._find_existing_product_for_import(
             session,
@@ -425,6 +442,10 @@ class ProductsPage(QWidget):
             "is_excise": changes.get("is_excise", bool(product.is_excise)),
             "family": changes.get("family", product.family or ""),
         }
+        # Existing legacy rows may contain an old Pack that is not in Pack types.
+        # Do not block unrelated edits; validate only when Pack itself is changed.
+        if "pack" in changes:
+            self._resolve_pack_type_for_changes(session, merged_changes)
         data = self._normalize_product_changes(merged_changes)
 
         duplicate = (

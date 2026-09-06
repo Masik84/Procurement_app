@@ -18,6 +18,8 @@ from app.exports.target_price_exporter import TargetPriceExporter
 from app.imports.target_price_importer import TargetPriceImporter
 from app.services.supplier_service import SupplierService, SupplierUpsertData
 from app.services.target_price_service import TargetPriceService
+from app.services.product_matching_service import MissingPackTypeError
+from app.utils.pack_type_prompt import resolve_missing_pack_for_temp_rows
 from app.utils.batch import get_current_username
 from app.utils.parsers import parse_loose_number, parse_user_percent
 from app.utils.text import clean_multi_spaces
@@ -848,8 +850,32 @@ class TargetPricesPage(QWidget):
         except Exception as e:
             self.show_error_message(str(e))
 
+    def _ensure_known_pack_types(self) -> bool:
+        while True:
+            try:
+                with self.get_session() as session:
+                    TargetPriceService(session).validate_new_products_before_save(
+                        self.batch_id, self.imported_by
+                    )
+                return True
+            except MissingPackTypeError as error:
+                if not resolve_missing_pack_for_temp_rows(
+                    self,
+                    error,
+                    model=TempTargetPriceImport,
+                    batch_id=self.batch_id,
+                    imported_by=self.imported_by,
+                ):
+                    return False
+                self.load_table()
+            except Exception as error:
+                self.show_error_message(str(error))
+                return False
+
     def calculate_costs(self):
         self._commit_open_editors()
+        if not self._ensure_known_pack_types():
+            return
         try:
             supplier_id = self.ensure_supplier()
             supplier_name = clean_multi_spaces(self.ui.cbo_SupplName.currentText()) or clean_multi_spaces(self.ui.line_NewSupplier.text()) or "NoName"
@@ -893,6 +919,8 @@ class TargetPricesPage(QWidget):
 
     def save_all(self):
         self._commit_open_editors()
+        if not self._ensure_known_pack_types():
+            return
         try:
             if not self._showing_options:
                 self.show_error_message("Сначала запустите расчет")

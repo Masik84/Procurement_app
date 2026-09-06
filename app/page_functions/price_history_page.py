@@ -32,6 +32,7 @@ from app.db.models import CurrentSupplierPrice, PriceHistory, Product, Supplier
 from app.db.models import PriceHistory as PriceHistoryModel
 from app.db.models import CurrentSupplierPrice as CurrentSupplierPriceModel
 from app.workers.excel_export_worker import start_excel_export
+from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -93,6 +94,10 @@ class PriceHistoryPage(QWidget):
         self._import_preview_rows = []
         self._excel_export_thread = None
         self._excel_export_worker = None
+        self._selected_supplier_ids: set[int] | None = None
+        self._selected_brand_values: set[str] | None = None
+        self._selected_family_values: set[str] | None = None
+        self._selected_product_ids: set[int] | None = None
 
         self.columns = ["product_id", "supplier_id", "price_date", "price", "currency"]
         self.headers = ["Product name", "Supplier name", "Price date", "Price", "Currency"]
@@ -132,15 +137,10 @@ class PriceHistoryPage(QWidget):
         self.ui.btn_Import.clicked.connect(self.import_excel)
 
         self.ui.line_TableName.currentTextChanged.connect(self.on_table_changed)
-
-        self.ui.line_SupplName.currentTextChanged.connect(self.fill_in_prod_brand_list)
-        self.ui.line_SupplName.currentTextChanged.connect(self.fill_in_prod_fam_list)
-        self.ui.line_SupplName.currentTextChanged.connect(self.fill_in_prod_name_list)
-
-        self.ui.line_Brand.currentTextChanged.connect(self.fill_in_prod_fam_list)
-        self.ui.line_Brand.currentTextChanged.connect(self.fill_in_prod_name_list)
-
-        self.ui.line_Prod_Fam.currentTextChanged.connect(self.fill_in_prod_name_list)
+        self.ui.btn_FilterSupplier.clicked.connect(self.open_supplier_filter)
+        self.ui.btn_FilterBrand.clicked.connect(self.open_brand_filter)
+        self.ui.btn_FilterProductFamily.clicked.connect(self.open_family_filter)
+        self.ui.btn_FilterProduct.clicked.connect(self.open_product_filter)
 
     def get_session(self):
         return SessionLocal()
@@ -192,13 +192,11 @@ class PriceHistoryPage(QWidget):
 
     def refresh_all_comboboxes(self):
         self.fill_in_table_list()
-        self.fill_in_supplier_list()
-        self.fill_in_prod_brand_list()
-        self.fill_in_prod_fam_list()
-        self.fill_in_prod_name_list()
+        self._prune_filter_selections()
+        self._refresh_filter_buttons()
 
     def on_table_changed(self):
-        """Сбрасывает все фильтры и временное состояние при выборе другой таблицы."""
+        """Сбрасывает фильтры и временное состояние при выборе другой таблицы."""
         try:
             self._pending_changes.clear()
             self._pending_deletes.clear()
@@ -206,75 +204,200 @@ class PriceHistoryPage(QWidget):
             self._temp_row_id = -1
             self._import_preview_active = False
             self._import_preview_rows = []
-
             self.table.clearContents()
             self.table.setRowCount(0)
-
             self._init_date_filters()
-
-            self.ui.line_SupplName.blockSignals(True)
-            self.ui.line_Brand.blockSignals(True)
-            self.ui.line_Prod_Fam.blockSignals(True)
-            self.ui.line_Prod_name.blockSignals(True)
-            if hasattr(self.ui, "line_NameSearch"):
-                self.ui.line_NameSearch.blockSignals(True)
-
-            self.ui.line_SupplName.setCurrentText("-")
-            self.ui.line_Brand.setCurrentText("-")
-            self.ui.line_Prod_Fam.setCurrentText("-")
-            self.ui.line_Prod_name.setCurrentText("-")
+            self._selected_supplier_ids = None
+            self._selected_brand_values = None
+            self._selected_family_values = None
+            self._selected_product_ids = None
             if hasattr(self.ui, "line_NameSearch"):
                 self.ui.line_NameSearch.clear()
-
-            self.ui.line_SupplName.blockSignals(False)
-            self.ui.line_Brand.blockSignals(False)
-            self.ui.line_Prod_Fam.blockSignals(False)
-            self.ui.line_Prod_name.blockSignals(False)
-            if hasattr(self.ui, "line_NameSearch"):
-                self.ui.line_NameSearch.blockSignals(False)
-
-            self.fill_in_supplier_list()
-            self.fill_in_prod_brand_list()
-            self.fill_in_prod_fam_list()
-            self.fill_in_prod_name_list()
-
+            self._refresh_filter_buttons()
             self.clear_message()
         except Exception as e:
             self.show_error_message(f"Ошибка сброса фильтров: {str(e)}")
 
-    def _get_products_for_filters_query(self, session):
-        supplier_name = self.ui.line_SupplName.currentText()
+    def _mode_price_model(self):
+        mode = self.get_mode()
+        if mode == MODE_CURRENT:
+            return CurrentSupplierPrice
+        if mode == MODE_HISTORY:
+            return PriceHistory
+        return None
 
-        query = session.query(Product).filter(
-            Product.name.isnot(None),
-            Product.name != ""
+    def _apply_product_filter_selections(self, query, *, ignore: str | None = None):
+        if ignore != "brand" and self._selected_brand_values is not None:
+            query = query.filter(Product.brand.in_(sorted(self._selected_brand_values)))
+        if ignore != "family" and self._selected_family_values is not None:
+            query = query.filter(Product.family.in_(sorted(self._selected_family_values)))
+        if ignore != "product" and self._selected_product_ids is not None:
+            query = query.filter(Product.id.in_(sorted(self._selected_product_ids)))
+        return query
+
+    def _product_filter_query(self, session, *, ignore: str | None = None):
+        query = session.query(Product).filter(Product.name.isnot(None), Product.name != "")
+        price_model = self._mode_price_model()
+        if price_model is not None and self._selected_supplier_ids is not None:
+            query = query.join(price_model, price_model.product_id == Product.id).filter(
+                price_model.supplier_id.in_(sorted(self._selected_supplier_ids))
+            )
+        return self._apply_product_filter_selections(query, ignore=ignore).distinct()
+
+    def _supplier_filter_query(self, session):
+        query = session.query(Supplier).filter(
+            Supplier.name.isnot(None), Supplier.name != "", Supplier.name != "Manual"
         )
-
-        if supplier_name != "-":
-            mode = self.get_mode()
-
-            if mode == MODE_CURRENT:
-                query = query.join(
-                    CurrentSupplierPrice,
-                    CurrentSupplierPrice.product_id == Product.id
-                ).join(
-                    Supplier,
-                    CurrentSupplierPrice.supplier_id == Supplier.id
-                ).filter(
-                    Supplier.name == supplier_name
-                )
-            else:
-                query = query.join(
-                    PriceHistory,
-                    PriceHistory.product_id == Product.id
-                ).join(
-                    Supplier,
-                    PriceHistory.supplier_id == Supplier.id
-                ).filter(
-                    Supplier.name == supplier_name
-                )
-
+        price_model = self._mode_price_model()
+        if price_model is not None and any(
+            selected is not None
+            for selected in (self._selected_brand_values, self._selected_family_values, self._selected_product_ids)
+        ):
+            query = query.join(price_model, price_model.supplier_id == Supplier.id).join(
+                Product, price_model.product_id == Product.id
+            )
+            query = self._apply_product_filter_selections(query)
         return query.distinct()
+
+    def open_supplier_filter(self):
+        try:
+            with self.get_session() as session:
+                rows = self._supplier_filter_query(session).order_by(Supplier.name.asc()).all()
+            options = [
+                FilterOption(key=int(row.id), label=row.name, search_text=row.name)
+                for row in rows if row.id is not None and row.name
+            ]
+            accepted, selected = CheckedFilterDialog(
+                self,
+                title="Фильтр по поставщикам",
+                options=options,
+                selected_keys=self._selected_supplier_ids,
+            ).exec_and_get_selection()
+            if accepted:
+                self._selected_supplier_ids = None if selected is None else {int(value) for value in selected}
+                self._prune_filter_selections()
+                self._refresh_filter_buttons()
+        except Exception as e:
+            self.show_error_message(f"Ошибка загрузки поставщиков: {e}")
+
+    def open_brand_filter(self):
+        try:
+            with self.get_session() as session:
+                rows = self._product_filter_query(session, ignore="brand").order_by(Product.brand.asc()).all()
+            brands = sorted({row.brand for row in rows if row.brand}, key=str.casefold)
+            accepted, selected = CheckedFilterDialog(
+                self,
+                title="Фильтр по брендам",
+                options=[FilterOption(key=value, label=value, search_text=value) for value in brands],
+                selected_keys=self._selected_brand_values,
+            ).exec_and_get_selection()
+            if accepted:
+                self._selected_brand_values = None if selected is None else {str(value) for value in selected}
+                self._prune_filter_selections()
+                self._refresh_filter_buttons()
+        except Exception as e:
+            self.show_error_message(f"Ошибка загрузки брендов: {e}")
+
+    def open_family_filter(self):
+        try:
+            with self.get_session() as session:
+                rows = self._product_filter_query(session, ignore="family").order_by(Product.family.asc()).all()
+            families = sorted({row.family for row in rows if row.family}, key=str.casefold)
+            accepted, selected = CheckedFilterDialog(
+                self,
+                title="Фильтр по Product Family",
+                options=[FilterOption(key=value, label=value, search_text=value) for value in families],
+                selected_keys=self._selected_family_values,
+            ).exec_and_get_selection()
+            if accepted:
+                self._selected_family_values = None if selected is None else {str(value) for value in selected}
+                self._prune_filter_selections()
+                self._refresh_filter_buttons()
+        except Exception as e:
+            self.show_error_message(f"Ошибка загрузки Product Family: {e}")
+
+    def open_product_filter(self):
+        try:
+            with self.get_session() as session:
+                rows = self._product_filter_query(session, ignore="product").order_by(Product.name.asc()).all()
+            options = [
+                FilterOption(key=int(row.id), label=row.name, search_text=f"{row.name} {row.brand or ''} {row.family or ''}")
+                for row in rows if row.id is not None and row.name
+            ]
+            accepted, selected = CheckedFilterDialog(
+                self,
+                title="Фильтр по продуктам",
+                options=options,
+                selected_keys=self._selected_product_ids,
+            ).exec_and_get_selection()
+            if accepted:
+                self._selected_product_ids = None if selected is None else {int(value) for value in selected}
+                self._prune_filter_selections()
+                self._refresh_filter_buttons()
+        except Exception as e:
+            self.show_error_message(f"Ошибка загрузки продуктов: {e}")
+
+    def _prune_filter_selections(self):
+        try:
+            with self.get_session() as session:
+                supplier_ids = {
+                    int(row[0]) for row in session.query(Supplier.id).filter(
+                        Supplier.name.isnot(None), Supplier.name != "", Supplier.name != "Manual"
+                    ).all()
+                }
+                products = session.query(Product.id, Product.brand, Product.family).all()
+            product_ids = {int(row.id) for row in products}
+            brands = {row.brand for row in products if row.brand}
+            families = {row.family for row in products if row.family}
+            if self._selected_supplier_ids is not None:
+                self._selected_supplier_ids &= supplier_ids
+            if self._selected_brand_values is not None:
+                self._selected_brand_values &= brands
+            if self._selected_family_values is not None:
+                self._selected_family_values &= families
+            if self._selected_product_ids is not None:
+                self._selected_product_ids &= product_ids
+        except Exception:
+            # Обновление подписей фильтров не должно блокировать открытие страницы.
+            pass
+
+    def _refresh_filter_buttons(self):
+        self._set_filter_button_text(self.ui.btn_FilterSupplier, "все Поставщики", self._selected_supplier_ids)
+        self._set_filter_button_text(self.ui.btn_FilterBrand, "все Бренды", self._selected_brand_values)
+        self._set_filter_button_text(
+            self.ui.btn_FilterProductFamily, "все Product Family", self._selected_family_values
+        )
+        self._set_filter_button_text(self.ui.btn_FilterProduct, "все Продукты", self._selected_product_ids)
+
+    @staticmethod
+    def _set_filter_button_text(button, all_text: str, selected: set | None):
+        button.setText(all_text if selected is None else f"{all_text} ({len(selected)})")
+
+    # Совместимые имена оставлены, потому что на них могут ссылаться старые обработчики/тесты.
+    def fill_in_supplier_list(self):
+        self._refresh_filter_buttons()
+
+    def fill_in_prod_brand_list(self):
+        self._refresh_filter_buttons()
+
+    def fill_in_prod_fam_list(self):
+        self._refresh_filter_buttons()
+
+    def fill_in_prod_name_list(self):
+        self._refresh_filter_buttons()
+
+    def get_filtered_products(self):
+        with self.get_session() as session:
+            return self._product_filter_query(session).order_by(Product.name.asc()).all()
+
+    def get_filtered_suppliers(self):
+        with self.get_session() as session:
+            query = session.query(Supplier).filter(
+                Supplier.name.isnot(None), Supplier.name != "", Supplier.name != "Manual"
+            )
+            if self._selected_supplier_ids is not None:
+                query = query.filter(Supplier.id.in_(sorted(self._selected_supplier_ids)))
+            return query.order_by(Supplier.name.asc()).all()
 
     def start_cell_edit(self, row, column):
         if self._updating_table:
@@ -367,125 +490,6 @@ class PriceHistoryPage(QWidget):
     def fill_in_table_list(self):
         self._fill_combobox(self.ui.line_TableName, [MODE_CURRENT, MODE_HISTORY])
 
-    def fill_in_supplier_list(self):
-        try:
-            with self.get_session() as session:
-                suppliers = (
-                    session.query(Supplier.name)
-                    .filter(Supplier.name.isnot(None), Supplier.name != "", Supplier.name != "Manual")
-                    .distinct()
-                    .order_by(Supplier.name)
-                    .all()
-                )
-
-            supplier_names = [row[0] for row in suppliers if row[0]]
-            self._fill_combobox(self.ui.line_SupplName, supplier_names)
-
-        except Exception as e:
-            self.show_error_message(f"Ошибка при получении поставщиков: {str(e)}")
-
-    def fill_in_prod_brand_list(self):
-        try:
-            with self.get_session() as session:
-                query = self._get_products_for_filters_query(session)
-                brands = (
-                    query.with_entities(Product.brand)
-                    .filter(Product.brand.isnot(None), Product.brand != "")
-                    .distinct()
-                    .order_by(Product.brand)
-                    .all()
-                )
-
-            brand_names = [row[0] for row in brands if row[0]]
-            self._fill_combobox(self.ui.line_Brand, brand_names)
-
-        except Exception as e:
-            self.show_error_message(f"Ошибка при получении брендов: {str(e)}")
-
-    def fill_in_prod_fam_list(self):
-        brand = self.ui.line_Brand.currentText()
-
-        try:
-            with self.get_session() as session:
-                query = self._get_products_for_filters_query(session)
-
-                if brand != "-":
-                    query = query.filter(Product.brand == brand)
-
-                families = (
-                    query.with_entities(Product.family)
-                    .filter(Product.family.isnot(None), Product.family != "")
-                    .distinct()
-                    .order_by(Product.family)
-                    .all()
-                )
-
-            family_names = [row[0] for row in families if row[0]]
-            current_value = self.ui.line_Prod_Fam.currentText()
-            self._fill_combobox(self.ui.line_Prod_Fam, family_names)
-
-            if current_value in family_names:
-                self.ui.line_Prod_Fam.setCurrentText(current_value)
-
-        except Exception as e:
-            self.show_error_message(f"Ошибка при получении семейств: {str(e)}")
-            self._fill_combobox(self.ui.line_Prod_Fam, [])
-
-    def fill_in_prod_name_list(self):
-        brand = self.ui.line_Brand.currentText()
-        family = self.ui.line_Prod_Fam.currentText()
-
-        try:
-            with self.get_session() as session:
-                query = self._get_products_for_filters_query(session)
-
-                if brand != "-":
-                    query = query.filter(Product.brand == brand)
-
-                if family != "-":
-                    query = query.filter(Product.family == family)
-
-                products = query.order_by(Product.name).all()
-
-            product_names = [row.name for row in products if row.name]
-            current_value = self.ui.line_Prod_name.currentText()
-            self._fill_combobox(self.ui.line_Prod_name, product_names)
-
-            if current_value in product_names:
-                self.ui.line_Prod_name.setCurrentText(current_value)
-
-        except Exception as e:
-            self.show_error_message(f"Ошибка при получении продуктов: {str(e)}")
-            self._fill_combobox(self.ui.line_Prod_name, [])
-
-    def get_filtered_products(self):
-        brand = self.ui.line_Brand.currentText()
-        family = self.ui.line_Prod_Fam.currentText()
-        product_name = self.ui.line_Prod_name.currentText()
-
-        with self.get_session() as session:
-            query = session.query(Product).filter(Product.name.isnot(None), Product.name != "")
-
-            if brand != "-":
-                query = query.filter(Product.brand == brand)
-            if family != "-":
-                query = query.filter(Product.family == family)
-            if product_name != "-":
-                query = query.filter(Product.name == product_name)
-
-            return query.order_by(Product.name).all()
-
-    def get_filtered_suppliers(self):
-        supplier_name = self.ui.line_SupplName.currentText()
-
-        with self.get_session() as session:
-            query = session.query(Supplier).filter(Supplier.name.isnot(None), Supplier.name != "", Supplier.name != "Manual")
-
-            if supplier_name != "-":
-                query = query.filter(Supplier.name == supplier_name)
-
-            return query.order_by(Supplier.name).all()
-
     def _init_date_filters(self):
         today = QDate.currentDate()
         self.ui.line_Start_date.setDate(today)
@@ -537,10 +541,6 @@ class PriceHistoryPage(QWidget):
         start_date, end_date = self._get_date_filters()
 
         with self.get_session() as session:
-            supplier_name = self.ui.line_SupplName.currentText()
-            brand = self.ui.line_Brand.currentText()
-            family = self.ui.line_Prod_Fam.currentText()
-            product_name = self.ui.line_Prod_name.currentText()
             name_search = clean_multi_spaces(self.ui.line_NameSearch.text()) if hasattr(self.ui, "line_NameSearch") else ""
 
             if mode == MODE_CURRENT:
@@ -558,14 +558,14 @@ class PriceHistoryPage(QWidget):
                     .join(Supplier, CurrentSupplierPrice.supplier_id == Supplier.id)
                 )
 
-                if supplier_name != "-":
-                    query = query.filter(Supplier.name == supplier_name)
-                if brand != "-":
-                    query = query.filter(Product.brand == brand)
-                if family != "-":
-                    query = query.filter(Product.family == family)
-                if product_name != "-":
-                    query = query.filter(Product.name == product_name)
+                if self._selected_supplier_ids is not None:
+                    query = query.filter(Supplier.id.in_(sorted(self._selected_supplier_ids)))
+                if self._selected_brand_values is not None:
+                    query = query.filter(Product.brand.in_(sorted(self._selected_brand_values)))
+                if self._selected_family_values is not None:
+                    query = query.filter(Product.family.in_(sorted(self._selected_family_values)))
+                if self._selected_product_ids is not None:
+                    query = query.filter(Product.id.in_(sorted(self._selected_product_ids)))
                 if name_search:
                     query = query.filter(Product.name.ilike(f"%{name_search}%"))
 
@@ -611,14 +611,14 @@ class PriceHistoryPage(QWidget):
                     .join(Supplier, PriceHistory.supplier_id == Supplier.id)
                 )
 
-                if supplier_name != "-":
-                    query = query.filter(Supplier.name == supplier_name)
-                if brand != "-":
-                    query = query.filter(Product.brand == brand)
-                if family != "-":
-                    query = query.filter(Product.family == family)
-                if product_name != "-":
-                    query = query.filter(Product.name == product_name)
+                if self._selected_supplier_ids is not None:
+                    query = query.filter(Supplier.id.in_(sorted(self._selected_supplier_ids)))
+                if self._selected_brand_values is not None:
+                    query = query.filter(Product.brand.in_(sorted(self._selected_brand_values)))
+                if self._selected_family_values is not None:
+                    query = query.filter(Product.family.in_(sorted(self._selected_family_values)))
+                if self._selected_product_ids is not None:
+                    query = query.filter(Product.id.in_(sorted(self._selected_product_ids)))
                 if name_search:
                     query = query.filter(Product.name.ilike(f"%{name_search}%"))
 
@@ -1287,10 +1287,15 @@ class PriceHistoryPage(QWidget):
             return
 
         try:
-            supplier_name = clean_multi_spaces(self.ui.line_SupplName.currentText())
             timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            supplier_name = ""
+            if self._selected_supplier_ids is not None and len(self._selected_supplier_ids) == 1:
+                selected_supplier_id = next(iter(self._selected_supplier_ids))
+                with self.get_session() as session:
+                    selected_supplier = session.query(Supplier).filter(Supplier.id == selected_supplier_id).first()
+                    supplier_name = clean_multi_spaces(selected_supplier.name if selected_supplier else "")
 
-            if supplier_name and supplier_name != "-":
+            if supplier_name:
                 safe_supplier = supplier_name
                 for ch in ['\\', '/', ':', '*', '?', '"', '<', '>', '|']:
                     safe_supplier = safe_supplier.replace(ch, "_")

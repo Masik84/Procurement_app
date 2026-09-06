@@ -25,6 +25,9 @@ from app.db.db import SessionLocal
 from app.db.models import Product
 from app.exports.order_planning_exporter import OrderPlanningExporter
 from app.services.order_planning_service import OrderPlanningService
+from app.services.product_matching_service import MissingPackTypeError
+from app.utils.pack_type_prompt import ask_pack_type
+from app.utils.parsers import parse_loose_number
 from app.ui.table_style import *
 from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 from app.utils.text import clean_multi_spaces
@@ -798,6 +801,21 @@ class OrderPlanningPage(QWidget):
                 count = self.service(session).save_calculation(self._rows, self._period_from, self._period_to)
                 session.commit()
             self.show_message(f"Расчет сохранен. Продуктов: {count}")
+        except MissingPackTypeError as e:
+            selected_pack = ask_pack_type(self, e)
+            if selected_pack is None:
+                return
+            requested_pack = parse_loose_number(e.requested_pack)
+            for row in self._rows:
+                if row.get("product_id"):
+                    continue
+                row_pack = row.get("sales_pack") if row.get("sales_pack") not in (None, "") else row.get("pack")
+                if parse_loose_number(row_pack) == requested_pack:
+                    row["sales_pack"] = selected_pack
+                    row["pack"] = selected_pack
+            self._base_rows = [dict(row) for row in self._rows]
+            self.display_rows(self._rows, self._mode)
+            self.save()
         except Exception as e:
             self.show_error_message(str(e))
 

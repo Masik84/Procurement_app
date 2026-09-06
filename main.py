@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import faulthandler
 import sys
 import traceback
 from pathlib import Path
@@ -50,6 +51,13 @@ def global_exception_handler(exc_type, exc_value, exc_traceback):
 
 
 sys.excepthook = global_exception_handler
+
+# Also print the active Python frames for native Qt/PySide crashes such as
+# Windows 0xC0000005, which bypass sys.excepthook.
+try:
+    faulthandler.enable(all_threads=True)
+except Exception:
+    pass
 
 def lazy_page(module_name: str, class_name: str):
     def factory():

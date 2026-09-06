@@ -5,6 +5,7 @@ import math
 from PySide6.QtCore import QObject, QSignalBlocker, QTimer, Qt
 from PySide6.QtGui import QFont, QFontMetricsF
 from PySide6.QtWidgets import QTableView, QTableWidget, QTableWidgetItem
+from shiboken6 import isValid as is_qt_object_valid
 
 
 # Same approach as Daily-Report--new-:
@@ -142,21 +143,44 @@ class _HeaderItemSync(QObject):
         self._scheduled = False
         self._applying = False
 
+        # Use an owned timer instead of QTimer.singleShot(0, self.apply). The
+        # static singleShot keeps a Python callable alive independently of the
+        # table and can fire after its QDialog/page has already been destroyed.
+        # This timer is a child of the synchronizer (which is itself a child of
+        # the table), so Qt cancels the pending callback automatically on close.
+        self._apply_timer = QTimer(self)
+        self._apply_timer.setSingleShot(True)
+        self._apply_timer.timeout.connect(self.apply)
+
         model = table.model()
+        # Header synchronisation must react only to structure/header changes.
+        # Cell edits and row inserts/removals do not change column captions and
+        # previously caused a storm of zero-delay callbacks while tables were
+        # being populated or destroyed.
         model.headerDataChanged.connect(self.schedule)
         model.modelReset.connect(self.schedule)
         model.columnsInserted.connect(self.schedule)
         model.columnsRemoved.connect(self.schedule)
-        model.rowsInserted.connect(self.schedule)
-        model.rowsRemoved.connect(self.schedule)
-        model.dataChanged.connect(self.schedule)
+        table.destroyed.connect(self._on_table_destroyed)
         self.schedule()
+
+    def _on_table_destroyed(self, *_args) -> None:
+        self._scheduled = False
+        self._table = None
+        try:
+            self._apply_timer.stop()
+        except RuntimeError:
+            pass
 
     def schedule(self, *_args) -> None:
         if self._scheduled or self._applying:
             return
+        if self._table is None:
+            return
+        if not is_qt_object_valid(self) or not is_qt_object_valid(self._table):
+            return
         self._scheduled = True
-        QTimer.singleShot(0, self.apply)
+        self._apply_timer.start(0)
 
     def apply(self) -> None:
         self._scheduled = False
@@ -164,12 +188,14 @@ class _HeaderItemSync(QObject):
             return
 
         table = self._table
-        if table is None:
+        if table is None or not is_qt_object_valid(table):
             return
 
         self._applying = True
         try:
             model = table.model()
+            if model is None or not is_qt_object_valid(model):
+                return
             blocker = QSignalBlocker(model)
             try:
                 for column in range(table.columnCount()):

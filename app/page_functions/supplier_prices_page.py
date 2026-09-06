@@ -34,6 +34,8 @@ from app.imports.supplier_price_importer import SupplierPriceImporter
 from app.exports.supplier_price_exporter import SupplierPriceExporter
 from app.services.supplier_service import SupplierService, SupplierUpsertData
 from app.services.supplier_price_service import SupplierPriceService
+from app.services.product_matching_service import MissingPackTypeError
+from app.utils.pack_type_prompt import resolve_missing_pack_for_temp_rows
 from app.utils.batch import get_current_username
 from app.utils.parsers import parse_flexible_date, parse_loose_number, parse_user_percent
 from app.utils.text import clean_multi_spaces
@@ -1430,6 +1432,16 @@ class SupplierPricesPage(QWidget):
 
             if export_error_text:
                 self.show_error_message(f"Данные сохранены, но Excel не удалось выгрузить:\n{export_error_text}")
+        except MissingPackTypeError as e:
+            if resolve_missing_pack_for_temp_rows(
+                self,
+                e,
+                model=TempPriceImport,
+                batch_id=self.batch_id,
+                imported_by=self.imported_by,
+                pending_changes=self._pending_changes,
+            ):
+                self.apply_pending_changes()
         except Exception as e:
             self.show_error_message(str(e))
 

@@ -19,6 +19,7 @@ from app.db.models import Supplier
 from app.db.db import SessionLocal
 from app.ui.table_style import *
 from app.utils.parsers import parse_user_percent
+from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -56,6 +57,8 @@ class SuppliersPage(QWidget):
         self._pending_deletes = set()
         self._new_rows = set()
         self._temp_row_id = -1
+        self._selected_supplier_ids: set[int] | None = None
+        self._selected_country_values: set[str] | None = None
 
         self.columns = [
             "id",
@@ -124,6 +127,8 @@ class SuppliersPage(QWidget):
     def setup_connections(self):
         self.table.itemChanged.connect(self.on_item_changed)
 
+        self.ui.btn_FilterSupplier.clicked.connect(self.open_supplier_filter)
+        self.ui.btn_FilterCountry.clicked.connect(self.open_country_filter)
         self.ui.btn_Search.clicked.connect(self.find_supplier)
         self.ui.btn_AddLine.clicked.connect(self.add_line)
         self.ui.btn_Save.clicked.connect(self.apply_pending_changes)
@@ -407,38 +412,66 @@ class SuppliersPage(QWidget):
         return decimal_value
 
     def refresh_all_comboboxes(self):
-        self.fill_in_supplier_list()
+        self._prune_filter_selections()
+        self._refresh_filter_buttons()
 
-    def fill_in_supplier_list(self):
-        current_value = self.ui.line_Suppl1.currentText()
+    def _filter_option_rows(self, *, ignore: str | None = None) -> list[dict]:
+        rows = self.get_suppliers_from_db()
+        if ignore != "supplier" and self._selected_supplier_ids is not None:
+            rows = [row for row in rows if int(row["id"]) in self._selected_supplier_ids]
+        if ignore != "country" and self._selected_country_values is not None:
+            rows = [row for row in rows if (row["country"] or "") in self._selected_country_values]
+        return rows
 
-        try:
-            with self.get_session() as session:
-                suppliers = (
-                    session.query(Supplier.name)
-                    .filter(Supplier.name.isnot(None), Supplier.name != "", Supplier.name != "Manual")
-                    .distinct()
-                    .order_by(Supplier.name)
-                    .all()
-                )
+    def open_supplier_filter(self):
+        rows = self._filter_option_rows(ignore="supplier")
+        options = [
+            FilterOption(key=int(row["id"]), label=row["name"], search_text=row["name"])
+            for row in sorted(rows, key=lambda item: (item["name"] or "").casefold())
+            if row["name"]
+        ]
+        accepted, selected = CheckedFilterDialog(
+            self,
+            title="Фильтр по поставщикам",
+            options=options,
+            selected_keys=self._selected_supplier_ids,
+        ).exec_and_get_selection()
+        if accepted:
+            self._selected_supplier_ids = None if selected is None else {int(value) for value in selected}
+            self._prune_filter_selections()
+            self._refresh_filter_buttons()
 
-            supplier_names = [row[0] for row in suppliers if row[0]]
-            self._fill_combobox(self.ui.line_Suppl1, supplier_names)
+    def open_country_filter(self):
+        countries = sorted({
+            row["country"] for row in self._filter_option_rows(ignore="country") if row["country"]
+        }, key=str.casefold)
+        accepted, selected = CheckedFilterDialog(
+            self,
+            title="Фильтр по странам",
+            options=[FilterOption(key=value, label=value, search_text=value) for value in countries],
+            selected_keys=self._selected_country_values,
+        ).exec_and_get_selection()
+        if accepted:
+            self._selected_country_values = None if selected is None else {str(value) for value in selected}
+            self._prune_filter_selections()
+            self._refresh_filter_buttons()
 
-            if current_value in supplier_names:
-                self.ui.line_Suppl1.setCurrentText(current_value)
+    def _prune_filter_selections(self):
+        rows = self.get_suppliers_from_db()
+        supplier_ids = {int(row["id"]) for row in rows}
+        countries = {row["country"] for row in rows if row["country"]}
+        if self._selected_supplier_ids is not None:
+            self._selected_supplier_ids &= supplier_ids
+        if self._selected_country_values is not None:
+            self._selected_country_values &= countries
 
-        except Exception as e:
-            self.show_error_message(f"Ошибка при получении поставщиков: {str(e)}")
-            self._fill_combobox(self.ui.line_Suppl1, [])
+    def _refresh_filter_buttons(self):
+        self._set_filter_button_text(self.ui.btn_FilterSupplier, "все Поставщики", self._selected_supplier_ids)
+        self._set_filter_button_text(self.ui.btn_FilterCountry, "все Страны", self._selected_country_values)
 
-    def _fill_combobox(self, combobox, items):
-        combobox.blockSignals(True)
-        combobox.clear()
-        combobox.addItem("-")
-        if items:
-            combobox.addItems(sorted(items))
-        combobox.blockSignals(False)
+    @staticmethod
+    def _set_filter_button_text(button, all_text: str, selected: set | None):
+        button.setText(all_text if selected is None else f"{all_text} ({len(selected)})")
 
     def get_suppliers_from_db(self):
         with self.get_session() as session:
@@ -476,10 +509,13 @@ class SuppliersPage(QWidget):
             self.show_message("Нет данных для отображения")
             return
 
-        supplier_name = self.ui.line_Suppl1.currentText()
+        if self._selected_supplier_ids is not None:
+            supplier_data = [row for row in supplier_data if int(row["id"]) in self._selected_supplier_ids]
 
-        if supplier_name != "-":
-            supplier_data = [row for row in supplier_data if (row["name"] or "") == supplier_name]
+        if self._selected_country_values is not None:
+            supplier_data = [
+                row for row in supplier_data if (row["country"] or "") in self._selected_country_values
+            ]
 
         self._display_data(supplier_data)
 
@@ -663,7 +699,7 @@ class SuppliersPage(QWidget):
         self.show_message("Добавлена новая строка")
 
     def has_active_filters(self):
-        return self.ui.line_Suppl1.currentText() != "-"
+        return self._selected_supplier_ids is not None or self._selected_country_values is not None
 
     def show_message(self, text):
         self.ui.label_msg.setText(text)

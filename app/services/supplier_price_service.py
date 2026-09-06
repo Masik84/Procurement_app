@@ -15,7 +15,7 @@ from app.services.supplier_service import SupplierService, SupplierUpsertData
 from app.services.supplier_currency_cost_service import SupplierCurrencyCostService
 from app.services.cost_calculation_service import CostCalculationService
 from app.services.price_repository import PriceRepository
-from app.services.product_matching_service import ProductMatchingService
+from app.services.product_matching_service import ProductMatchingService, MissingPackTypeError
 from app.services.temp_cleanup_service import TempCleanupService
 from app.utils.batch import generate_import_batch_id
 from app.services.qty_in_box_service import (
@@ -317,6 +317,8 @@ class SupplierPriceService:
                     is_excise=row.new_is_excise,
                     qty_in_box=row.new_qty_in_box,
                 )
+            except MissingPackTypeError:
+                raise
             except Exception as e:
                 raise ValueError(
                     f"[DEBUG validate_new_products_before_save] "
@@ -392,6 +394,10 @@ class SupplierPriceService:
                 debug_row["product_id_after"] = product.id
                 created_count += 1
                 self.last_create_products_debug.append(debug_row)
+            except MissingPackTypeError:
+                debug_row["status"] = "error:missing_pack_type"
+                self.last_create_products_debug.append(debug_row)
+                raise
             except Exception as e:
                 debug_row["status"] = f"error:{e}"
                 self.last_create_products_debug.append(debug_row)

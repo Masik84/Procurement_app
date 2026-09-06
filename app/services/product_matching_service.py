@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.db.models import Product, ProductArticle
+from app.db.models import PackType, Product, ProductArticle
 from app.services.qty_in_box_service import default_qty_in_box_for_pack, normalize_qty_in_box
 from app.utils.excel_import import excel_text
 from app.utils.parsers import parse_loose_number
@@ -25,6 +25,17 @@ class ProductCreateData:
     pack: float
     is_excise: bool
     qty_in_box: int | None = None
+
+
+
+
+class MissingPackTypeError(ValueError):
+    def __init__(self, *, product_name: str, requested_pack: object, options: list[tuple[Decimal, str]]):
+        self.product_name = product_name
+        self.requested_pack = requested_pack
+        self.options = options
+        pack_text = ProductMatchingService._format_pack_for_message(requested_pack) if "ProductMatchingService" in globals() else str(requested_pack)
+        super().__init__(f"Нет вида упаковки для {pack_text}")
 
 
 class ProductMatchingService:
@@ -53,6 +64,8 @@ class ProductMatchingService:
         self._name_links_by_brand_cache: dict[tuple[str, str], ProductArticle] | None = None
         self._normalized_name_links_cache: dict[str, ProductArticle] | None = None
         self._normalized_name_links_by_brand_cache: dict[tuple[str, str], ProductArticle] | None = None
+        self._pack_type_options_cache: list[tuple[Decimal, str]] | None = None
+        self._pack_type_volumes_cache: set[Decimal] | None = None
 
     @staticmethod
     def _brand_key(brand: object) -> str:
@@ -560,9 +573,8 @@ class ProductMatchingService:
         s = str(pack_value).strip()
         return s.replace(".", ",")
 
-    @classmethod
     def validate_new_product_fields(
-        cls,
+        self,
         *,
         product_name: object,
         brand: object,
@@ -593,9 +605,40 @@ class ProductMatchingService:
 
         normalize_qty_in_box(qty_in_box)
 
-        cls.validate_product_name_pack_format(
+        self.validate_pack_type_exists(product_name=clean_name, pack=pack_num)
+        self.validate_product_name_pack_format(
             product_name=clean_name,
             pack_value=pack_num,
+        )
+
+    def _ensure_pack_type_cache(self) -> None:
+        if self._pack_type_options_cache is not None and self._pack_type_volumes_cache is not None:
+            return
+        rows = self.session.query(PackType).order_by(PackType.volume.asc(), PackType.name.asc()).all()
+        options: list[tuple[Decimal, str]] = []
+        volumes: set[Decimal] = set()
+        for row in rows:
+            volume = parse_loose_number(row.volume)
+            if volume is None:
+                continue
+            volume = Decimal(volume)
+            options.append((volume, clean_multi_spaces(row.name)))
+            volumes.add(volume)
+        self._pack_type_options_cache = options
+        self._pack_type_volumes_cache = volumes
+
+    def validate_pack_type_exists(self, *, product_name: object, pack: object) -> None:
+        pack_num = parse_loose_number(pack)
+        if pack_num is None:
+            return
+        pack_num = Decimal(pack_num)
+        self._ensure_pack_type_cache()
+        if pack_num in (self._pack_type_volumes_cache or set()):
+            return
+        raise MissingPackTypeError(
+            product_name=clean_multi_spaces(product_name).upper(),
+            requested_pack=pack_num,
+            options=list(self._pack_type_options_cache or []),
         )
 
     @classmethod

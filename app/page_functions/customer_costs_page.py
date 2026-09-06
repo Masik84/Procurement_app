@@ -24,6 +24,8 @@ from app.db.db import SessionLocal
 from app.db.models import Product, Supplier, TempCustomerCostImport, TempCustomerCostOption
 from app.exports.customer_cost_exporter import CustomerCostExporter
 from app.services.customer_cost_service import CustomerCostService
+from app.services.product_matching_service import MissingPackTypeError
+from app.utils.pack_type_prompt import resolve_missing_pack_for_temp_rows
 from app.utils.batch import get_current_username
 from app.imports.customer_cost_importer import CustomerCostImporter
 from app.utils.parsers import parse_loose_number
@@ -1037,8 +1039,32 @@ class CustomerCostsPage(QWidget):
         except Exception as e:
             self.show_error_message(str(e))
 
+    def _ensure_known_pack_types(self) -> bool:
+        while True:
+            try:
+                with self.get_session() as session:
+                    CustomerCostService(session).validate_new_products_before_save(
+                        self._batch_id, self._imported_by
+                    )
+                return True
+            except MissingPackTypeError as error:
+                if not resolve_missing_pack_for_temp_rows(
+                    self,
+                    error,
+                    model=TempCustomerCostImport,
+                    batch_id=self._batch_id,
+                    imported_by=self._imported_by,
+                ):
+                    return False
+                self.load_table()
+            except Exception as error:
+                self.show_error_message(str(error))
+                return False
+
     def calculate_costs(self):
         self._commit_open_editors()
+        if not self._ensure_known_pack_types():
+            return
 
         try:
             default_name = f"CustCostCalc_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
@@ -1087,6 +1113,8 @@ class CustomerCostsPage(QWidget):
 
     def save_all(self):
         self._commit_open_editors()
+        if not self._ensure_known_pack_types():
+            return
 
         try:
             folder = QFileDialog.getExistingDirectory(self, "Папка для файлов менеджеров", str(BASE_DIR))
