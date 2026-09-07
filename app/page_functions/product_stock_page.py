@@ -42,6 +42,7 @@ from app.utils.excel_export_format import write_openpyxl_dict_sheet
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
 from app.services.qty_in_box_service import normalize_qty_in_box
+from app.utils.gui_table_actions import commit_active_table_item_editors
 from app.ui.table_style import *
 from app.utils.output_headers import display_headers
 
@@ -631,6 +632,8 @@ class ProductStockPage(QWidget):
         return -1
 
     def _commit_open_editors(self):
+        commit_active_table_item_editors(self.table)
+
         for row in range(self.table.rowCount()):
             for column in range(self.table.columnCount()):
                 widget = self.table.cellWidget(row, column)

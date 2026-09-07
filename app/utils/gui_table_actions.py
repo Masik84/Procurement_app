@@ -4,9 +4,52 @@ from typing import Any
 
 from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QAbstractItemView, QCheckBox, QComboBox, QMenu, QTableWidget, QTableWidgetItem
+from PySide6.QtWidgets import (
+    QAbstractItemDelegate,
+    QAbstractItemView,
+    QCheckBox,
+    QComboBox,
+    QDateEdit,
+    QDoubleSpinBox,
+    QLineEdit,
+    QMenu,
+    QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
+)
 
 DELETE_MESSAGE = "Полное удаление строк будет сделано при сохранении"
+
+
+def commit_active_table_item_editors(table: QTableWidget) -> int:
+    """Commit delegate-created editors before a page reads pending changes.
+
+    QTableWidget updates its item only after the delegate emits ``commitData``.
+    A Save button can be handled before that focus-out commit, especially when
+    an editable cell sits next to a persistent combo-box cell widget.  Commit
+    only direct viewport children: nested QLineEdit controls owned by combo or
+    spin boxes and widgets installed with setCellWidget() are handled by their
+    page-specific code.
+    """
+    viewport = table.viewport()
+    committed = 0
+    # Persistent QComboBox widgets are committed by each page because their
+    # meaning depends on combo_role. Ordinary QTableWidget text/numeric cells
+    # use one of the editor types below.
+    editor_types = (QLineEdit, QDateEdit, QSpinBox, QDoubleSpinBox)
+    for editor_type in editor_types:
+        editors = viewport.findChildren(
+            editor_type,
+            options=Qt.FindChildOption.FindDirectChildrenOnly,
+        )
+        for editor in editors:
+            if not editor.isVisible():
+                continue
+            table.itemDelegate().commitData.emit(editor)
+            table.closeEditor(editor, QAbstractItemDelegate.EndEditHint.NoHint)
+            committed += 1
+
+    return committed
 
 
 def _message(owner: Any, text: str) -> None:

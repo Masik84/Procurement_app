@@ -274,6 +274,8 @@ class SupplierPriceService:
             bool((row.new_product_name or "").strip()),
             bool((row.new_brand or "").strip()),
             row.new_pack is not None,
+            row.new_qty_in_box is not None,
+            bool(row.new_is_excise),
         ])
 
     def validate_new_products_before_save(self, batch_id: str, imported_by: str) -> None:

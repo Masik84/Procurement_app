@@ -34,6 +34,7 @@ from app.utils.text import clean_multi_spaces
 from app.workers.excel_export_worker import start_excel_export
 from app.exports.product_exporter import ProductExporter
 from app.services.qty_in_box_service import default_qty_in_box_for_pack, normalize_qty_in_box
+from app.utils.gui_table_actions import commit_active_table_item_editors
 from app.services.product_matching_service import ProductMatchingService, MissingPackTypeError
 from app.utils.pack_type_prompt import ask_pack_type
 from app.utils.output_headers import display_headers, standardize_output_header
@@ -203,6 +204,8 @@ class ProductsPage(QWidget):
             self.show_error_message(f"Ошибка отката: {str(e)}")
 
     def apply_pending_changes(self):
+        self._commit_open_editors()
+
         if not self._pending_changes and not self._pending_deletes:
             self.show_message("Нет изменений для применения")
             return
@@ -246,6 +249,15 @@ class ProductsPage(QWidget):
             self.show_error_message(f"Ошибка сохранения в базу данных: {str(e)}")
         except Exception as e:
             self.show_error_message(f"Ошибка применения изменений: {str(e)}")
+
+    def _commit_open_editors(self):
+        commit_active_table_item_editors(self.table)
+
+        brand_column = self.columns.index("brand")
+        for row in range(self.table.rowCount()):
+            widget = self.table.cellWidget(row, brand_column)
+            if isinstance(widget, QComboBox):
+                self.finish_brand_edit_from_combo(widget)
 
     def _temporarily_free_import_update_names(self, session):
         """

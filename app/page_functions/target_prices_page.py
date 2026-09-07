@@ -20,6 +20,7 @@ from app.services.supplier_service import SupplierService, SupplierUpsertData
 from app.services.target_price_service import TargetPriceService
 from app.services.product_matching_service import MissingPackTypeError
 from app.utils.pack_type_prompt import resolve_missing_pack_for_temp_rows
+from app.utils.gui_table_actions import commit_active_table_item_editors
 from app.utils.batch import get_current_username
 from app.utils.parsers import parse_loose_number, parse_user_percent
 from app.utils.text import clean_multi_spaces
@@ -786,6 +787,8 @@ class TargetPricesPage(QWidget):
             self.populate_product_combo(combo, True)
 
     def _commit_open_editors(self):
+        commit_active_table_item_editors(self.table)
+
         for row in range(self.table.rowCount()):
             for column in range(self.table.columnCount()):
                 widget = self.table.cellWidget(row, column)
@@ -1002,4 +1005,3 @@ class TargetPricesPage(QWidget):
             self.show_message("Шаблон сформирован")
         except Exception as e:
             self.show_error_message(str(e))
-

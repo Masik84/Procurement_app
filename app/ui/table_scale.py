@@ -12,11 +12,6 @@ from app.ui.table_headers import calculate_gui_header_base_height
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
-    QComboBox,
-    QDateEdit,
-    QLineEdit,
-    QSpinBox,
-    QDoubleSpinBox,
     QTableView,
     QTableWidget,
     QWidget,
@@ -31,7 +26,6 @@ BASE_ROW_HEIGHT = 22
 BASE_TABLE_FONT_PT = 10.0
 BASE_HEADER_FONT_PT = 10.0
 BASE_HEADER_PADDING_PX = 3
-BASE_EDITOR_PADDING_PX = 1
 TABLE_FONT_CANDIDATES = ("Aptos Narrow", "Arial Narrow", "Tahoma")
 
 
@@ -45,7 +39,6 @@ class _TableScaleState:
     applying: bool = False
     header_refresh_timer: QTimer | None = None
     columns_refresh_timer: QTimer | None = None
-    editor_refresh_timer: QTimer | None = None
     event_target_ids: set[int] = field(default_factory=set)
 
 
@@ -173,18 +166,6 @@ class TableScaleManager(QObject):
         state.columns_refresh_timer.timeout.connect(
             lambda current_id=table_id: self._refresh_columns(current_id)
         )
-        # Editors are often created *after* the table has already been registered:
-        # QTableWidget creates a QLineEdit only when the user starts editing, and
-        # pages can insert QComboBox widgets with setCellWidget() at any time.
-        # A table-owned zero-delay timer lets us normalize those editors after Qt
-        # has finished constructing/polishing them, without a global QApplication
-        # event filter and without callbacks outliving the table.
-        state.editor_refresh_timer = QTimer(table)
-        state.editor_refresh_timer.setSingleShot(True)
-        state.editor_refresh_timer.timeout.connect(
-            lambda current_id=table_id: self._refresh_editors(current_id)
-        )
-
         self._capture_column_widths(state, sizes_are_scaled=False)
         self._connect_model_signals(state)
 
@@ -233,17 +214,8 @@ class TableScaleManager(QObject):
         if state is None:
             return False
 
-        event_type = event.type()
-        # Delegate editors (ordinary editable cells) and setCellWidget() controls
-        # are children of the table viewport. They may be created long after the
-        # page was registered, so the one-time registration pass cannot size them.
-        # ChildAdded can arrive while the child is only partially constructed; do
-        # not touch it from the event itself. Schedule a table-owned rescan instead.
-        if event_type in (QEvent.Type.ChildAdded, QEvent.Type.ChildPolished):
-            self._schedule_editor_refresh(table_id)
-
         try:
-            if event_type == QEvent.Type.Wheel:
+            if event.type() == QEvent.Type.Wheel:
                 table = state.table
                 if not is_qt_object_valid(table):
                     self._remove_state(table_id)
@@ -293,25 +265,6 @@ class TableScaleManager(QObject):
         if timer is None or not is_qt_object_valid(timer):
             return
         timer.start(0)
-
-    def _schedule_editor_refresh(self, table_id: int) -> None:
-        state = self._states.get(table_id)
-        if state is None:
-            return
-        timer = state.editor_refresh_timer
-        if timer is None or not is_qt_object_valid(timer):
-            return
-        timer.start(0)
-
-    def _refresh_editors(self, table_id: int) -> None:
-        state = self._states.get(table_id)
-        if state is None:
-            return
-        table = state.table
-        if not is_qt_object_valid(table):
-            self._remove_state(table_id)
-            return
-        self._scale_existing_editors(table)
 
     def _refresh_header(self, table_id: int) -> None:
         state = self._states.get(table_id)
@@ -378,7 +331,6 @@ class TableScaleManager(QObject):
                 table.setUpdatesEnabled(True)
 
         self._apply_column_widths(state)
-        self._scale_existing_editors(table)
         table.viewport().update()
         table.horizontalHeader().viewport().update()
 
@@ -474,7 +426,6 @@ class TableScaleManager(QObject):
         item_font = max(5.0, state.base_item_font_pt * factor)
         header_font = max(6.0, BASE_HEADER_FONT_PT * factor)
         header_padding = max(1, round(BASE_HEADER_PADDING_PX * factor))
-        editor_padding = max(0, round(BASE_EDITOR_PADDING_PX * factor))
         family = self._table_font_family.replace('"', '\\"')
 
         scale_style = f"""
@@ -501,203 +452,8 @@ class TableScaleManager(QObject):
 {selector} QHeaderView::section:horizontal {{
     padding: {header_padding}px;
 }}
-{selector} QLineEdit,
-{selector} QComboBox,
-{selector} QDateEdit,
-{selector} QSpinBox,
-{selector} QDoubleSpinBox {{
-    font-family: \"{family}\";
-    font-size: {item_font:.2f}pt;
-    font-weight: 400;
-    font-style: normal;
-    /* Table editors must be allowed to take the exact visual cell rectangle.
-       Page/global QSS can otherwise leave a stale min/max-height on QComboBox
-       or QLineEdit and Qt then pushes the editor outside the row. */
-    min-height: 0px;
-    max-height: 16777215px;
-    padding: 0px {editor_padding}px;
-}}
 """
         return f"{state.base_style_sheet}\n{scale_style}".strip()
-
-    def _scale_existing_editors(self, table: QTableView) -> None:
-        # PySide6 QObject.findChildren() accepts one Qt type at a time.
-        # Passing a Python tuple, as with isinstance(), raises TypeError.
-        for editor_type in (QLineEdit, QComboBox, QDateEdit, QSpinBox, QDoubleSpinBox):
-            for editor in table.findChildren(editor_type):
-                try:
-                    self._scale_table_editor(editor)
-                except RuntimeError:
-                    # A delegate editor can disappear between findChildren() and
-                    # the next line while the user changes the global scale.
-                    continue
-
-    def sync_table_editor(
-        self,
-        widget: QWidget,
-        *,
-        table: QTableView | None = None,
-        row: int | None = None,
-        column: int | None = None,
-    ) -> None:
-        """Apply the current table scale to a newly-created cell editor.
-
-        Pages that insert persistent widgets with setCellWidget() can call this
-        immediately after insertion.  Supplying row/column avoids guessing the
-        cell from transient widget geometry.
-        """
-        self._scale_table_editor(widget, table=table, row=row, column=column)
-
-    def _scale_table_editor(
-        self,
-        widget: QWidget,
-        *,
-        table: QTableView | None = None,
-        row: int | None = None,
-        column: int | None = None,
-    ) -> None:
-        editor_types = (QLineEdit, QComboBox, QDateEdit, QSpinBox, QDoubleSpinBox)
-        if not isinstance(widget, editor_types) or not is_qt_object_valid(widget):
-            return
-
-        if table is None:
-            table = self._find_parent_table(widget)
-        if table is None or not is_qt_object_valid(table):
-            return
-
-        # Editable combo boxes, date edits and spin boxes own an internal
-        # QLineEdit. Scale the outer editor only; forcing the nested line edit to
-        # the full row height is another source of vertical displacement.
-        parent = widget.parentWidget()
-        while parent is not None and parent is not table:
-            if isinstance(parent, editor_types):
-                return
-            parent = parent.parentWidget()
-
-        base_font_size = widget.property("table_scale_base_font_size")
-        current_font = QFont(widget.font())
-        if base_font_size is None:
-            table_state = self._states.get(id(table))
-            if table_state is not None:
-                base_font_size = table_state.base_item_font_pt
-            else:
-                base_font_size = BASE_TABLE_FONT_PT
-            widget.setProperty("table_scale_base_font_size", float(base_font_size))
-
-        current_font.setFamily(self._table_font_family)
-        if self._table_font_style:
-            current_font.setStyleName(self._table_font_style)
-        current_font.setWeight(QFont.Weight.Normal)
-        current_font.setBold(False)
-        current_font.setItalic(False)
-        current_font.setPointSizeF(max(5.0, float(base_font_size) * self.scale_factor))
-        widget.setFont(current_font)
-
-        model = table.model()
-        index = None
-        if (
-            model is not None
-            and row is not None
-            and column is not None
-            and 0 <= int(row) < model.rowCount()
-            and 0 <= int(column) < model.columnCount()
-        ):
-            candidate = model.index(int(row), int(column))
-            if candidate.isValid():
-                index = candidate
-
-        viewport = table.viewport()
-        if not is_qt_object_valid(viewport):
-            return
-
-        # Determine whether this is a top-level editor/index widget placed into
-        # the table viewport. Nested QLineEdit objects belonging to editable
-        # combo/spin/date controls were filtered out above.
-        try:
-            direct_viewport_child = widget.parentWidget() is viewport
-        except RuntimeError:
-            return
-
-        # For setCellWidget()/setIndexWidget(), prefer the cell that Qt itself
-        # associates with the widget. Geometry can be a few pixels off before
-        # our correction, so inspect the geometric candidate and its immediate
-        # neighbours before falling back to the current index.
-        if index is None and direct_viewport_child and model is not None:
-            try:
-                center = widget.geometry().center()
-                geometric = table.indexAt(center)
-            except RuntimeError:
-                geometric = None
-
-            candidates = []
-            if geometric is not None and geometric.isValid():
-                candidates.append(geometric)
-                for row_delta in (-1, 1):
-                    rr = geometric.row() + row_delta
-                    if 0 <= rr < model.rowCount():
-                        neighbour = model.index(rr, geometric.column())
-                        if neighbour.isValid():
-                            candidates.append(neighbour)
-
-            current_index = table.currentIndex()
-            if current_index.isValid():
-                candidates.append(current_index)
-
-            seen: set[tuple[int, int]] = set()
-            for candidate in candidates:
-                key = (candidate.row(), candidate.column())
-                if key in seen:
-                    continue
-                seen.add(key)
-                try:
-                    if table.indexWidget(candidate) is widget:
-                        index = candidate
-                        break
-                except RuntimeError:
-                    return
-
-        # Ordinary editable QTableWidget items use a delegate-created QLineEdit.
-        # That editor is not an indexWidget; while it is open the table's current
-        # index is the edited cell and is more reliable than already-shifted
-        # widget geometry.
-        if index is None:
-            current_index = table.currentIndex()
-            if current_index.isValid():
-                index = current_index
-
-        if index is None or not index.isValid():
-            return
-
-        rect = table.visualRect(index)
-        if not rect.isValid() or rect.width() <= 0 or rect.height() <= 0:
-            return
-
-        # Remove stale fixed-height constraints left by page code or an earlier
-        # scale and let the table's cell rectangle be the single source of truth.
-        widget.setMinimumHeight(0)
-        widget.setMaximumHeight(16777215)
-
-        if direct_viewport_child:
-            # Both QTableWidget delegate editors and setCellWidget() controls are
-            # direct viewport children in Qt. Pin *position and size*, not only
-            # height: changing just fixedHeight() was the reason a newly edited
-            # cell could remain vertically displaced even after its height matched.
-            widget.setGeometry(rect)
-
-    @staticmethod
-    def _find_parent_table(widget: QWidget) -> QTableView | None:
-        """Return the nearest parent data table for an editor widget."""
-        current: QWidget | None = widget
-        while current is not None:
-            if not is_qt_object_valid(current):
-                return None
-            if isinstance(current, QTableView):
-                return current
-            try:
-                current = current.parentWidget()
-            except RuntimeError:
-                return None
-        return None
 
     @staticmethod
     def _column_count(table: QTableView) -> int:

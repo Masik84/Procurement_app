@@ -37,11 +37,11 @@ from app.services.supplier_price_service import SupplierPriceService
 from app.services.product_matching_service import MissingPackTypeError
 from app.utils.pack_type_prompt import resolve_missing_pack_for_temp_rows
 from app.utils.batch import get_current_username
+from app.utils.gui_table_actions import commit_active_table_item_editors
 from app.utils.parsers import parse_flexible_date, parse_loose_number, parse_user_percent
 from app.utils.text import clean_multi_spaces
 from app.services.qty_in_box_service import normalize_qty_in_box
 from app.ui.table_style import *
-from app.ui.table_scale import get_table_scale_manager
 from app.workers.excel_export_worker import start_excel_export
 
 
@@ -780,11 +780,6 @@ class SupplierPricesPage(QWidget):
             self._pending_changes.setdefault(row.id, {})
 
             product_text = row.selected_product.name if row.selected_product else ""
-            product_item = self.build_display_item(row.id, "selected_product_id", product_text)
-            self.table.setItem(row_index, 0, product_item)
-
-            article_text = self._clean_table_text(row.supplier_article)
-            supplier_product_name_text = self._clean_table_text(row.product_name)
             new_product_name_text = self._clean_table_text(row.new_product_name)
             # Старые версии могли автоматически записать имя уже выбранного
             # существующего продукта в Product name (for new). Это не явный
@@ -796,28 +791,41 @@ class SupplierPricesPage(QWidget):
                 == clean_multi_spaces(row.selected_product.name).casefold()
             ):
                 new_product_name_text = ""
-            brand_text = self._clean_table_text(row.new_brand)
+            display_values = {
+                "selected_product_id": product_text,
+                "supplier_article": self._clean_table_text(row.supplier_article),
+                "product_name": self._clean_table_text(row.product_name),
+                "price": self.value_to_text(row.price),
+                "price_pack": self.value_to_text(row.price_pack),
+                "price_box": self.value_to_text(row.price_box),
+                "qty_pcs": self.value_to_text(row.qty_pcs),
+                "qty_box": self.value_to_text(row.qty_box),
+                "volume_l": self.value_to_text(row.volume_l),
+                "new_product_name": new_product_name_text,
+                "new_brand": self._clean_table_text(row.new_brand),
+                "new_pack": self.value_to_text(row.new_pack),
+                "new_qty_in_box": self.value_to_text(row.new_qty_in_box),
+            }
 
-            self.table.setItem(row_index, 1, self.build_table_item("supplier_article", article_text))
-            self.table.setItem(row_index, 2, self.build_table_item("product_name", supplier_product_name_text))
-            self.table.setItem(row_index, 3, self.build_table_item("price", self.value_to_text(row.price)))
-            self.table.setItem(row_index, 4, self.build_table_item("price_pack", self.value_to_text(row.price_pack)))
-            self.table.setItem(row_index, 5, self.build_table_item("price_box", self.value_to_text(row.price_box)))
-            self.table.setItem(row_index, 6, self.build_table_item("qty_pcs", self.value_to_text(row.qty_pcs)))
-            self.table.setItem(row_index, 7, self.build_table_item("qty_box", self.value_to_text(row.qty_box)))
-            self.table.setItem(row_index, 8, self.build_table_item("volume_l", self.value_to_text(row.volume_l)))
-            self.table.setItem(row_index, 9, self.build_table_item("new_product_name", new_product_name_text))
-
-            brand_item = self.build_display_item(row.id, "new_brand", brand_text)
-            self.table.setItem(row_index, 10, brand_item)
-
-            self.table.setItem(row_index, 11, self.build_table_item("new_pack", self.value_to_text(row.new_pack)))
-            self.table.setItem(row_index, 12, self.build_table_item("new_qty_in_box", self.value_to_text(row.new_qty_in_box)))
-            self.table.setCellWidget(
-                row_index,
-                13,
-                self.build_checkbox_widget(row.id, bool(row.new_is_excise)),
-            )
+            for column, column_name in enumerate(self.columns):
+                if column_name == "new_is_excise":
+                    self.table.setCellWidget(
+                        row_index,
+                        column,
+                        self.build_checkbox_widget(row.id, bool(row.new_is_excise)),
+                    )
+                elif column_name in {"selected_product_id", "new_brand"}:
+                    self.table.setItem(
+                        row_index,
+                        column,
+                        self.build_display_item(row.id, column_name, display_values[column_name]),
+                    )
+                else:
+                    self.table.setItem(
+                        row_index,
+                        column,
+                        self.build_table_item(column_name, display_values[column_name]),
+                    )
 
         self.table.resizeColumnsToContents()
         self._updating_table = False
@@ -826,7 +834,11 @@ class SupplierPricesPage(QWidget):
         if self._updating_table:
             return
 
-        if column not in (0, 10):
+        if column < 0 or column >= len(self.columns):
+            return
+
+        column_name = self.columns[column]
+        if column_name not in {"selected_product_id", "new_brand"}:
             return
 
         if row < 0 or row >= len(self._table_row_ids):
@@ -834,18 +846,17 @@ class SupplierPricesPage(QWidget):
 
         row_id = self._table_row_ids[row]
 
-        if column == 0:
+        if column_name == "selected_product_id":
             current_product_id = self._get_row_selected_product_id(row_id)
             combo = self._build_product_combo(row_id, current_product_id)
             combo.activated.connect(
                 lambda _, r=row, rid=row_id, c=combo: self.finish_product_edit(r, rid, c)
             )
             self.table.setCellWidget(row, column, combo)
-            self._sync_cell_combo_geometry(combo, row, column)
             combo.setFocus()
             QTimer.singleShot(0, combo.showPopup)
 
-        elif column == 10:
+        elif column_name == "new_brand":
             current_brand = self._get_row_brand(row_id)
             combo = self.build_brand_combo(row_id, current_brand)
             combo.activated.connect(
@@ -856,19 +867,11 @@ class SupplierPricesPage(QWidget):
                     lambda r=row, rid=row_id, c=combo: self.finish_brand_edit(r, rid, c)
                 )
             self.table.setCellWidget(row, column, combo)
-            self._sync_cell_combo_geometry(combo, row, column)
             combo.setFocus()
             combo.lineEdit().selectAll()
 
-    def _sync_cell_combo_geometry(self, combo: QComboBox, row: int, column: int) -> None:
-        manager = get_table_scale_manager()
-        if manager is not None:
-            manager.sync_table_editor(
-                combo,
-                table=self.table,
-                row=row,
-                column=column,
-            )
+    def _column_index(self, column_name: str) -> int:
+        return self.columns.index(column_name)
 
     def _get_row_selected_product_id(self, row_id: int):
         with self.get_session() as session:
@@ -898,6 +901,12 @@ class SupplierPricesPage(QWidget):
             return row.new_brand or "" if row else ""
 
     def finish_product_edit(self, row: int, row_id: int, combo: QComboBox):
+        product_column = self._column_index("selected_product_id")
+        new_name_column = self._column_index("new_product_name")
+        brand_column = self._column_index("new_brand")
+        pack_column = self._column_index("new_pack")
+        qty_in_box_column = self._column_index("new_qty_in_box")
+        excise_column = self._column_index("new_is_excise")
         product_id = combo.currentData()
 
         # Пустой пункт в комбобоксе = снять привязку продукта
@@ -906,10 +915,10 @@ class SupplierPricesPage(QWidget):
             self._pending_changes[row_id]["selected_product_id"] = None
 
             self._updating_table = True
-            self.table.removeCellWidget(row, 0)
+            self.table.removeCellWidget(row, product_column)
             self.table.setItem(
                 row,
-                0,
+                product_column,
                 self.build_display_item(row_id, "selected_product_id", ""),
             )
             self._updating_table = False
@@ -920,7 +929,7 @@ class SupplierPricesPage(QWidget):
             product_id = int(product_id)
         except (TypeError, ValueError):
             self._updating_table = True
-            self.table.removeCellWidget(row, 0)
+            self.table.removeCellWidget(row, product_column)
             self._updating_table = False
             return
 
@@ -956,20 +965,20 @@ class SupplierPricesPage(QWidget):
                 session.commit()
 
         self._updating_table = True
-        self.table.removeCellWidget(row, 0)
+        self.table.removeCellWidget(row, product_column)
         self.table.setItem(
             row,
-            0,
+            product_column,
             self.build_display_item(row_id, "selected_product_id", product_name),
         )
-        self.table.setItem(row, 9, self.build_table_item("new_product_name", ""))
-        self.table.setItem(row, 10, self.build_display_item(row_id, "new_brand", ""))
-        self.table.setItem(row, 11, self.build_table_item("new_pack", ""))
-        self.table.setItem(row, 12, self.build_table_item("new_qty_in_box", self.value_to_text(qty_in_box)))
-        old_checkbox = self.table.cellWidget(row, 13)
+        self.table.setItem(row, new_name_column, self.build_table_item("new_product_name", ""))
+        self.table.setItem(row, brand_column, self.build_display_item(row_id, "new_brand", ""))
+        self.table.setItem(row, pack_column, self.build_table_item("new_pack", ""))
+        self.table.setItem(row, qty_in_box_column, self.build_table_item("new_qty_in_box", self.value_to_text(qty_in_box)))
+        old_checkbox = self.table.cellWidget(row, excise_column)
         if old_checkbox is not None:
-            self.table.removeCellWidget(row, 13)
-        self.table.setCellWidget(row, 13, self.build_checkbox_widget(row_id, is_excise))
+            self.table.removeCellWidget(row, excise_column)
+        self.table.setCellWidget(row, excise_column, self.build_checkbox_widget(row_id, is_excise))
         self._updating_table = False
         self.table.resizeColumnsToContents()
 
@@ -980,10 +989,11 @@ class SupplierPricesPage(QWidget):
         self._pending_changes[row_id]["new_brand"] = text
 
         self._updating_table = True
-        self.table.removeCellWidget(row, 10)
+        brand_column = self._column_index("new_brand")
+        self.table.removeCellWidget(row, brand_column)
         self.table.setItem(
             row,
-            10,
+            brand_column,
             self.build_display_item(row_id, "new_brand", text or ""),
         )
         self._updating_table = False
@@ -1230,18 +1240,45 @@ class SupplierPricesPage(QWidget):
             self.show_error_message(str(e))
 
     def _commit_open_editors(self):
+        commit_active_table_item_editors(self.table)
+
         for row in range(self.table.rowCount()):
-            for column in (0, 10):
+            for column in range(self.table.columnCount()):
                 widget = self.table.cellWidget(row, column)
                 if not isinstance(widget, QComboBox):
                     continue
-                if row < 0 or row >= len(self._table_row_ids):
+                row_id = widget.property("row_id")
+                if row_id is None:
                     continue
-                row_id = self._table_row_ids[row]
-                if column == 0:
-                    self.finish_product_edit(row, row_id, widget)
-                elif column == 10:
-                    self.finish_brand_edit(row, row_id, widget)
+                role = widget.property("combo_role")
+                if role == "product_combo":
+                    self.finish_product_edit(row, int(row_id), widget)
+                elif role == "brand_combo":
+                    self.finish_brand_edit(row, int(row_id), widget)
+
+        self._snapshot_table_values()
+
+    def _snapshot_table_values(self) -> None:
+        """Read every visible Supplier Price field by logical key before save."""
+        excise_column = self._column_index("new_is_excise")
+        for row, row_id in enumerate(self._table_row_ids):
+            if row >= self.table.rowCount():
+                break
+            changes = self._pending_changes.setdefault(row_id, {})
+            for column, column_name in enumerate(self.columns):
+                if column_name == "selected_product_id":
+                    continue
+                if column_name == "new_is_excise":
+                    container = self.table.cellWidget(row, excise_column)
+                    checkbox = container.findChild(QCheckBox) if container is not None else None
+                    if checkbox is not None:
+                        changes[column_name] = bool(checkbox.isChecked())
+                    continue
+                item = self.table.item(row, column)
+                if item is None:
+                    continue
+                value = clean_multi_spaces(item.text()).upper()
+                changes[column_name] = value or None
 
     def save_pending_changes_to_temp(self):
         self._commit_open_editors()
@@ -1286,6 +1323,8 @@ class SupplierPricesPage(QWidget):
                         bool(clean_multi_spaces(row.new_product_name)),
                         bool(clean_multi_spaces(row.new_brand)),
                         row.new_pack is not None,
+                        row.new_qty_in_box is not None,
+                        bool(row.new_is_excise),
                     ])
                     if has_new_product_data and row.new_is_excise is None:
                         row.new_is_excise = False
@@ -1368,6 +1407,8 @@ class SupplierPricesPage(QWidget):
                             bool(clean_multi_spaces(row.new_product_name)),
                             bool(clean_multi_spaces(row.new_brand)),
                             row.new_pack is not None,
+                            row.new_qty_in_box is not None,
+                            bool(row.new_is_excise),
                         ])
                         if has_new_product_data and row.new_is_excise is None:
                             row.new_is_excise = False

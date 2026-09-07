@@ -12,6 +12,7 @@ from app.services.product_matching_service import ProductMatchingService
 from app.services.temp_cleanup_service import TempCleanupService
 from app.utils.batch import generate_import_batch_id
 from app.utils.excel_export_format import write_openpyxl_dict_sheet
+from app.utils.text import clean_multi_spaces
 
 
 class ProductSearchService:
@@ -160,13 +161,19 @@ class ProductSearchService:
                 TempProductSearchImport.batch_id == batch_id,
                 TempProductSearchImport.imported_by == imported_by,
                 TempProductSearchImport.selected_product_id.is_(None),
-                TempProductSearchImport.new_product_name.isnot(None),
             )
             .all()
         )
 
         for row in rows:
-            if row.new_product_name is None or not str(row.new_product_name).strip():
+            has_new_product_data = any([
+                bool(clean_multi_spaces(row.new_product_name)),
+                bool(clean_multi_spaces(row.new_brand)),
+                row.new_pack is not None,
+                row.new_qty_in_box is not None,
+                bool(row.new_is_excise),
+            ])
+            if not has_new_product_data:
                 continue
 
             self.product_matching_service.validate_new_product_fields(

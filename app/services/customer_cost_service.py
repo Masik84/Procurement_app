@@ -152,11 +152,17 @@ class CustomerCostService:
             TempCustomerCostImport.batch_id == batch_id,
             TempCustomerCostImport.imported_by == imported_by,
             TempCustomerCostImport.selected_product_id.is_(None),
-            TempCustomerCostImport.new_product_name.isnot(None),
         ).all()
 
         for row in rows:
-            if row.new_product_name is None or not str(row.new_product_name).strip():
+            has_new_product_data = any([
+                bool(str(row.new_product_name or "").strip()),
+                bool(str(row.new_brand or "").strip()),
+                row.new_pack is not None,
+                row.new_qty_in_box is not None,
+                bool(row.new_is_excise),
+            ])
+            if not has_new_product_data:
                 continue
 
             self.product_matching.validate_new_product_fields(

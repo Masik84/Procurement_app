@@ -202,7 +202,14 @@ class ProductStockService:
 
     def _validate_new_rows(self, rows, name_attr: str = "new_product_name"):
         for row in rows:
-            if getattr(row, name_attr) is None or not str(getattr(row, name_attr)).strip():
+            has_new_product_data = any([
+                bool(clean_multi_spaces(getattr(row, name_attr, None))),
+                bool(clean_multi_spaces(getattr(row, "new_brand", None))),
+                getattr(row, "new_pack", None) is not None,
+                getattr(row, "new_qty_in_box", None) is not None,
+                bool(getattr(row, "new_is_excise", False)),
+            ])
+            if not has_new_product_data:
                 continue
 
             self.product_matching.validate_new_product_fields(
@@ -218,7 +225,6 @@ class ProductStockService:
             TempStockImport.batch_id == batch_id,
             TempStockImport.imported_by == imported_by,
             TempStockImport.selected_product_id.is_(None),
-            TempStockImport.new_product_name.isnot(None),
         ).all()
         self._validate_new_rows(rows)
 
@@ -227,7 +233,6 @@ class ProductStockService:
             TempSupplierOrdersImport.batch_id == batch_id,
             TempSupplierOrdersImport.imported_by == imported_by,
             TempSupplierOrdersImport.selected_product_id.is_(None),
-            TempSupplierOrdersImport.new_product_name.isnot(None),
         ).all()
         self._validate_new_rows(rows)
 
@@ -236,7 +241,6 @@ class ProductStockService:
             TempIsImport.batch_id == batch_id,
             TempIsImport.imported_by == imported_by,
             TempIsImport.selected_product_id.is_(None),
-            TempIsImport.new_product_name.isnot(None),
         ).all()
         self._validate_new_rows(rows)
 

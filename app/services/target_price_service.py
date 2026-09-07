@@ -132,10 +132,16 @@ class TargetPriceService:
             TempTargetPriceImport.batch_id == batch_id,
             TempTargetPriceImport.imported_by == imported_by,
             TempTargetPriceImport.selected_product_id.is_(None),
-            TempTargetPriceImport.new_product_name.isnot(None),
         ).all()
         for row in rows:
-            if not clean_multi_spaces(row.new_product_name):
+            has_new_product_data = any([
+                bool(clean_multi_spaces(row.new_product_name)),
+                bool(clean_multi_spaces(row.new_brand)),
+                row.new_pack is not None,
+                row.new_qty_in_box is not None,
+                bool(row.new_is_excise),
+            ])
+            if not has_new_product_data:
                 continue
             self.product_matching.validate_new_product_fields(
                 product_name=row.new_product_name,

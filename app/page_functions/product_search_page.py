@@ -36,6 +36,7 @@ from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
 from app.workers.excel_export_worker import start_excel_export
 from app.services.qty_in_box_service import normalize_qty_in_box
+from app.utils.gui_table_actions import commit_active_table_item_editors
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -699,6 +700,8 @@ class ProductSearchPage(QWidget):
                     bool(clean_multi_spaces(row.new_product_name)),
                     bool(clean_multi_spaces(row.new_brand)),
                     row.new_pack is not None,
+                    row.new_qty_in_box is not None,
+                    bool(row.new_is_excise),
                 ])
                 if row.selected_product_id is None and has_new_product_data and row.new_is_excise is None:
                     row.new_is_excise = False
@@ -786,6 +789,8 @@ class ProductSearchPage(QWidget):
 
 
     def _commit_open_editors(self):
+        commit_active_table_item_editors(self.table)
+
         for row in range(self.table.rowCount()):
             for column in (self.COL_PRODUCT, self.COL_BRAND):
                 widget = self.table.cellWidget(row, column)
@@ -840,6 +845,8 @@ class ProductSearchPage(QWidget):
                         bool(clean_multi_spaces(row.new_product_name)),
                         bool(clean_multi_spaces(row.new_brand)),
                         row.new_pack is not None,
+                        row.new_qty_in_box is not None,
+                        bool(row.new_is_excise),
                     ])
                     if row.selected_product_id is None and has_new_product_data and row.new_is_excise is None:
                         row.new_is_excise = False
