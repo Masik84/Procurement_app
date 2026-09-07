@@ -41,6 +41,7 @@ from app.utils.parsers import parse_flexible_date, parse_loose_number, parse_use
 from app.utils.text import clean_multi_spaces
 from app.services.qty_in_box_service import normalize_qty_in_box
 from app.ui.table_style import *
+from app.ui.table_scale import get_table_scale_manager
 from app.workers.excel_export_worker import start_excel_export
 
 
@@ -840,6 +841,7 @@ class SupplierPricesPage(QWidget):
                 lambda _, r=row, rid=row_id, c=combo: self.finish_product_edit(r, rid, c)
             )
             self.table.setCellWidget(row, column, combo)
+            self._sync_cell_combo_geometry(combo, row, column)
             combo.setFocus()
             QTimer.singleShot(0, combo.showPopup)
 
@@ -854,8 +856,19 @@ class SupplierPricesPage(QWidget):
                     lambda r=row, rid=row_id, c=combo: self.finish_brand_edit(r, rid, c)
                 )
             self.table.setCellWidget(row, column, combo)
+            self._sync_cell_combo_geometry(combo, row, column)
             combo.setFocus()
             combo.lineEdit().selectAll()
+
+    def _sync_cell_combo_geometry(self, combo: QComboBox, row: int, column: int) -> None:
+        manager = get_table_scale_manager()
+        if manager is not None:
+            manager.sync_table_editor(
+                combo,
+                table=self.table,
+                row=row,
+                column=column,
+            )
 
     def _get_row_selected_product_id(self, row_id: int):
         with self.get_session() as session:
