@@ -46,8 +46,7 @@ class SalesStockMetricsService:
     stored in `product_stock` during stock update.
     """
 
-    PURCHASE_STATUSES = ("Закуп", "Склад", "Транзит")
-    TRANSIT_STATUS = "Транзит"
+    EXCLUDED_LPC_STATUSES = ("Заказ", "Резерв")
     SALES_STATUS = "Факт"
     PERIOD_PREV_YEAR = "prev.year"
     PERIOD_3_MONTHS = "3 mnth"
@@ -252,7 +251,13 @@ class SalesStockMetricsService:
     # ------------------------------------------------------------------
     # Sales DB reads
     # ------------------------------------------------------------------
-    def _read_lpc_rows(self, date_to: date | None = None) -> list[dict]:
+    def _read_lpc_rows(self) -> list[dict]:
+        """Read every LPC-relevant row already present in ``report_db``.
+
+        Document dates must not limit the current LPC balance. Every status is
+        included as soon as it appears in ``full_data`` except ``Заказ`` and
+        ``Резерв``.
+        """
         query = text(
             """
             WITH base AS (
@@ -270,8 +275,8 @@ class SalesStockMetricsService:
                     COALESCE(fd."Себ_ть_до_склада_партии", 0) AS cost
                 FROM full_data fd
                 LEFT JOIN products p ON p."Код" = fd."Код"
-                WHERE fd."Статус" = ANY(:all_statuses)
-                  AND (fd."Статус" = :transit_status OR :date_to IS NULL OR fd."Дата" <= :date_to)
+                WHERE fd."Статус" IS NOT NULL
+                  AND NOT (fd."Статус" = ANY(:excluded_statuses))
             ),
             last_purchase AS (
                 SELECT DISTINCT ON (product_pack)
@@ -288,23 +293,22 @@ class SalesStockMetricsService:
                 MIN(b.sales_article) AS sales_article,
                 MIN(b.sales_pack) AS sales_pack,
                 STRING_AGG(DISTINCT b.sales_code, ';') AS sales_codes,
-                SUM(CASE WHEN b.status = ANY(:purchase_statuses)
+                SUM(CASE WHEN b.status <> :sales_status
                          THEN b.volume ELSE 0 END) AS purchase_volume,
-                SUM(CASE WHEN b.status = ANY(:purchase_statuses)
+                SUM(CASE WHEN b.status <> :sales_status
                          THEN b.supply_cost ELSE 0 END) AS purchase_supply_cost,
                 SUM(CASE WHEN b.status = :sales_status
                          THEN b.volume ELSE 0 END) AS fact_volume,
                 SUM(CASE WHEN b.status = :sales_status
                          THEN b.cost ELSE 0 END) AS fact_landed_cost,
-                SUM(CASE WHEN
+                SUM(CASE WHEN b.status <> :sales_status AND
                     (
-                        b.status = :purchase_status
-                        AND b.document_date IS NOT DISTINCT FROM lp.last_purchase_date
-                        AND b.document IS NOT DISTINCT FROM lp.last_purchase_document
-                    )
-                    OR (
-                        b.status = :warehouse_status
-                        AND (
+                        (
+                            b.status = :purchase_status
+                            AND b.document_date IS NOT DISTINCT FROM lp.last_purchase_date
+                            AND b.document IS NOT DISTINCT FROM lp.last_purchase_document
+                        )
+                        OR (
                             b.document_date > lp.last_purchase_date
                             OR (
                                 b.document_date = lp.last_purchase_date
@@ -313,15 +317,14 @@ class SalesStockMetricsService:
                         )
                     )
                     THEN b.volume ELSE 0 END) AS fallback_volume,
-                SUM(CASE WHEN
+                SUM(CASE WHEN b.status <> :sales_status AND
                     (
-                        b.status = :purchase_status
-                        AND b.document_date IS NOT DISTINCT FROM lp.last_purchase_date
-                        AND b.document IS NOT DISTINCT FROM lp.last_purchase_document
-                    )
-                    OR (
-                        b.status = :warehouse_status
-                        AND (
+                        (
+                            b.status = :purchase_status
+                            AND b.document_date IS NOT DISTINCT FROM lp.last_purchase_date
+                            AND b.document IS NOT DISTINCT FROM lp.last_purchase_document
+                        )
+                        OR (
                             b.document_date > lp.last_purchase_date
                             OR (
                                 b.document_date = lp.last_purchase_date
@@ -336,13 +339,9 @@ class SalesStockMetricsService:
             """
         )
         params = {
-            "purchase_statuses": list(self.PURCHASE_STATUSES),
             "purchase_status": "Закуп",
-            "warehouse_status": "Склад",
             "sales_status": self.SALES_STATUS,
-            "transit_status": self.TRANSIT_STATUS,
-            "all_statuses": list(self.PURCHASE_STATUSES) + [self.SALES_STATUS],
-            "date_to": date_to,
+            "excluded_statuses": list(self.EXCLUDED_LPC_STATUSES),
         }
         with self._sales_engine().connect() as conn:
             result = conn.execute(query, params).mappings().all()
@@ -413,8 +412,8 @@ class SalesStockMetricsService:
     ) -> Decimal:
         """Calculate LPC from purchase and fact cost-per-litre components.
 
-        When purchased/transit/warehouse volume is fully consumed by Fact,
-        use the latest purchase document and subsequent warehouse movements.
+        When all eligible non-Fact volume is fully consumed by Fact, use the
+        latest purchase document and every eligible non-Fact row after it.
         """
         if purchase_volume - fact_volume == 0:
             if fallback_volume == 0:
@@ -442,7 +441,7 @@ class SalesStockMetricsService:
         metrics: dict[int, ProductStockMetrics] = {}
 
         vat_multiplier = self._vat_multiplier()
-        lpc_rows = self._merge_lpc_rows_by_normalized_name(self._read_lpc_rows(date_to=update_date))
+        lpc_rows = self._merge_lpc_rows_by_normalized_name(self._read_lpc_rows())
         for row in lpc_rows:
             product_id = self._resolve_product_id(row, links)
             if not product_id:
