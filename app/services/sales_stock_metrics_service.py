@@ -410,25 +410,26 @@ class SalesStockMetricsService:
         fallback_supply_cost: Decimal,
         vat_multiplier: Decimal = Decimal("1"),
     ) -> Decimal:
-        """Calculate LPC from purchase and fact cost-per-litre components.
+        """Calculate the VAT-inclusive unit cost of the remaining volume.
 
-        When all eligible non-Fact volume is fully consumed by Fact, use the
-        latest purchase document and every eligible non-Fact row after it.
+        This mirrors ``Себ-ть остатка, л с НДС`` from ``! ДопРасходы !.xlsx``:
+        remaining batch cost divided by remaining volume, with VAT applied.
+        The source is already expressed in litres, so no pack conversion is
+        needed here. If the complete history has zero balance, the same formula
+        is applied as a purchase average to the eligible non-Fact rows from the
+        latest ``Закуп`` document to the end.
         """
-        if purchase_volume - fact_volume == 0:
-            if fallback_volume == 0:
+        remaining_volume = purchase_volume - fact_volume
+        if remaining_volume == 0:
+            if fallback_volume <= 0:
                 return Decimal("0")
             return fallback_supply_cost / fallback_volume * vat_multiplier
 
-        purchase_part = (
-            purchase_supply_cost / purchase_volume
-            if purchase_volume != 0 else Decimal("0")
-        )
-        fact_part = (
-            fact_landed_cost / fact_volume
-            if fact_volume != 0 else Decimal("0")
-        )
-        return (purchase_part + fact_part) * vat_multiplier
+        if remaining_volume < 0:
+            return Decimal("0")
+
+        remaining_cost = purchase_supply_cost + fact_landed_cost
+        return remaining_cost / remaining_volume * vat_multiplier
 
     @classmethod
     def calc_uc3(cls, volume: Decimal, margin_c3: Decimal) -> Decimal:
