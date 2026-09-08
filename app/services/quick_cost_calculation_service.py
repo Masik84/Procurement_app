@@ -128,8 +128,7 @@ class QuickCostCalculationService:
         )
         d_money = self._to_decimal(fixed.money)
         d_storage = self._to_decimal(fixed.storage)
-        d_move_novo = self._to_decimal(fixed.move_novo_tamozh)
-        d_move_msk = self._to_decimal(fixed.move_tamozh_chekhov)
+        d_move = self._to_decimal(fixed.move)
 
         if marks_for_us:
             d_marking = Decimal("0")
@@ -168,10 +167,8 @@ class QuickCostCalculationService:
         cost_novo_wvat = self._round4(base * (Decimal("1") + d_vat))
 
         logistics = d_storage
-        if not supplier_is_rf:
-            logistics += d_move_msk
-            if via_novo:
-                logistics += d_move_novo
+        if via_novo:
+            logistics += d_move
 
         full_cost_msk = self._round4(
             cost_novo_wvat * (Decimal("1") + d_money)

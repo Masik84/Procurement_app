@@ -471,7 +471,7 @@ class CustomerCostsPage(QWidget):
                         self.build_manual_price_item(row_id, block_index, ""),
                     )
 
-            self.table.resizeColumnsToContents()
+            resize_columns_for_multiline_headers(self.table)
         finally:
             self._updating_table = False
 
@@ -642,7 +642,7 @@ class CustomerCostsPage(QWidget):
         item.setData(Qt.UserRole + 2, supplier_id)
         self.table.setItem(row, col, item)
         self._updating_table = False
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
 
     def _build_product_combo(self, row_id: int, selected_product_id: int | None) -> QComboBox:
         combo = QComboBox()
@@ -788,7 +788,7 @@ class CustomerCostsPage(QWidget):
             self.build_display_item(row_id, "selected_product_id", product_name),
         )
         self._updating_table = False
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
 
     def finish_supplier_option_edit(self, row: int, row_id: int, combo: QComboBox):
         option_id = combo.currentData()
@@ -809,7 +809,7 @@ class CustomerCostsPage(QWidget):
             self.build_display_item(row_id, "selected_option_id", option_name),
         )
         self._updating_table = False
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
 
     def finish_brand_edit(self, row: int, row_id: int, combo: QComboBox):
         brand_text = clean_multi_spaces(combo.currentText()) or None
@@ -823,7 +823,7 @@ class CustomerCostsPage(QWidget):
             self.build_display_item(row_id, "new_brand", brand_text or ""),
         )
         self._updating_table = False
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
 
     def on_checkbox_changed(self, row_id: int, checked: bool):
         if self._updating_table:
@@ -954,7 +954,7 @@ class CustomerCostsPage(QWidget):
             self.table.setItem(row, supplier_col, self.build_display_item(row_id, f"manual_supplier_{self._manual_price_blocks - 1}", "-"))
             self.table.setItem(row, price_col, self.build_manual_price_item(row_id, self._manual_price_blocks - 1, ""))
 
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
         self.show_message("Добавлены колонки для ручной цены")
 
     def _collect_manual_prices(self) -> list[dict]:

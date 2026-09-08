@@ -521,10 +521,7 @@ class OrderPlanningPage(QWidget):
 
                 self.table.setItem(row_index, col_index, item)
 
-        self.table.resizeColumnsToContents()
-        for col in range(self.table.columnCount()):
-            if self.table.columnWidth(col) < 90:
-                self.table.setColumnWidth(col, 90)
+        resize_columns_for_multiline_headers(self.table)
 
         if mode != "check" and "sales_product_name" in columns:
             sales_name_col = columns.index("sales_product_name")

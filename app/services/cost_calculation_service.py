@@ -28,8 +28,7 @@ class CostCalculationResult:
     via_novo_used: bool
     bank_fee_used: Decimal
     customs_fee_used: Decimal
-    move_novo_used: Decimal
-    move_msk_used: Decimal
+    move_used: Decimal
     is_excise_used: bool
     additional_customs_used: Decimal
     storage_used: Decimal
@@ -311,18 +310,12 @@ class CostCalculationService:
         d_cost_novo = self._to_decimal(cost_novo)
         d_money = self._to_decimal(fixed.money)
         d_storage = self._to_decimal(fixed.storage)
-        d_move_novo = self._to_decimal(fixed.move_novo_tamozh)
-        d_move_msk = self._to_decimal(fixed.move_tamozh_chekhov)
+        d_move = self._to_decimal(fixed.move)
         d_vat = self._to_decimal(fixed.vat)
 
-        supplier_is_rf = bool(supplier.is_rf)
-
         logistics = d_storage
-
-        if not supplier_is_rf:
-            logistics += d_move_msk
-            if via_novo:
-                logistics += d_move_novo
+        if via_novo:
+            logistics += d_move
 
         return self._round4(
             d_cost_novo * (Decimal("1") + d_money) +
@@ -411,8 +404,7 @@ class CostCalculationService:
         marking_used = Decimal("0") if supplier.marks_for_us else self.get_marking_cost(product_id)
 
         customs_fee_used = Decimal("0") if supplier.is_rf else self._to_decimal(fixed.customs_fee)
-        move_novo_used = Decimal("0") if supplier.is_rf else self._to_decimal(fixed.move_novo_tamozh)
-        move_msk_used = Decimal("0") if supplier.is_rf else self._to_decimal(fixed.move_tamozh_chekhov)
+        move_used = self._to_decimal(fixed.move) if via_novo_used else Decimal("0")
         is_excise_used = False if supplier.is_rf else bool(product.is_excise)
 
         return CostCalculationResult(
@@ -431,8 +423,7 @@ class CostCalculationService:
             via_novo_used=via_novo_used,
             bank_fee_used=self._to_decimal(fixed.bank_fee),
             customs_fee_used=customs_fee_used,
-            move_novo_used=move_novo_used,
-            move_msk_used=move_msk_used,
+            move_used=move_used,
             is_excise_used=is_excise_used,
             additional_customs_used=self._to_decimal(fixed.additional_customs),
             storage_used=self._to_decimal(fixed.storage),

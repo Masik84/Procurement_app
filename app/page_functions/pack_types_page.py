@@ -341,10 +341,7 @@ class PackTypesPage(QWidget):
             self.table.setItem(row_index, 1, self._build_item(row_data["name"], editable=True, align_left=True))
             self.table.setItem(row_index, 2, self._build_item(row_data["volume"], editable=True, align_left=False))
 
-        self.table.resizeColumnsToContents()
-        for i in range(self.table.columnCount()):
-            if self.table.columnWidth(i) < 120:
-                self.table.setColumnWidth(i, 120)
+        resize_columns_for_multiline_headers(self.table)
 
         self._updating_table = False
 

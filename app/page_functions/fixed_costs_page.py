@@ -72,8 +72,7 @@ class FixedCostsPage(QWidget):
             "bank_fee",
             "money",
             "storage",
-            "move_novo_tamozh",
-            "move_tamozh_chekhov",
+            "move",
         ]
         self.headers = [
             "id",
@@ -86,8 +85,7 @@ class FixedCostsPage(QWidget):
             "Bank fee %",
             "Money %",
             "Storage",
-            "Move Novo-Tamozh",
-            "Move Tamozh-Chekhov",
+            "Move",
         ]
         self.header_to_column = dict(zip(self.headers, self.columns))
 
@@ -172,8 +170,7 @@ class FixedCostsPage(QWidget):
                         bank_fee=0,
                         money=0,
                         storage=0,
-                        move_novo_tamozh=0,
-                        move_tamozh_chekhov=0,
+                        move=0,
                     )
                     session.add(row)
                     session.flush()
@@ -207,8 +204,7 @@ class FixedCostsPage(QWidget):
                     bank_fee=0,
                     money=0,
                     storage=0,
-                    move_novo_tamozh=0,
-                    move_tamozh_chekhov=0,
+                    move=0,
                 )
                 session.add(row)
                 session.commit()
@@ -225,8 +221,7 @@ class FixedCostsPage(QWidget):
                 "bank_fee": row.bank_fee,
                 "money": row.money,
                 "storage": row.storage,
-                "move_novo_tamozh": row.move_novo_tamozh,
-                "move_tamozh_chekhov": row.move_tamozh_chekhov,
+                "move": row.move,
             }
 
     def find_fixed_costs(self):
@@ -275,11 +270,7 @@ class FixedCostsPage(QWidget):
             )
             self.table.setItem(0, col_index, item)
 
-        self.table.resizeColumnsToContents()
-
-        for i in range(self.table.columnCount()):
-            if self.table.columnWidth(i) < 120:
-                self.table.setColumnWidth(i, 120)
+        resize_columns_for_multiline_headers(self.table)
 
         self._updating_table = False
 

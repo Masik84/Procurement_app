@@ -782,7 +782,7 @@ class PriceHistoryPage(QWidget):
                 self._build_item(row_data["currency"], row_key, align_left=True)
             )
 
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
 
         self._updating_table = False
 

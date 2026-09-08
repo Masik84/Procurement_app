@@ -220,7 +220,7 @@ class ProductArticlesPage(QWidget):
         self.table.setItem(row, product_col, item)
 
         self._updating_table = False
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
 
     def _get_product_name_values(self):
         filter_text = self._get_product_name_filter_text()
@@ -1030,10 +1030,7 @@ class ProductArticlesPage(QWidget):
                     item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 self.table.setItem(i, j, item)
 
-        self.table.resizeColumnsToContents()
-        for i in range(self.table.columnCount()):
-            if self.table.columnWidth(i) < 120:
-                self.table.setColumnWidth(i, 120)
+        resize_columns_for_multiline_headers(self.table)
 
         self._updating_table = False
         self._restore_sorting(sort_state)
@@ -1080,11 +1077,7 @@ class ProductArticlesPage(QWidget):
                 self._original_values[row_id][col] = value
                 self.table.setItem(i, j, item)
 
-        self.table.resizeColumnsToContents()
-
-        for i in range(self.table.columnCount()):
-            if self.table.columnWidth(i) < 120:
-                self.table.setColumnWidth(i, 120)
+        resize_columns_for_multiline_headers(self.table)
 
         self._updating_table = False
         self._restore_sorting(sort_state)
@@ -1137,9 +1130,7 @@ class ProductArticlesPage(QWidget):
 
             self.table.setItem(0, j, item)
 
-        for i in range(self.table.columnCount()):
-            if self.table.columnWidth(i) < 120:
-                self.table.setColumnWidth(i, 120)
+        resize_columns_for_multiline_headers(self.table)
 
         self._updating_table = False
         self._restore_sorting(sort_state)

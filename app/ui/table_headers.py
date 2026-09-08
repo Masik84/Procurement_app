@@ -64,6 +64,7 @@ GUI_HEADER_LABELS: dict[str, str] = {
     "Purchase Order": "Purchase\nOrder",
     "Reserve E-Comm": "Reserve\nE-Comm",
     "Transport cost per L": "Transport\ncost per L",
+    "Customs clearance %": "Customs\nclearance %",
     "Re-export %": "Re-export\n%",
     "Insurance %": "Insurance\n%",
     "FX markup %": "FX markup\n%",

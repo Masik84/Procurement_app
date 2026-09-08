@@ -568,11 +568,7 @@ class SuppliersPage(QWidget):
                 self._original_values[row_id][col_name] = text_value
                 self.table.setItem(row_index, col_index, item)
 
-        self.table.resizeColumnsToContents()
-
-        for i in range(self.table.columnCount()):
-            if self.table.columnWidth(i) < 100:
-                self.table.setColumnWidth(i, 100)
+        resize_columns_for_multiline_headers(self.table)
 
         self._updating_table = False
         self.table.setSortingEnabled(True)

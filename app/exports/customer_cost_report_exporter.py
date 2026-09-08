@@ -132,7 +132,7 @@ class CustomerCostReportExporter:
         cost_headers = [
             "Supplier Price, L", "Cost Novo with VAT", "Full Cost Msk", "FX markup abs", "Transport",
             "Re-export", "Agent fee", "Bank fee", "Customs fee", "Additional customs",
-            "Storage", "Move Novo", "Move Msk", "Marking",
+            "Storage", "Move", "Marking",
         ]
         self._format_columns_by_headers(ws, header_map, cost_headers, FORMATS.DECIMAL_2)
         self._format_columns_by_headers(ws, header_map, ["FX markup %", "Insurance %"], FORMATS.PERCENT_FLEX)

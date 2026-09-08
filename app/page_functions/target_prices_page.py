@@ -521,7 +521,7 @@ class TargetPricesPage(QWidget):
                     self.table.setItem(row_index, 5, self.build_table_item(row_id, "new_pack", self._format_number_text(row.new_pack), False))
                     self.table.setItem(row_index, 6, self.build_table_item(row_id, "new_qty_in_box", self._format_number_text(row.new_qty_in_box), False))
                     self.table.setCellWidget(row_index, 7, self.build_checkbox_widget(row_id, bool(row.new_is_excise) if row.new_is_excise is not None else False))
-            self.table.resizeColumnsToContents()
+            resize_columns_for_multiline_headers(self.table)
         finally:
             self._updating_table = False
 
@@ -689,7 +689,7 @@ class TargetPricesPage(QWidget):
         self.table.removeCellWidget(row, 0)
         self.table.setItem(row, 0, self.build_display_item(row_id, "selected_product_id", self._get_product_name_by_id(product_id)))
         self._updating_table = False
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
 
     def finish_supplier_option_edit(self, row: int, row_id: int, combo: QComboBox):
         option_id = combo.currentData()
@@ -700,7 +700,7 @@ class TargetPricesPage(QWidget):
         self.table.removeCellWidget(row, COL_SUPPLIER_OPTION)
         self.table.setItem(row, COL_SUPPLIER_OPTION, self.build_display_item(row_id, "selected_option_id", self._get_supplier_option_name(row_id, option_id) or "-"))
         self._updating_table = False
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
 
     def finish_brand_edit(self, row: int, row_id: int, combo: QComboBox):
         brand = clean_multi_spaces(combo.currentText()) or None
@@ -709,7 +709,7 @@ class TargetPricesPage(QWidget):
         self.table.removeCellWidget(row, 4)
         self.table.setItem(row, 4, self.build_display_item(row_id, "new_brand", brand or ""))
         self._updating_table = False
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
 
     def on_checkbox_changed(self, row_id: int, checked: bool):
         if not self._updating_table:

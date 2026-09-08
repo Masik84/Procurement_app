@@ -306,8 +306,7 @@ class TargetPriceService:
             via_novo_used=calc.via_novo_used,
             bank_fee_used=safe(calc.bank_fee_used),
             customs_fee_used=safe(calc.customs_fee_used),
-            move_novo_used=safe(calc.move_novo_used),
-            move_msk_used=safe(calc.move_msk_used),
+            move_used=safe(calc.move_used),
             is_excise_used=calc.is_excise_used,
             additional_customs_used=safe(calc.additional_customs_used),
             storage_used=safe(calc.storage_used),
@@ -417,8 +416,7 @@ class TargetPriceService:
                 via_novo_used=False,
                 bank_fee_used=self._to_decimal(getattr(fixed, "bank_fee", 0) if fixed else 0),
                 customs_fee_used=self._to_decimal(getattr(fixed, "customs_fee", 0) if fixed else 0),
-                move_novo_used=self._to_decimal(getattr(fixed, "move_novo_tamozh", 0) if fixed else 0),
-                move_msk_used=self._to_decimal(getattr(fixed, "move_tamozh_chekhov", 0) if fixed else 0),
+                move_used=Decimal("0"),
                 is_excise_used=False,
                 additional_customs_used=self._to_decimal(getattr(fixed, "additional_customs", 0) if fixed else 0),
                 storage_used=self._to_decimal(getattr(fixed, "storage", 0) if fixed else 0),
@@ -513,8 +511,7 @@ class TargetPriceService:
         d_vat = self._to_decimal(fixed.vat)
         d_money = self._to_decimal(fixed.money)
         d_storage = self._to_decimal(fixed.storage)
-        d_move_novo = self._to_decimal(fixed.move_novo_tamozh)
-        d_move_msk = self._to_decimal(fixed.move_tamozh_chekhov)
+        d_move = self._to_decimal(fixed.move)
         d_customs_clearance = self._to_decimal(fixed.customs_clearance)
         d_bank_fee = self._to_decimal(fixed.bank_fee)
         d_customs_fee = self._to_decimal(fixed.customs_fee)
@@ -522,12 +519,9 @@ class TargetPriceService:
         d_excise = self._to_decimal(fixed.excise)
         d_eco_fee = self._to_decimal(fixed.eco_fee)
 
-        supplier_is_rf = bool(supplier.is_rf)
         logistics = d_storage
-        if not supplier_is_rf:
-            logistics += d_move_msk
-            if via_novo:
-                logistics += d_move_novo
+        if via_novo:
+            logistics += d_move
 
         cost_novo_wvat = (d_full_cost - logistics * (Decimal("1") + d_vat)) / (Decimal("1") + d_money)
 
@@ -536,7 +530,7 @@ class TargetPriceService:
         customs_and_insurance_multiplier = customs_multiplier + d_insurance
 
         base = cost_novo_wvat / (Decimal("1") + d_vat)
-        if supplier_is_rf:
+        if bool(supplier.is_rf):
             numerator = base - marking - (d_agent_fee * d_fx_rate)
             denominator = (Decimal("1") + d_reexport) * customs_and_insurance_multiplier * d_effective_fx_rate
         else:
@@ -669,8 +663,7 @@ class TargetPriceService:
                 customs_fee_used=option.customs_fee_used,
                 additional_customs_used=option.additional_customs_used,
                 storage_used=option.storage_used,
-                move_novo_used=option.move_novo_used,
-                move_msk_used=option.move_msk_used,
+                move_used=option.move_used,
                 marking_used=option.marking_used,
                 is_excise_used=option.is_excise_used,
                 vat_used=self._to_decimal(fixed.vat),

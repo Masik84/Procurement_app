@@ -315,7 +315,7 @@ class ProductSearchPage(QWidget):
                 self.build_checkbox_widget(row.id, bool(row.new_is_excise)),
             )
 
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
         self._updating_table = False
 
     def value_to_text(self, value: object) -> str:
@@ -553,7 +553,7 @@ class ProductSearchPage(QWidget):
             self.build_table_item("selected_product_id", product_name, editable=False, align_left=True),
         )
         self._updating_table = False
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
 
     def finish_brand_edit(self, row: int, row_id: int, combo: QComboBox):
         if self.table.cellWidget(row, self.COL_BRAND) is not combo:
@@ -572,7 +572,7 @@ class ProductSearchPage(QWidget):
             self.build_table_item("new_brand", brand_name or "", editable=False, align_left=True),
         )
         self._updating_table = False
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
 
     def build_checkbox_widget(self, row_id: int, checked: bool) -> QWidget:
         checkbox = QCheckBox()

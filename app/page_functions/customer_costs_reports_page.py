@@ -27,7 +27,11 @@ from app.db.db import SessionLocal
 from app.db.models import CustomerPriceCalculation, Product, Supplier
 from app.exports.customer_cost_report_exporter import CustomerCostReportExporter
 from app.workers.excel_export_worker import ExcelExportWorker
-from app.ui.table_style import build_table_item, setup_data_table
+from app.ui.table_style import (
+    build_table_item,
+    resize_columns_for_multiline_headers,
+    setup_data_table,
+)
 from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 
 
@@ -101,8 +105,7 @@ class CustomerCostsReportsPage(QWidget):
         "Customs fee",
         "Additional customs",
         "Storage",
-        "Move Novo",
-        "Move Msk",
+        "Move",
         "Marking",
         "Excise duty",
         "Price date",
@@ -512,8 +515,7 @@ class CustomerCostsReportsPage(QWidget):
             calc.customs_fee_used,
             calc.additional_customs_used,
             calc.storage_used,
-            calc.move_novo_used,
-            calc.move_msk_used,
+            calc.move_used,
             calc.marking_used,
             calc.is_excise_used,
             calc.price_date_used,
@@ -572,7 +574,7 @@ class CustomerCostsReportsPage(QWidget):
                     item.setText("Да" if value else "Нет")
                 self.table.setItem(row_idx, col_idx, item)
         self.table.setColumnHidden(0, True)
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
         self.table.setSortingEnabled(True)
         self._updating_table = False
 
@@ -648,7 +650,7 @@ class CustomerCostsReportsPage(QWidget):
             if abc_item:
                 abc_item.setText(option.abc_category or "-")
 
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
         self.table.setSortingEnabled(sorting_enabled)
         self._updating_table = False
 

@@ -422,19 +422,6 @@ class ProductStockPage(QWidget):
         text = str(value).strip()
         return "" if text.lower() == "nan" else text
 
-    def _apply_table_column_layout(self):
-        for col_index, col in enumerate(COLUMN_DEFS[self._mode]):
-            if col.key == "selected_product_id":
-                self.table.setColumnWidth(col_index, 150)
-            elif col.key == "source_article":
-                self.table.setColumnWidth(col_index, 130)
-            elif col.key == "source_sku":
-                self.table.setColumnWidth(col_index, 95)
-            elif col.key == "source_product_name":
-                self.table.setColumnWidth(col_index, 110)
-            elif col.key == "abc_category":
-                self.table.setColumnWidth(col_index, 110)
-
     def display_table(self, data: list[dict[str, Any]]):
         self._updating_table = True
         try:
@@ -475,8 +462,7 @@ class ProductStockPage(QWidget):
                             item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                         self.table.setItem(row_index, col_index, item)
 
-            self.table.resizeColumnsToContents()
-            self._apply_table_column_layout()
+            resize_columns_for_multiline_headers(self.table)
         finally:
             self.table.blockSignals(False)
             self._updating_table = False

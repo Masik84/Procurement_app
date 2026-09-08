@@ -827,7 +827,7 @@ class SupplierPricesPage(QWidget):
                         self.build_table_item(column_name, display_values[column_name]),
                     )
 
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
         self._updating_table = False
 
     def start_cell_edit(self, row: int, column: int):
@@ -922,7 +922,7 @@ class SupplierPricesPage(QWidget):
                 self.build_display_item(row_id, "selected_product_id", ""),
             )
             self._updating_table = False
-            self.table.resizeColumnsToContents()
+            resize_columns_for_multiline_headers(self.table)
             return
 
         try:
@@ -980,7 +980,7 @@ class SupplierPricesPage(QWidget):
             self.table.removeCellWidget(row, excise_column)
         self.table.setCellWidget(row, excise_column, self.build_checkbox_widget(row_id, is_excise))
         self._updating_table = False
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
 
     def finish_brand_edit(self, row: int, row_id: int, combo: QComboBox):
         text = clean_multi_spaces(combo.currentText()).upper() or None
@@ -998,7 +998,7 @@ class SupplierPricesPage(QWidget):
         )
         self._updating_table = False
 
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
 
     def value_to_text(self, value: object) -> str:
         if value is None:

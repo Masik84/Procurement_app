@@ -554,7 +554,7 @@ class ProductsPage(QWidget):
         self.table.setItem(row, brand_col, self._build_table_item("brand", text))
         self._updating_table = False
 
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
 
     def eventFilter(self, obj, event):
         if isinstance(obj, QComboBox) and obj.property("edit_row_id") is not None:
@@ -581,7 +581,7 @@ class ProductsPage(QWidget):
         )
         self._updating_table = False
 
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
 
     def _get_brand_values(self):
         with self.get_session() as session:
@@ -887,10 +887,7 @@ class ProductsPage(QWidget):
                     item = self._build_table_item(col_name, row_data[col_name])
                     self.table.setItem(row_index, col_index, item)
 
-        self.table.resizeColumnsToContents()
-        for i in range(self.table.columnCount()):
-            if self.table.columnWidth(i) < 100:
-                self.table.setColumnWidth(i, 100)
+        resize_columns_for_multiline_headers(self.table)
 
         self._updating_table = False
         self.table.setSortingEnabled(True)
@@ -1079,11 +1076,7 @@ class ProductsPage(QWidget):
                 self._original_values[row_id][col_name] = value
                 self.table.setItem(row_index, col_index, item)
 
-        self.table.resizeColumnsToContents()
-
-        for i in range(self.table.columnCount()):
-            if self.table.columnWidth(i) < 100:
-                self.table.setColumnWidth(i, 100)
+        resize_columns_for_multiline_headers(self.table)
 
         self._updating_table = False
         self.table.setSortingEnabled(True)
@@ -1259,9 +1252,7 @@ class ProductsPage(QWidget):
             item = self._build_table_item(col_name, values[col_name])
             self.table.setItem(0, col_index, item)
 
-        for i in range(self.table.columnCount()):
-            if self.table.columnWidth(i) < 100:
-                self.table.setColumnWidth(i, 100)
+        resize_columns_for_multiline_headers(self.table)
 
         self._updating_table = False
         self.table.setSortingEnabled(True)

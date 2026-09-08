@@ -332,10 +332,7 @@ class ExchangeRatesPage(QWidget):
             self.table.setItem(row_index, 0, currency_item)
             self.table.setItem(row_index, 1, rate_item)
 
-        self.table.resizeColumnsToContents()
-        for i in range(self.table.columnCount()):
-            if self.table.columnWidth(i) < 120:
-                self.table.setColumnWidth(i, 120)
+        resize_columns_for_multiline_headers(self.table)
 
         self._updating_table = False
 

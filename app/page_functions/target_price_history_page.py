@@ -31,7 +31,7 @@ from app.exports.excel_column_format import (
     normalize_header,
 )
 from app.exports.target_price_history_exporter import TargetPriceHistoryExporter
-from app.ui.table_style import setup_data_table
+from app.ui.table_style import resize_columns_for_multiline_headers, setup_data_table
 from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 from app.utils.text import clean_multi_spaces
 from app.workers.excel_export_worker import start_excel_export
@@ -106,8 +106,7 @@ class TargetPriceHistoryPage(QWidget):
         "Customs fee",
         "Additional customs",
         "Storage",
-        "Move Novo",
-        "Move Msk",
+        "Move",
         "Marking",
         "Excise duty",
         "VAT",
@@ -537,8 +536,7 @@ class TargetPriceHistoryPage(QWidget):
             calc.customs_fee_used,
             calc.additional_customs_used,
             calc.storage_used,
-            calc.move_novo_used,
-            calc.move_msk_used,
+            calc.move_used,
             calc.marking_used,
             calc.is_excise_used,
             calc.vat_used,
@@ -650,7 +648,7 @@ class TargetPriceHistoryPage(QWidget):
                     self._build_item(header, value, row_id, editable=False, align_left=header in left_headers),
                 )
 
-        self.table.resizeColumnsToContents()
+        resize_columns_for_multiline_headers(self.table)
         self.table.setSortingEnabled(True)
         self._updating_table = False
 

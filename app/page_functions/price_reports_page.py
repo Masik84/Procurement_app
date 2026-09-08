@@ -494,7 +494,7 @@ class PriceReportsPage(QWidget):
                 rate_item.setTextAlignment(Qt.AlignCenter)
                 self.fx_table.setItem(row_index, 1, rate_item)
 
-            self.fx_table.resizeColumnsToContents()
+            resize_columns_for_multiline_headers(self.fx_table)
             self._updating_fx_table = False
         except Exception as e:
             self._updating_fx_table = False
@@ -885,10 +885,7 @@ class PriceReportsPage(QWidget):
                     item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 self.preview_table.setItem(row_index, col_index, item)
 
-        self.preview_table.resizeColumnsToContents()
-        for i in range(self.preview_table.columnCount()):
-            if self.preview_table.columnWidth(i) < 110:
-                self.preview_table.setColumnWidth(i, 110)
+        resize_columns_for_multiline_headers(self.preview_table)
 
     def clear_preview_table(self):
         self._preview_headers = []
@@ -1647,15 +1644,12 @@ class PriceReportsPage(QWidget):
 
         money = self._fixed_cost(fixed_costs, "money")
         storage = self._fixed_cost(fixed_costs, "storage")
-        move_novo = self._fixed_cost(fixed_costs, "move_novo_tamozh")
-        move_msk = self._fixed_cost(fixed_costs, "move_tamozh_chekhov")
+        move = self._fixed_cost(fixed_costs, "move")
         vat = self._fixed_cost(fixed_costs, "vat")
 
         logistics = storage
-        if not bool(getattr(supplier, "is_rf", False)):
-            logistics += move_msk
-            if bool(getattr(supplier, "is_via_novo", False)):
-                logistics += move_novo
+        if bool(getattr(supplier, "is_via_novo", False)):
+            logistics += move
 
         result = cost_novo * (Decimal("1") + money) + logistics * (Decimal("1") + vat)
         return self._round4(result)

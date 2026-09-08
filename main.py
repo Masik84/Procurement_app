@@ -474,6 +474,14 @@ if __name__ == "__main__":
     os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
     os.environ["QT_QPA_PLATFORM"] = "windows"
 
+    # Repeated Windows Error Reporting entries point to the native file-dialog
+    # path (including third-party Explorer shell extensions) before the same
+    # Qt6Widgets access violation.  Keep file selection inside Qt so those
+    # extensions are not loaded into the Procurement App process.
+    QApplication.setAttribute(
+        Qt.ApplicationAttribute.AA_DontUseNativeDialogs,
+        True,
+    )
     app = QApplication(sys.argv)
     initialise_table_scale_manager(app)
 
