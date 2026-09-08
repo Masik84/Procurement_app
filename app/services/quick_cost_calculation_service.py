@@ -6,6 +6,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from sqlalchemy.orm import Session
 
 from app.db.models import FixedCosts, MarkingRate, Supplier
+from app.services.cost_calculation_service import CostCalculationService
 
 
 @dataclass(slots=True)
@@ -164,15 +165,16 @@ class QuickCostCalculationService:
                 + d_eco_fee
             )
 
+        if via_novo:
+            base += d_move
+
         cost_novo_wvat = self._round4(base * (Decimal("1") + d_vat))
 
-        logistics = d_storage
-        if via_novo:
-            logistics += d_move
-
-        full_cost_msk = self._round4(
-            cost_novo_wvat * (Decimal("1") + d_money)
-            + logistics * (Decimal("1") + d_vat)
+        full_cost_msk = CostCalculationService.calc_full_cost_from_cost_novo(
+            cost_novo=cost_novo_wvat,
+            money=d_money,
+            storage=d_storage,
+            vat=d_vat,
         )
 
         return QuickCostCalculationResult(

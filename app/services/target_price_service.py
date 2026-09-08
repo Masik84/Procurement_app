@@ -519,17 +519,17 @@ class TargetPriceService:
         d_excise = self._to_decimal(fixed.excise)
         d_eco_fee = self._to_decimal(fixed.eco_fee)
 
-        logistics = d_storage
-        if via_novo:
-            logistics += d_move
-
-        cost_novo_wvat = (d_full_cost - logistics * (Decimal("1") + d_vat)) / (Decimal("1") + d_money)
+        cost_novo_wvat = (
+            d_full_cost - d_storage * (Decimal("1") + d_vat)
+        ) / (Decimal("1") + d_money)
 
         marking = Decimal("0") if supplier.marks_for_us else self.cost_calculation.get_marking_cost(product_id)
         customs_multiplier = Decimal("1") + d_customs_clearance if has_customs else Decimal("1")
         customs_and_insurance_multiplier = customs_multiplier + d_insurance
 
         base = cost_novo_wvat / (Decimal("1") + d_vat)
+        if via_novo:
+            base -= d_move
         if bool(supplier.is_rf):
             numerator = base - marking - (d_agent_fee * d_fx_rate)
             denominator = (Decimal("1") + d_reexport) * customs_and_insurance_multiplier * d_effective_fx_rate

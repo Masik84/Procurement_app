@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from app.db.models import FixedCosts, Product, SalesProductLink
+from app.services.cost_calculation_service import CostCalculationService
 from app.services.product_matching_service import ProductMatchingService
 from app.utils.text import clean_multi_spaces
 
@@ -22,6 +23,7 @@ SALES_DB_URI = "postgresql+psycopg2://postgres:qwerty@localhost:5432/report_db?c
 class ProductStockMetrics:
     product_id: int
     lpc: Decimal = Decimal("0")
+    landed_cost: Decimal = Decimal("0")
     volume_py: Decimal = Decimal("0")
     volume_3m: Decimal = Decimal("0")
     uc3_py: Decimal = Decimal("0")
@@ -44,7 +46,8 @@ class SalesStockMetricsService:
     stored in `product_stock` during stock update.
     """
 
-    PURCHASE_STATUSES = ("Закуп", "Склад")
+    PURCHASE_STATUSES = ("Закуп", "Склад", "Транзит")
+    TRANSIT_STATUS = "Транзит"
     SALES_STATUS = "Факт"
     PERIOD_PREV_YEAR = "prev.year"
     PERIOD_3_MONTHS = "3 mnth"
@@ -53,6 +56,7 @@ class SalesStockMetricsService:
         self.session = session
         self.sales_db_uri = sales_db_uri
         self.matcher = ProductMatchingService(session)
+        self.cost_calculation = CostCalculationService(session)
 
     # ------------------------------------------------------------------
     # Basic helpers
@@ -173,10 +177,12 @@ class SalesStockMetricsService:
                     "sales_article": source.get("sales_article"),
                     "sales_pack": source.get("sales_pack"),
                     "sales_codes": "",
-                    "purchase_qty": Decimal("0"),
-                    "purchase_cost": Decimal("0"),
-                    "sales_qty": Decimal("0"),
-                    "sales_cost": Decimal("0"),
+                    "purchase_volume": Decimal("0"),
+                    "purchase_supply_cost": Decimal("0"),
+                    "fact_volume": Decimal("0"),
+                    "fact_landed_cost": Decimal("0"),
+                    "fallback_volume": Decimal("0"),
+                    "fallback_supply_cost": Decimal("0"),
                     "_base_row": None,
                 },
             )
@@ -192,10 +198,12 @@ class SalesStockMetricsService:
                     codes.append(code)
                     seen_codes.add(code)
             target["sales_codes"] = ";".join(codes)
-            target["purchase_qty"] += self._to_decimal(source.get("purchase_qty"))
-            target["purchase_cost"] += self._to_decimal(source.get("purchase_cost"))
-            target["sales_qty"] += self._to_decimal(source.get("sales_qty"))
-            target["sales_cost"] += self._to_decimal(source.get("sales_cost"))
+            target["purchase_volume"] += self._to_decimal(source.get("purchase_volume"))
+            target["purchase_supply_cost"] += self._to_decimal(source.get("purchase_supply_cost"))
+            target["fact_volume"] += self._to_decimal(source.get("fact_volume"))
+            target["fact_landed_cost"] += self._to_decimal(source.get("fact_landed_cost"))
+            target["fallback_volume"] += self._to_decimal(source.get("fallback_volume"))
+            target["fallback_supply_cost"] += self._to_decimal(source.get("fallback_supply_cost"))
 
         for row in grouped.values():
             row.pop("_base_row", None)
@@ -247,29 +255,92 @@ class SalesStockMetricsService:
     def _read_lpc_rows(self, date_to: date | None = None) -> list[dict]:
         query = text(
             """
+            WITH base AS (
+                SELECT
+                    fd.id,
+                    COALESCE(p."Продукт_упаковка", '') AS product_pack,
+                    COALESCE(p."Артикул", '') AS sales_article,
+                    p."Упаковка" AS sales_pack,
+                    fd."Код"::text AS sales_code,
+                    fd."Дата" AS document_date,
+                    fd."Статус" AS status,
+                    fd."Документ" AS document,
+                    COALESCE(fd."Кол_во_л", 0) AS volume,
+                    COALESCE(fd."Себ_ть_поставки_партии", 0) AS supply_cost,
+                    COALESCE(fd."Себ_ть_до_склада_партии", 0) AS cost
+                FROM full_data fd
+                LEFT JOIN products p ON p."Код" = fd."Код"
+                WHERE fd."Статус" = ANY(:all_statuses)
+                  AND (fd."Статус" = :transit_status OR :date_to IS NULL OR fd."Дата" <= :date_to)
+            ),
+            last_purchase AS (
+                SELECT DISTINCT ON (product_pack)
+                    product_pack,
+                    document_date AS last_purchase_date,
+                    document AS last_purchase_document,
+                    id AS last_purchase_id
+                FROM base
+                WHERE status = :purchase_status
+                ORDER BY product_pack, document_date DESC NULLS LAST, id DESC
+            )
             SELECT
-                COALESCE(p."Продукт_упаковка", '') AS product_pack,
-                MIN(COALESCE(p."Артикул", '')) AS sales_article,
-                MIN(p."Упаковка") AS sales_pack,
-                STRING_AGG(DISTINCT fd."Код"::text, ';') AS sales_codes,
-                SUM(CASE WHEN fd."Статус" = ANY(:purchase_statuses)
-                         THEN COALESCE(fd."Кол_во_шт", 0) ELSE 0 END) AS purchase_qty,
-                SUM(CASE WHEN fd."Статус" = ANY(:purchase_statuses)
-                         THEN COALESCE(fd."Себ_ть_поставки_партии", 0) ELSE 0 END) AS purchase_cost,
-                SUM(CASE WHEN fd."Статус" = :sales_status
-                         THEN -COALESCE(fd."Кол_во_фин", 0) ELSE 0 END) AS sales_qty,
-                SUM(CASE WHEN fd."Статус" = :sales_status
-                         THEN -COALESCE(fd."Себ_ть_до_склада_партии", 0) ELSE 0 END) AS sales_cost
-            FROM full_data fd
-            LEFT JOIN products p ON p."Код" = fd."Код"
-            WHERE fd."Статус" = ANY(:all_statuses)
-              AND (:date_to IS NULL OR fd."Дата" <= :date_to)
-            GROUP BY COALESCE(p."Продукт_упаковка", '')
+                b.product_pack,
+                MIN(b.sales_article) AS sales_article,
+                MIN(b.sales_pack) AS sales_pack,
+                STRING_AGG(DISTINCT b.sales_code, ';') AS sales_codes,
+                SUM(CASE WHEN b.status = ANY(:purchase_statuses)
+                         THEN b.volume ELSE 0 END) AS purchase_volume,
+                SUM(CASE WHEN b.status = ANY(:purchase_statuses)
+                         THEN b.supply_cost ELSE 0 END) AS purchase_supply_cost,
+                SUM(CASE WHEN b.status = :sales_status
+                         THEN b.volume ELSE 0 END) AS fact_volume,
+                SUM(CASE WHEN b.status = :sales_status
+                         THEN b.cost ELSE 0 END) AS fact_landed_cost,
+                SUM(CASE WHEN
+                    (
+                        b.status = :purchase_status
+                        AND b.document_date IS NOT DISTINCT FROM lp.last_purchase_date
+                        AND b.document IS NOT DISTINCT FROM lp.last_purchase_document
+                    )
+                    OR (
+                        b.status = :warehouse_status
+                        AND (
+                            b.document_date > lp.last_purchase_date
+                            OR (
+                                b.document_date = lp.last_purchase_date
+                                AND b.id > lp.last_purchase_id
+                            )
+                        )
+                    )
+                    THEN b.volume ELSE 0 END) AS fallback_volume,
+                SUM(CASE WHEN
+                    (
+                        b.status = :purchase_status
+                        AND b.document_date IS NOT DISTINCT FROM lp.last_purchase_date
+                        AND b.document IS NOT DISTINCT FROM lp.last_purchase_document
+                    )
+                    OR (
+                        b.status = :warehouse_status
+                        AND (
+                            b.document_date > lp.last_purchase_date
+                            OR (
+                                b.document_date = lp.last_purchase_date
+                                AND b.id > lp.last_purchase_id
+                            )
+                        )
+                    )
+                    THEN b.supply_cost ELSE 0 END) AS fallback_supply_cost
+            FROM base b
+            LEFT JOIN last_purchase lp ON lp.product_pack = b.product_pack
+            GROUP BY b.product_pack
             """
         )
         params = {
             "purchase_statuses": list(self.PURCHASE_STATUSES),
+            "purchase_status": "Закуп",
+            "warehouse_status": "Склад",
             "sales_status": self.SALES_STATUS,
+            "transit_status": self.TRANSIT_STATUS,
             "all_statuses": list(self.PURCHASE_STATUSES) + [self.SALES_STATUS],
             "date_to": date_to,
         }
@@ -332,25 +403,33 @@ class SalesStockMetricsService:
     @classmethod
     def calc_lpc(
         cls,
-        purchase_qty: Decimal,
-        purchase_cost: Decimal,
-        sales_qty: Decimal,
-        sales_cost: Decimal,
-        pack: Decimal,
+        purchase_volume: Decimal,
+        purchase_supply_cost: Decimal,
+        fact_volume: Decimal,
+        fact_landed_cost: Decimal,
+        fallback_volume: Decimal,
+        fallback_supply_cost: Decimal,
         vat_multiplier: Decimal = Decimal("1"),
     ) -> Decimal:
-        if pack <= 0:
-            return Decimal("0")
+        """Calculate LPC from purchase and fact cost-per-litre components.
 
-        stock_qty = purchase_qty - sales_qty
-        if stock_qty != 0:
-            base_lpc = (purchase_cost - sales_cost) / stock_qty / pack
-        elif purchase_qty != 0:
-            base_lpc = purchase_cost / purchase_qty / pack
-        else:
-            return Decimal("0")
+        When purchased/transit/warehouse volume is fully consumed by Fact,
+        use the latest purchase document and subsequent warehouse movements.
+        """
+        if purchase_volume - fact_volume == 0:
+            if fallback_volume == 0:
+                return Decimal("0")
+            return fallback_supply_cost / fallback_volume * vat_multiplier
 
-        return base_lpc * vat_multiplier
+        purchase_part = (
+            purchase_supply_cost / purchase_volume
+            if purchase_volume != 0 else Decimal("0")
+        )
+        fact_part = (
+            fact_landed_cost / fact_volume
+            if fact_volume != 0 else Decimal("0")
+        )
+        return (purchase_part + fact_part) * vat_multiplier
 
     @classmethod
     def calc_uc3(cls, volume: Decimal, margin_c3: Decimal) -> Decimal:
@@ -370,13 +449,15 @@ class SalesStockMetricsService:
                 continue
             metric = metrics.setdefault(product_id, ProductStockMetrics(product_id=product_id))
             metric.lpc = self.calc_lpc(
-                self._to_decimal(row.get("purchase_qty")),
-                self._to_decimal(row.get("purchase_cost")),
-                self._to_decimal(row.get("sales_qty")),
-                self._to_decimal(row.get("sales_cost")),
-                self._pack_for_lpc_row(row, product_id),
+                self._to_decimal(row.get("purchase_volume")),
+                self._to_decimal(row.get("purchase_supply_cost")),
+                self._to_decimal(row.get("fact_volume")),
+                self._to_decimal(row.get("fact_landed_cost")),
+                self._to_decimal(row.get("fallback_volume")),
+                self._to_decimal(row.get("fallback_supply_cost")),
                 vat_multiplier,
             )
+            metric.landed_cost = self.cost_calculation.calc_landed_cost_from_lpc(metric.lpc)
 
         periods = self.build_periods(update_date)
         uc3_source_rows = []

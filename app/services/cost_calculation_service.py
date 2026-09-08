@@ -203,6 +203,7 @@ class CostCalculationService:
         fx_markup: Decimal,
         fx_markup_abs: Decimal,
         has_customs: bool,
+        via_novo: bool,
         agent_fee: Optional[Decimal] = None,
     ) -> Optional[float]:
         if supplier_price is None or self._to_decimal(supplier_price) == Decimal("0"):
@@ -228,6 +229,7 @@ class CostCalculationService:
         d_vat = self._to_decimal(fixed.vat)
         d_customs_fee = self._to_decimal(fixed.customs_fee)
         d_bank_fee = self._to_decimal(fixed.bank_fee)
+        d_move = self._to_decimal(fixed.move)
         d_agent_fee = self._to_decimal(
             getattr(supplier, "agent_fee", None) if agent_fee is None else agent_fee
         )
@@ -269,6 +271,9 @@ class CostCalculationService:
                 + d_eco_fee
             )
 
+        if via_novo:
+            base += d_move
+
         return self._round4(base * (Decimal("1") + d_vat))
 
     def calc_full_cost_msk(
@@ -298,28 +303,49 @@ class CostCalculationService:
             fx_markup=fx_markup,
             fx_markup_abs=fx_markup_abs,
             has_customs=has_customs,
+            via_novo=via_novo,
             agent_fee=agent_fee,
         )
 
         if cost_novo is None:
             return None
 
-        supplier = self.get_supplier(supplier_id)
-        fixed = self.get_fixed_costs()
-
         d_cost_novo = self._to_decimal(cost_novo)
+        fixed = self.get_fixed_costs()
+        return self.calc_full_cost_from_cost_novo(
+            cost_novo=d_cost_novo,
+            money=self._to_decimal(fixed.money),
+            storage=self._to_decimal(fixed.storage),
+            vat=self._to_decimal(fixed.vat),
+        )
+
+    @classmethod
+    def calc_full_cost_from_cost_novo(
+        cls,
+        *,
+        cost_novo: Decimal,
+        money: Decimal,
+        storage: Decimal,
+        vat: Decimal,
+    ) -> Decimal:
+        """Shared formula for Full Cost Msk and current Landed Cost."""
+        return cls._round4(
+            cls._to_decimal(cost_novo) * (Decimal("1") + cls._to_decimal(money))
+            + cls._to_decimal(storage) * (Decimal("1") + cls._to_decimal(vat))
+        )
+
+    def calc_landed_cost_from_lpc(self, lpc: Decimal) -> Decimal:
+        """Calculate current landed cost from LPC without supplier route costs."""
+        fixed = self.get_fixed_costs()
+        d_lpc = self._to_decimal(lpc)
         d_money = self._to_decimal(fixed.money)
         d_storage = self._to_decimal(fixed.storage)
-        d_move = self._to_decimal(fixed.move)
         d_vat = self._to_decimal(fixed.vat)
-
-        logistics = d_storage
-        if via_novo:
-            logistics += d_move
-
-        return self._round4(
-            d_cost_novo * (Decimal("1") + d_money) +
-            logistics * (Decimal("1") + d_vat)
+        return self.calc_full_cost_from_cost_novo(
+            cost_novo=d_lpc,
+            money=d_money,
+            storage=d_storage,
+            vat=d_vat,
         )
 
     def calculate_supplier_costs(
@@ -379,6 +405,7 @@ class CostCalculationService:
             fx_markup=fx_markup_used,
             fx_markup_abs=fx_markup_abs_used,
             has_customs=has_customs_used,
+            via_novo=via_novo_used,
             agent_fee=agent_fee_used,
         )
         if cost_novo is None:

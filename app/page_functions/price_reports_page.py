@@ -37,6 +37,7 @@ from app.ui.table_style import *
 from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 from app.exports.price_report_exporter import PriceReportExporter
 from app.services.price_repository import PriceRepository
+from app.services.cost_calculation_service import CostCalculationService
 from app.utils.excel_format_rules import FORMATS
 from app.workers.excel_export_worker import ExcelExportWorker
 
@@ -1588,6 +1589,7 @@ class PriceReportsPage(QWidget):
         vat = self._fixed_cost(fixed_costs, "vat")
         customs_fee = self._fixed_cost(fixed_costs, "customs_fee")
         bank_fee = self._fixed_cost(fixed_costs, "bank_fee")
+        move = self._fixed_cost(fixed_costs, "move")
 
         if bool(getattr(supplier, "marks_for_us", False)):
             marking = Decimal("0")
@@ -1615,6 +1617,9 @@ class PriceReportsPage(QWidget):
             )
             base = base_before_add + additional_customs + marking + (agent_fee * fx_rate)
             base = base + customs_fee + (excise if bool(getattr(product, "is_excise", False)) else Decimal("0")) + eco_fee
+
+        if bool(getattr(supplier, "is_via_novo", False)):
+            base += move
 
         return self._round4(base * (Decimal("1") + vat))
 
@@ -1644,15 +1649,14 @@ class PriceReportsPage(QWidget):
 
         money = self._fixed_cost(fixed_costs, "money")
         storage = self._fixed_cost(fixed_costs, "storage")
-        move = self._fixed_cost(fixed_costs, "move")
         vat = self._fixed_cost(fixed_costs, "vat")
 
-        logistics = storage
-        if bool(getattr(supplier, "is_via_novo", False)):
-            logistics += move
-
-        result = cost_novo * (Decimal("1") + money) + logistics * (Decimal("1") + vat)
-        return self._round4(result)
+        return CostCalculationService.calc_full_cost_from_cost_novo(
+            cost_novo=cost_novo,
+            money=money,
+            storage=storage,
+            vat=vat,
+        )
 
     def _get_marking_cost(self, session, product: Product) -> Decimal:
         if product.pack is None:

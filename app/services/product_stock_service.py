@@ -575,6 +575,7 @@ class ProductStockService:
             stock.product_name = product.name or ""
             stock.stock_update_date = now
             stock.lpc = metric.lpc
+            stock.landed_cost = metric.landed_cost
             stock.volume_py = metric.volume_py
             stock.volume_3m = metric.volume_3m
             stock.uc3_py = metric.uc3_py
@@ -626,7 +627,7 @@ class ProductStockService:
         try:
             sales_metrics = self.sales_metrics_service.calculate(update_date=now.date())
         except Exception as exc:
-            raise ValueError(f"Не удалось рассчитать LPC/uC3 по БД продаж: {exc}") from exc
+            raise ValueError(f"Не удалось рассчитать LPC/Landed Cost/uC3 по БД продаж: {exc}") from exc
 
         # ABC category is refreshed from the same stock file. Products absent from
         # the current file must explicitly receive "-".
@@ -678,7 +679,7 @@ class ProductStockService:
 
             metric = sales_metrics.get(int(product_id))
             lpc_val = metric.lpc if metric else Decimal("0")
-            landed_val = self._weighted_field_from_rows(rows, "landed_cost")
+            landed_val = metric.landed_cost if metric else Decimal("0")
             distr_val = self._min_price_from_rows(rows, "distr_price")
             promo_val = self._min_price_from_rows(rows, "promo_price")
             volume_py = metric.volume_py if metric else Decimal("0")
