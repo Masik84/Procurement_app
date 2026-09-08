@@ -1422,6 +1422,10 @@ class SupplierPricesPage(QWidget):
 
                 service.validate_new_products_before_save(self.batch_id, self.imported_by)
                 service.create_products_from_temp(self.batch_id, self.imported_by)
+                service.automatch_remaining_rows_from_current_batch(
+                    self.batch_id,
+                    self.imported_by,
+                )
                 qty_in_box_warnings = service.prepare_box_data_and_update_products(
                     self.batch_id, self.imported_by
                 )

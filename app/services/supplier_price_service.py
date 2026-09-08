@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, date
 from pathlib import Path
@@ -24,7 +25,7 @@ from app.services.qty_in_box_service import (
     normalize_qty_in_box,
     whole_qty_in_box_candidate,
 )
-from app.utils.text import clean_multi_spaces
+from app.utils.text import clean_multi_spaces, normalize_product_name
 
 
 @dataclass(slots=True)
@@ -264,6 +265,83 @@ class SupplierPriceService:
                     row.new_qty_in_box = None
                 row.new_is_excise = bool(product.is_excise)
                 matched_count += 1
+
+        self.session.flush()
+        return matched_count
+
+    def automatch_remaining_rows_from_current_batch(
+        self,
+        batch_id: str,
+        imported_by: str,
+    ) -> int:
+        """Match duplicate supplier rows to products resolved in this save."""
+        rows = (
+            self.session.query(TempPriceImport)
+            .filter(
+                TempPriceImport.batch_id == batch_id,
+                TempPriceImport.imported_by == imported_by,
+            )
+            .order_by(TempPriceImport.import_row_no.asc(), TempPriceImport.id.asc())
+            .all()
+        )
+
+        product_ids_by_article: dict[str, set[int]] = defaultdict(set)
+        product_ids_by_name: dict[str, set[int]] = defaultdict(set)
+        for row in rows:
+            if row.selected_product_id is None:
+                continue
+            product_id = int(row.selected_product_id)
+            for article in self.product_matching_service.split_article_tokens(row.supplier_article):
+                product_ids_by_article[article].add(product_id)
+            name_key = normalize_product_name(row.product_name)
+            if name_key:
+                product_ids_by_name[name_key].add(product_id)
+
+        if not product_ids_by_article and not product_ids_by_name:
+            return 0
+
+        products_by_id = {
+            int(product.id): product
+            for product in self.session.query(Product)
+            .filter(Product.id.in_({
+                product_id
+                for ids in (*product_ids_by_article.values(), *product_ids_by_name.values())
+                for product_id in ids
+            }))
+            .all()
+        }
+
+        matched_count = 0
+        for row in rows:
+            if row.selected_product_id is not None:
+                continue
+
+            candidate_ids: set[int] = set()
+            for article in self.product_matching_service.split_article_tokens(row.supplier_article):
+                candidate_ids.update(product_ids_by_article.get(article, set()))
+
+            if len(candidate_ids) != 1:
+                name_key = normalize_product_name(row.product_name)
+                candidate_ids = set(product_ids_by_name.get(name_key, set())) if name_key else set()
+
+            if len(candidate_ids) != 1:
+                continue
+
+            product_id = next(iter(candidate_ids))
+            product = products_by_id.get(product_id)
+            if product is None:
+                continue
+
+            row.selected_product_id = product_id
+            row.new_product_name = None
+            row.new_brand = None
+            row.new_pack = None
+            try:
+                row.new_qty_in_box = normalize_qty_in_box(product.qty_in_box)
+            except ValueError:
+                row.new_qty_in_box = None
+            row.new_is_excise = bool(product.is_excise)
+            matched_count += 1
 
         self.session.flush()
         return matched_count
@@ -831,6 +909,10 @@ class SupplierPriceService:
         matched_count = self.automatch_temp_rows(batch_id, imported_by)
         self.validate_new_products_before_save(batch_id, imported_by)
         created_products_count = self.create_products_from_temp(batch_id, imported_by)
+        matched_count += self.automatch_remaining_rows_from_current_batch(
+            batch_id,
+            imported_by,
+        )
         self.prepare_box_data_and_update_products(batch_id, imported_by)
         product_articles_count = self.create_or_update_product_articles(batch_id, imported_by)
         filled_prices_count = self.fill_price_from_price_pack(batch_id, imported_by)
