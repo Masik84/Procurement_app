@@ -4,12 +4,14 @@ from __future__ import annotations
 
 Все рабочие форматы хранятся в локальном виде, как в старых рабочих выгрузках:
 - дата: ДД.ММ.ГГ;@
-- Price, L / Price, pack: # ##0,00_ ;[Red]-# ##0,00_ ;'-'
+- Price, L / Price, pack: # ##0,00_ ;[Red]-# ##0,00_ ;"-"
 - рубли: # ##0 ₽
 - FX rate: # ##0
 
-Сначала используется NumberFormatLocal. Если локальная маска не принимается,
-внутри helper строится отдельный invariant-вариант для NumberFormat.
+Для COM Excel сначала используется invariant NumberFormat: он не зависит от
+языка установленного Excel. Если Excel его не принимает, используется
+NumberFormatLocal. Это не дает числовым колонкам молча сваливаться в General
+на компьютерах с другой локалью.
 """
 
 from dataclasses import dataclass
@@ -27,7 +29,7 @@ class ExcelFormats:
     DECIMAL_2: str = '# ##0,00;[Red]-# ##0,00;"-"'
     DECIMAL_2_SIMPLE: str = "0,00"
     DECIMAL_2_PLAIN: str = "# ##0,00"
-    PRICE_DECIMAL: str = "# ##0,00_ ;[Red]-# ##0,00_ ;'-'"
+    PRICE_DECIMAL: str = '# ##0,00_ ;[Red]-# ##0,00_ ;"-"'
     DECIMAL_4: str = '# ##0,0000;[Red]-# ##0,0000;"-"'
     DECIMAL_FLEX: str = '# ##0,00##;[Red]-# ##0,00##;0'
     MONEY_RUB: str = '# ##0 ₽;[Red]-# ##0 ₽;"-"'
@@ -163,9 +165,12 @@ def set_number_format_safe(
     else:
         invariant_code = to_invariant_number_format(local_code) or FORMATS.GENERAL
 
+    # NumberFormat is locale-independent in Excel COM and is therefore the most
+    # reliable first choice when the application runs on different Windows /
+    # Office languages. NumberFormatLocal remains as a fallback.
     candidates = [
-        ("NumberFormatLocal", local_code),
         ("NumberFormat", invariant_code),
+        ("NumberFormatLocal", local_code),
         ("NumberFormat", FORMATS.GENERAL),
     ]
 
@@ -177,6 +182,13 @@ def set_number_format_safe(
         seen.add(key)
         try:
             setattr(target, attr, fmt)
+            if verify and fmt != FORMATS.GENERAL:
+                try:
+                    actual = getattr(target, attr)
+                    if str(actual or "").strip().lower() == FORMATS.GENERAL.lower():
+                        continue
+                except Exception:
+                    pass
             return fmt
         except Exception:
             pass
