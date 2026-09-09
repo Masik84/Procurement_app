@@ -13,6 +13,7 @@ The rule is installed centrally so new uC3 report columns inherit the same
 format automatically without maintaining a list of every concrete caption.
 """
 
+import builtins
 import importlib
 import re
 import sys
@@ -21,6 +22,7 @@ from typing import Any
 
 _INSTALLED = False
 _IMPORT_MODULE_BEFORE_UC3_PATCH = importlib.import_module
+_IMPORT_BEFORE_UC3_PATCH = builtins.__import__
 
 
 def _is_uc3_header(value: object) -> bool:
@@ -172,6 +174,18 @@ def _patched_import_module(name: str, package: str | None = None):
     return module
 
 
+def _patched_import(name, globals=None, locals=None, fromlist=(), level=0):
+    """Patch modules loaded through normal ``import`` / ``from ... import``.
+
+    CostCalc imports ``SupplierPriceExporter`` with a normal Python import, not
+    through ``importlib.import_module``. The previous hook therefore never saw
+    that module and its report-specific DECIMAL_2 rule overwrote uC3.
+    """
+    module = _IMPORT_BEFORE_UC3_PATCH(name, globals, locals, fromlist, level)
+    _patch_loaded_modules()
+    return module
+
+
 def install_uc3_integer_format() -> None:
     """Install the uC3 integer-display Excel rule once for the whole app."""
     global _INSTALLED
@@ -194,6 +208,8 @@ def install_uc3_integer_format() -> None:
 
     _patch_loaded_modules()
 
-    # Heavy pages/exporters are loaded lazily through importlib. Wrap the
-    # already-installed no-IS hook rather than replacing it.
+    # Heavy pages/exporters can be loaded either through importlib or through
+    # ordinary ``import`` statements. Cover both paths so SupplierPriceExporter
+    # is patched before CostCalc formatting runs.
     importlib.import_module = _patched_import_module
+    builtins.__import__ = _patched_import

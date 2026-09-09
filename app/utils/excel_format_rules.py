@@ -8,10 +8,11 @@ from __future__ import annotations
 - рубли: # ##0 ₽
 - FX rate: # ##0
 
-Для COM Excel сначала используется invariant NumberFormat: он не зависит от
-языка установленного Excel. Если Excel его не принимает, используется
-NumberFormatLocal. Это не дает числовым колонкам молча сваливаться в General
-на компьютерах с другой локалью.
+Для COM Excel сначала используется NumberFormatLocal, как в стабильной
+версии проекта. Если локальная маска не принимается установленным Excel,
+используется invariant NumberFormat. Важно не применять invariant-формат
+первым: на некоторых локалях Excel принимает строку без ошибки, но сохраняет
+поврежденные коды стилей в styles.xml.
 """
 
 from dataclasses import dataclass
@@ -165,12 +166,14 @@ def set_number_format_safe(
     else:
         invariant_code = to_invariant_number_format(local_code) or FORMATS.GENERAL
 
-    # NumberFormat is locale-independent in Excel COM and is therefore the most
-    # reliable first choice when the application runs on different Windows /
-    # Office languages. NumberFormatLocal remains as a fallback.
+    # Keep NumberFormatLocal first. This is the order used by the previously
+    # stable exports. On some Excel/Windows locales assigning the invariant
+    # mask first does not raise a COM error, but Excel rewrites date/thousands
+    # tokens into an invalid styles.xml and repairs the workbook on open.
+    # If the local mask is not supported, fall back to invariant NumberFormat.
     candidates = [
-        ("NumberFormat", invariant_code),
         ("NumberFormatLocal", local_code),
+        ("NumberFormat", invariant_code),
         ("NumberFormat", FORMATS.GENERAL),
     ]
 
