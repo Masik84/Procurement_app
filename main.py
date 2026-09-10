@@ -63,7 +63,10 @@ def lazy_page(module_name: str, class_name: str):
     def factory():
         module = importlib.import_module(module_name)
         page_class = getattr(module, class_name)
-        return page_class()
+        page = page_class()
+        from app.utils.product_selection_filter import attach_product_selection_filter
+        attach_product_selection_filter(page)
+        return page
 
     return factory
 

@@ -6,7 +6,9 @@ from typing import Mapping
 from PySide6.QtWidgets import QInputDialog, QMessageBox, QWidget
 
 from app.db.db import SessionLocal
+from app.db.models import PackType
 from app.utils.parsers import parse_loose_number
+from app.utils.text import clean_multi_spaces
 
 
 def _format_decimal(value: object) -> str:
@@ -20,7 +22,7 @@ def _format_decimal(value: object) -> str:
 
 
 def ask_pack_type(parent: QWidget, error) -> Decimal | None:
-    """Ask the user to replace an unknown Product.pack with a PackType.volume from the DB."""
+    """Create a missing PackType volume using a package name selected from the DB."""
     options = list(getattr(error, "options", []) or [])
     if not options:
         QMessageBox.warning(
@@ -31,33 +33,68 @@ def ask_pack_type(parent: QWidget, error) -> Decimal | None:
         )
         return None
 
-    labels: list[str] = []
-    values: dict[str, Decimal] = {}
-    for volume, name in options:
-        volume_num = parse_loose_number(volume)
-        if volume_num is None:
-            continue
-        label = f"{_format_decimal(volume_num)} — {str(name or '').strip()}"
-        labels.append(label)
-        values[label] = Decimal(volume_num)
+    requested_pack = parse_loose_number(getattr(error, "requested_pack", None))
+    if requested_pack is None:
+        QMessageBox.warning(
+            parent,
+            "Вид упаковки не найден",
+            "Не удалось определить объем упаковки.",
+        )
+        return None
+    requested_pack = Decimal(requested_pack)
 
-    if not labels:
+    # The user chooses only the package NAME.  Volumes from existing rows are
+    # irrelevant here: the missing volume itself must be added to pack_types.
+    names_by_key: dict[str, str] = {}
+    for _volume, name in options:
+        clean_name = clean_multi_spaces(name)
+        if not clean_name:
+            continue
+        names_by_key.setdefault(clean_name.casefold(), clean_name)
+
+    names = sorted(names_by_key.values(), key=str.casefold)
+    if not names:
+        QMessageBox.warning(
+            parent,
+            "Вид упаковки не найден",
+            "В справочнике Pack types нет заполненных названий упаковок.",
+        )
         return None
 
-    selected, ok = QInputDialog.getItem(
+    selected_name, ok = QInputDialog.getItem(
         parent,
         "Вид упаковки не найден",
         (
-            f"Нет вида упаковки для {_format_decimal(getattr(error, 'requested_pack', ''))}.\n"
-            "Выберите корректную упаковку из справочника:"
+            f"Нет вида упаковки для {_format_decimal(requested_pack)}л.\n"
+            "Выберите название упаковки:"
         ),
-        labels,
+        names,
         0,
         False,
     )
     if not ok:
         return None
-    return values.get(selected)
+
+    selected_name = clean_multi_spaces(selected_name)
+    if not selected_name:
+        return None
+
+    with SessionLocal() as session:
+        # Re-check first: another action/user may already have added this
+        # volume while the dialog was open. PackType.volume is unique in DB.
+        existing = (
+            session.query(PackType)
+            .filter(PackType.volume == requested_pack)
+            .order_by(PackType.id.asc())
+            .first()
+        )
+        if existing is None:
+            session.add(PackType(name=selected_name, volume=requested_pack))
+            session.commit()
+
+    # Keep the originally requested volume in the product/temp row.  The
+    # selected name is used only to create its new PackType pair.
+    return requested_pack
 
 
 def replace_temp_pack(

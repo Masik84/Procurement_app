@@ -157,7 +157,7 @@ def set_number_format_safe(
     format_en: str = FORMATS.GENERAL,
     format_local: str | None = None,
     *,
-    verify: bool = False,
+    verify: bool = True,
 ) -> str:
     local_code = format_local or format_en or FORMATS.GENERAL
 
