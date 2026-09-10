@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -18,6 +23,7 @@ from app.exports.excel_column_format import apply_standard_worksheet_format, exc
 from app.utils.excel_fast_writer import write_excel_table
 from app.utils.excel_format_rules import set_number_format_safe, save_workbook_xlsx
 from app.utils.output_headers import standardize_output_header
+from app.utils.money import to_decimal
 
 
 class OrderPlanningExporter:
@@ -45,13 +51,7 @@ class OrderPlanningExporter:
             result = chr(65 + rem) + result
         return result
 
-    @staticmethod
-    def _to_decimal(value: object) -> Decimal:
-        if value is None:
-            return Decimal("0")
-        if isinstance(value, Decimal):
-            return value
-        return Decimal(str(value))
+    _to_decimal = staticmethod(to_decimal)
 
     @staticmethod
     def _excel_value(header: str, value: object) -> Any:
@@ -342,10 +342,10 @@ class OrderPlanningExporter:
                 if wb is not None:
                     wb.Close(SaveChanges=False)
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
             try:
                 if excel is not None:
                     excel.Quit()
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
             pythoncom.CoUninitialize()

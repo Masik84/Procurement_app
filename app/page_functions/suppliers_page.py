@@ -20,6 +20,7 @@ from app.db.db import SessionLocal
 from app.ui.table_style import *
 from app.utils.parsers import parse_user_percent
 from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
+from app.utils.money import parse_decimal_field
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -388,22 +389,19 @@ class SuppliersPage(QWidget):
             supplier.country = value if value else None
 
     def _to_decimal(self, value, field_name):
+        # Only called from apply_pending_changes (final Save). Supports a
+        # trailing "%" shorthand (e.g. "3,5%" -> 0.035); base parsing and the
+        # NOT NULL empty check are delegated to the shared helper.
         if isinstance(value, Decimal):
             return value
 
         text = str(value).strip()
-
         if "%" in text:
-            text = text.replace("%", "").strip()
-            text = text.replace(",", ".")
-            return Decimal(text) / Decimal("100")
+            return parse_decimal_field(
+                text.replace("%", "").strip(), field_name, empty="raise"
+            ) / Decimal("100")
 
-        text = text.replace(",", ".")
-
-        try:
-            return Decimal(text)
-        except (InvalidOperation, ValueError):
-            raise Exception(f"Поле '{field_name}' должно быть числом")
+        return parse_decimal_field(value, field_name, empty="raise")
 
     def _to_percent_decimal(self, value, field_name):
         decimal_value = parse_user_percent(value)

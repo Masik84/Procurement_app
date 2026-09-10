@@ -7,6 +7,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from sqlalchemy.orm import Session
 
 from app.db.models import FixedCosts, MarkingRate, PackType, Product, Supplier
+from app.utils.money import to_decimal, round4
 
 
 @dataclass(slots=True)
@@ -87,17 +88,11 @@ class CostCalculationService:
                 self._marking_rates_cache[str(marking_rate.pack_type)] = marking_rate
             self._marking_rates_loaded = True
 
-    @staticmethod
-    def _to_decimal(value: object) -> Decimal:
-        if value is None:
-            return Decimal("0")
-        if isinstance(value, Decimal):
-            return value
-        return Decimal(str(value))
-
-    @staticmethod
-    def _round4(value: Decimal) -> Decimal:
-        return value.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+    # Shared, single-source-of-truth implementations (app/utils/money.py):
+    # these used to be copy-pasted (with small silent variations) into ~20
+    # files across the project.
+    _to_decimal = staticmethod(to_decimal)
+    _round4 = staticmethod(round4)
     
     def get_fixed_costs(self) -> FixedCosts:
         if self._fixed_costs_cache is not None:

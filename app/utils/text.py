@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 import re
 
 
@@ -24,7 +29,7 @@ def clean_multi_spaces(value: object) -> str:
         if value != value:
             return ""
     except Exception:
-        pass
+        logger.exception("Подавленная ошибка (см. traceback выше)")
 
     s = str(value)
     if s.strip().lower() == "nan":

@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 import os
 from datetime import datetime, date
 from decimal import Decimal
@@ -38,7 +43,7 @@ from app.services.product_matching_service import MissingPackTypeError
 from app.utils.pack_type_prompt import resolve_missing_pack_for_temp_rows
 from app.utils.batch import get_current_username
 from app.utils.gui_table_actions import commit_active_table_item_editors
-from app.utils.parsers import parse_flexible_date, parse_loose_number, parse_user_percent
+from app.utils.parsers import parse_loose_number, parse_user_percent
 from app.utils.text import clean_multi_spaces
 from app.services.qty_in_box_service import normalize_qty_in_box
 from app.ui.table_style import *
@@ -681,13 +686,11 @@ class SupplierPricesPage(QWidget):
 
     def get_price_date(self) -> datetime:
         qdate = self.ui.date_Price.date()
-        if qdate.isValid():
-            return datetime(qdate.year(), qdate.month(), qdate.day())
-
-        parsed = parse_flexible_date(self.ui.date_Price.text())
-        if parsed is None:
-            parsed = date.today()
-        return datetime(parsed.year, parsed.month, parsed.day)
+        if not qdate.isValid():
+            # date_Price is a QDateEdit: an invalid QDate practically never
+            # happens in real use, but fall back safely instead of crashing.
+            qdate = QDate.currentDate()
+        return datetime(qdate.year(), qdate.month(), qdate.day())
 
     def download_template(self):
         file_path, _ = QFileDialog.getSaveFileName(
@@ -1420,6 +1423,17 @@ class SupplierPricesPage(QWidget):
                         TempPriceImport.imported_by == self.imported_by,
                     ).delete(synchronize_session=False)
 
+                # The loop above only mutates ORM objects in memory (autoflush
+                # is off for this session - see app/db/db.py). The service
+                # calls below run their own fresh SQL queries filtered by
+                # e.g. `selected_product_id IS NULL` against the database -
+                # without flushing first, those queries would still see the
+                # old, pre-edit values (for example a product that was
+                # selected and then deselected again in this same save), so a
+                # row could silently be skipped by validation and product
+                # creation with no error shown at all.
+                session.flush()
+
                 service.validate_new_products_before_save(self.batch_id, self.imported_by)
                 service.create_products_from_temp(self.batch_id, self.imported_by)
                 service.automatch_remaining_rows_from_current_batch(
@@ -1522,7 +1536,7 @@ class SupplierPricesPage(QWidget):
                     service.delete_temp_rows_for_user(self.imported_by)
                     session.commit()
         except Exception:
-            pass
+            logger.exception("Подавленная ошибка (см. traceback выше)")
 
         self._pending_changes.clear()
         self._pending_deletes.clear()

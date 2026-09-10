@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 from contextlib import contextmanager
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -144,7 +149,7 @@ def excel_fast_mode(excel: Any):
             previous[attr] = getattr(excel, attr)
             setattr(excel, attr, value)
         except Exception:
-            pass
+            logger.exception("Подавленная ошибка (см. traceback выше)")
 
     try:
         yield
@@ -153,4 +158,4 @@ def excel_fast_mode(excel: Any):
             try:
                 setattr(excel, attr, value)
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")

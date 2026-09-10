@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.services.cost_calculation_service import CostCalculationResult, CostCalculationService
 from app.services.supplier_service import SupplierService
 from app.utils.text import clean_multi_spaces
+from app.utils.money import to_decimal, round4
 
 
 class SupplierCurrencyCostService:
@@ -48,17 +49,8 @@ class SupplierCurrencyCostService:
                     self._rate_to_rub_cache[code] = value
             self._rates_loaded = True
 
-    @staticmethod
-    def _to_decimal(value: object) -> Decimal:
-        if value is None or value == "":
-            return Decimal("0")
-        if isinstance(value, Decimal):
-            return value
-        return Decimal(str(value).replace("\u00a0", "").replace(" ", "").replace(",", "."))
-
-    @staticmethod
-    def _round4(value: Decimal) -> Decimal:
-        return value.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+    _to_decimal = staticmethod(to_decimal)
+    _round4 = staticmethod(round4)
 
     @staticmethod
     def _currency(value: object) -> str:

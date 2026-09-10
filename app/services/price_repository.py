@@ -10,6 +10,7 @@ from sqlalchemy import func, tuple_
 
 from app.db.models import CurrentSupplierPrice, PriceHistory, Supplier
 from app.services.supplier_service import MANUAL_SUPPLIER_NAME
+from app.utils.money import to_decimal
 
 
 @dataclass(slots=True)
@@ -35,13 +36,7 @@ class PriceRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    @staticmethod
-    def _to_decimal(value: object) -> Decimal:
-        if value is None:
-            return Decimal("0")
-        if isinstance(value, Decimal):
-            return value
-        return Decimal(str(value))
+    _to_decimal = staticmethod(to_decimal)
 
     @staticmethod
     def supplier_price_cutoff_from_months(months: int | None) -> datetime | None:

@@ -26,6 +26,7 @@ from app.services.qty_in_box_service import (
     whole_qty_in_box_candidate,
 )
 from app.utils.text import clean_multi_spaces, normalize_product_name
+from app.utils.money import to_decimal, round4
 
 
 @dataclass(slots=True)
@@ -60,17 +61,8 @@ class SupplierPriceService:
         self.last_create_products_debug: list[dict] = []
         self.last_validate_products_debug: list[dict] = []
 
-    @staticmethod
-    def _to_decimal(value: object) -> Decimal:
-        if value is None:
-            return Decimal("0")
-        if isinstance(value, Decimal):
-            return value
-        return Decimal(str(value))
-
-    @staticmethod
-    def _round4(value: Decimal) -> Decimal:
-        return value.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+    _to_decimal = staticmethod(to_decimal)
+    _round4 = staticmethod(round4)
 
     @classmethod
     def _is_positive_price(cls, value: object) -> bool:

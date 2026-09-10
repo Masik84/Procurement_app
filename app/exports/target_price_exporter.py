@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 from pathlib import Path
 
 import pythoncom
@@ -86,12 +91,12 @@ class TargetPriceExporter:
                 if wb is not None:
                     wb.Close(SaveChanges=False)
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
             try:
                 if excel is not None:
                     excel.Quit()
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
             pythoncom.CoUninitialize()
 
     def export_template(self, file_path: str | Path) -> Path:

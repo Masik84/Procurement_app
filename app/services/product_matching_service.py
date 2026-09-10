@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 import re
 from dataclasses import dataclass
 from typing import Optional
@@ -315,7 +320,7 @@ class ProductMatchingService:
                 if float(tail_num) == float(p_norm):
                     return f"{s} {unit_text}"
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
 
         return f"{s} {p_name} {unit_text}"
     

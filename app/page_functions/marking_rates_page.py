@@ -21,6 +21,7 @@ from app.db.models import MarkingRate
 from app.db.db import SessionLocal
 from app.ui.table_style import *
 from app.utils.output_headers import display_headers
+from app.utils.money import parse_decimal_field
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -120,17 +121,9 @@ class MarkingRatesPage(QWidget):
         widget.blockSignals(False)
 
     def _to_decimal(self, value, field_name):
-        if isinstance(value, Decimal):
-            return value
-
-        text = str(value).strip().replace(",", ".")
-        if text == "":
-            return Decimal("0")
-
-        try:
-            return Decimal(text)
-        except (InvalidOperation, ValueError):
-            raise Exception(f"Поле '{field_name}' должно быть числом")
+        # cost_per_l is a NOT NULL column; an empty cell must be rejected
+        # (previously it silently saved as 0, quietly zeroing a real rate).
+        return parse_decimal_field(value, field_name, empty="raise")
 
     def _get_row_key(self, row):
         item = self.table.item(row, 0)

@@ -1,3 +1,7 @@
+import logging
+
+logger = logging.getLogger(__name__)
+
 from pathlib import Path
 
 import pythoncom
@@ -854,7 +858,7 @@ class ProductArticlesPage(QWidget):
             try:
                 ws.Range("A1:D1").AutoFilter(1)
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
 
             ws.Columns("A:A").ColumnWidth = 10
             ws.Columns("B:B").ColumnWidth = 34
@@ -874,18 +878,18 @@ class ProductArticlesPage(QWidget):
                 if wb is not None:
                     wb.Close(SaveChanges=False)
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
 
             try:
                 if excel is not None:
                     excel.Quit()
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
 
             try:
                 pythoncom.CoUninitialize()
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
 
     def download_template(self):
         file_path, _ = QFileDialog.getSaveFileName(

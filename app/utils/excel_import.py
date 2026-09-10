@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 from decimal import Decimal
 from typing import Any
 import re
@@ -34,7 +39,7 @@ def excel_text(value: Any, *, none_if_empty: bool = False) -> str | None:
         if pd.isna(value):
             return None if none_if_empty else ""
     except Exception:
-        pass
+        logger.exception("Подавленная ошибка (см. traceback выше)")
 
     if isinstance(value, bool):
         text = str(int(value))

@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 import importlib
 import sys
 from decimal import Decimal
@@ -123,7 +128,7 @@ def _install_excel_guards() -> None:
             write_excel_table_no_is._no_is_guard = True
             fast_writer.write_excel_table = write_excel_table_no_is
     except Exception:
-        pass
+        logger.exception("Подавленная ошибка (см. traceback выше)")
 
     # Shared openpyxl writer.
     try:
@@ -148,7 +153,7 @@ def _install_excel_guards() -> None:
             integer_headers.discard("order is")
             integer_headers.discard("stock is")
     except Exception:
-        pass
+        logger.exception("Подавленная ошибка (см. traceback выше)")
 
     # CostCalc_ header source.
     try:
@@ -167,7 +172,7 @@ def _install_excel_guards() -> None:
             cost_calc_headers_no_is._no_is_guard = True
             format_rules.cost_calc_headers = cost_calc_headers_no_is
     except Exception:
-        pass
+        logger.exception("Подавленная ошибка (см. traceback выше)")
 
     # Shared Excel formatting maps.
     try:
@@ -189,7 +194,7 @@ def _install_excel_guards() -> None:
                     if _is_forbidden_header(key):
                         value.pop(key, None)
     except Exception:
-        pass
+        logger.exception("Подавленная ошибка (см. traceback выше)")
 
     try:
         output_headers = _ORIGINAL_IMPORT_MODULE("app.utils.output_headers")
@@ -199,7 +204,7 @@ def _install_excel_guards() -> None:
                 if _is_forbidden_header(key):
                     specs.pop(key, None)
     except Exception:
-        pass
+        logger.exception("Подавленная ошибка (см. traceback выше)")
 
 
 def _patch_supplier_orders_importer(service_module) -> None:
@@ -384,7 +389,7 @@ def _patch_product_stock_page(module) -> None:
                     radio.setParent(None)
                     radio.deleteLater()
                 except Exception:
-                    pass
+                    logger.exception("Подавленная ошибка (см. traceback выше)")
 
         init_no_is._no_is_patch = True
         page_cls.__init__ = init_no_is

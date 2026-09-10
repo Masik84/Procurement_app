@@ -231,30 +231,43 @@ class StockImporter:
         filtered = compact.loc[non_empty_mask].copy()
         filtered = filtered.loc[~filtered["source_brand"].map(is_excluded_brand)].copy()
 
-        rows: list[dict] = []
-        for idx, rec in filtered.iterrows():
-            rows.append({
-                "import_row_no": int(idx) + 5,
-                "source_article": rec["source_article"] or None,
-                "source_sku": rec["source_sku"] or None,
-                "source_product_name": rec["source_product_name"] or None,
-                "new_product_name": rec["source_product_name"] or None,
-                "new_brand": rec["source_brand"] or None,
-                "new_pack": rec["source_pack"],
-                "new_is_excise": rec["source_is_excise"],
-                "source_origin": rec["source_origin"] or None,
-                "source_brand_group": rec["source_brand_group"] or None,
-                "abc_category": rec["abc_category"] or "-",
-                "lpc": float(rec["lpc"] or 0),
-                "landed_cost": float(rec["landed_cost"] or 0),
-                "distr_price": float(rec["distr_price"] or 0),
-                "promo_price": float(rec["promo_price"] or 0),
-                "stock_qty": float(rec["stock_qty"] or 0),
-                "transit_qty": float(rec["transit_qty"] or 0),
-                "markdown_qty": float(rec["markdown_qty"] or 0),
-                "reserve_qty": float(rec["reserve_qty"] or 0),
-                "reserve_ecomm_qty": float(rec["reserve_ecomm_qty"] or 0),
-                "has_lpc_warning": bool(rec["has_lpc_warning"]),
-            })
+        # import_row_no mirrors the original Excel row (data starts at row 5).
+        filtered["import_row_no"] = filtered.index.to_numpy() + 5
 
-        return rows
+        filtered["new_product_name"] = filtered["source_product_name"]
+        filtered["new_brand"] = filtered["source_brand"]
+        filtered["new_pack"] = filtered["source_pack"]
+        filtered["new_is_excise"] = filtered["source_is_excise"]
+
+        text_cols_to_none = (
+            "source_article", "source_sku", "source_product_name",
+            "new_product_name", "new_brand", "source_origin", "source_brand_group",
+        )
+        for col in text_cols_to_none:
+            # pandas 3.x infers a dedicated "str" dtype for all-string columns
+            # (rather than classic "object"); replacing "" with None on that
+            # dtype silently produces its NA marker, which then serializes as
+            # float `nan` via to_dict() instead of `None`. Casting back to
+            # "object" first keeps a real Python None, matching what the rest
+            # of the app (and the DB layer) expects for "no value".
+            filtered[col] = filtered[col].astype(object).replace("", None)
+
+        numeric_cols = (
+            "lpc", "landed_cost", "distr_price", "promo_price",
+            "stock_qty", "transit_qty", "markdown_qty", "reserve_qty", "reserve_ecomm_qty",
+        )
+        for col in numeric_cols:
+            filtered[col] = filtered[col].fillna(0.0).astype(float)
+
+        filtered["has_lpc_warning"] = filtered["has_lpc_warning"].astype(bool)
+        filtered["abc_category"] = filtered["abc_category"].replace("", "-")
+
+        output_columns = [
+            "import_row_no", "source_article", "source_sku", "source_product_name",
+            "new_product_name", "new_brand", "new_pack", "new_is_excise",
+            "source_origin", "source_brand_group", "abc_category",
+            "lpc", "landed_cost", "distr_price", "promo_price",
+            "stock_qty", "transit_qty", "markdown_qty", "reserve_qty",
+            "reserve_ecomm_qty", "has_lpc_warning",
+        ]
+        return filtered[output_columns].to_dict(orient="records")

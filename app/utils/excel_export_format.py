@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 from dataclasses import dataclass
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Mapping, Sequence
 
 from app.utils.excel_headers import article_text, display_header, is_article_header
@@ -210,7 +215,7 @@ def excel_cell_value(header: str, value: Any) -> Any:
         if number is None or number == 0:
             return ""
         if is_integer_header(header):
-            return int(number.quantize(Decimal("1")))
+            return int(number.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
         return float(number)
     if isinstance(value, Decimal):
         return float(value) if value != 0 else ""
@@ -318,7 +323,7 @@ def apply_standard_table_format(
             last_col = excel_column_letter(len(headers))
             ws.Range(f"A1:{last_col}1").AutoFilter(1)
         except Exception:
-            pass
+            logger.exception("Подавленная ошибка (см. traceback выше)")
 
 
 def write_and_format_table(

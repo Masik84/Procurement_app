@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -33,6 +33,7 @@ from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 from app.utils.text import clean_multi_spaces
 from app.workers.excel_export_worker import start_excel_export
 from app.utils.output_headers import display_headers
+from app.utils.money import to_decimal
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -432,23 +433,14 @@ class OrderPlanningPage(QWidget):
     def _selected_period(self) -> tuple[date, date]:
         return self._qdate_to_date(self.ui.date_SalesFrom.date()), self._qdate_to_date(self.ui.date_SalesTo.date())
 
-    @staticmethod
-    def _to_decimal(value: object) -> Decimal:
-        if value is None or value == "":
-            return Decimal("0")
-        if isinstance(value, Decimal):
-            return value
-        try:
-            return Decimal(str(value))
-        except (InvalidOperation, ValueError, TypeError):
-            return Decimal("0")
+    _to_decimal = staticmethod(to_decimal)
 
     def _format_decimal(self, value: object, digits: int = 0, blank_zero: bool = False) -> str:
         d = self._to_decimal(value)
         if blank_zero and d == 0:
             return ""
         if digits == 0:
-            return f"{int(d.quantize(Decimal('1'))):,}".replace(",", " ")
+            return f"{int(d.quantize(Decimal('1'), rounding=ROUND_HALF_UP)):,}".replace(",", " ")
         text = f"{float(d):,.{digits}f}"
         return text.replace(",", "_").replace(".", ",").replace("_", " ")
 

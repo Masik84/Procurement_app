@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import os
 import faulthandler
+import logging
 import sys
 import traceback
 from pathlib import Path
+
+from config import BASE_DIR
+from app.logging_config import setup_logging
+
+LOG_PATH = setup_logging(BASE_DIR)
+logger = logging.getLogger(__name__)
 
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QSize, QRect, QEvent
 from PySide6.QtGui import QColor
@@ -41,9 +48,15 @@ PAGE_STYLESHEET = ""
 
 def global_exception_handler(exc_type, exc_value, exc_traceback):
     traceback.print_exception(exc_type, exc_value, exc_traceback)
+    logger.critical(
+        "Необработанное исключение, приложение будет закрыто. Лог: %s",
+        LOG_PATH,
+        exc_info=(exc_type, exc_value, exc_traceback),
+    )
 
     print("\n" + "=" * 80)
     print("APPLICATION CRASHED")
+    print(f"Подробности сохранены в: {LOG_PATH}")
     print("=" * 80)
 
     input("\nPress Enter to close...")

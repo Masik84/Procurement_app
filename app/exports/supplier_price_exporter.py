@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
@@ -18,6 +23,7 @@ from app.services.supplier_currency_cost_service import SupplierCurrencyCostServ
 from app.utils.excel_fast_writer import write_excel_table
 from app.utils.excel_freeze import apply_freeze_panes
 from app.utils.excel_format_rules import FORMATS, cost_calc_headers, set_number_format_safe, to_invariant_number_format
+from app.utils.money import to_decimal, round4
 
 
 class SupplierPriceExporter:
@@ -30,13 +36,7 @@ class SupplierPriceExporter:
         self._xl_center = -4108
         self._xl_vcenter = -4160
 
-    @staticmethod
-    def _to_decimal(value: object) -> Decimal:
-        if value is None:
-            return Decimal("0")
-        if isinstance(value, Decimal):
-            return value
-        return Decimal(str(value))
+    _to_decimal = staticmethod(to_decimal)
 
     @staticmethod
     def _safe_filename(value: str) -> str:
@@ -129,7 +129,7 @@ class SupplierPriceExporter:
             # для конкретного блока. Нельзя копировать белый шрифт со старых диапазонов.
             ws.Range(f"{dst}1").Font.ColorIndex = -4105
         except Exception:
-            pass
+            logger.exception("Подавленная ошибка (см. traceback выше)")
 
     def _format_fx_column(self, ws, header: str, headers: list[str]):
         if header not in headers:
@@ -217,7 +217,7 @@ class SupplierPriceExporter:
         d_pack = SupplierPriceExporter._to_decimal(pack)
         if d_pack == 0:
             return None
-        return (d_price * d_pack).quantize(Decimal("0.0001"))
+        return round4(d_price * d_pack)
 
     @staticmethod
     def _is_blank_excel_value(value: object) -> bool:
@@ -233,10 +233,9 @@ class SupplierPriceExporter:
 
     @staticmethod
     def _to_decimal_excel_value(value: object) -> Decimal:
-        if isinstance(value, str):
-            cleaned = value.strip().replace(" ", "").replace("\u00a0", "").replace(",", ".")
-            return Decimal(cleaned)
-        return SupplierPriceExporter._to_decimal(value)
+        # app.utils.money.to_decimal already applies this exact string
+        # normalization (nbsp/space stripped, "," -> ".").
+        return to_decimal(value)
 
     @staticmethod
     def _calc_qty_volume_for_export(qty: object, volume: object, pack: object):
@@ -257,14 +256,14 @@ class SupplierPriceExporter:
         if not qty_is_blank and volume_is_blank:
             try:
                 d_qty = SupplierPriceExporter._to_decimal_excel_value(qty)
-                return d_qty, (d_qty * d_pack).quantize(Decimal("0.0001"))
+                return d_qty, round4(d_qty * d_pack)
             except Exception:
                 return qty, None
 
         if qty_is_blank and not volume_is_blank:
             try:
                 d_volume = SupplierPriceExporter._to_decimal_excel_value(volume)
-                return (d_volume / d_pack).quantize(Decimal("0.0001")), d_volume
+                return round4(d_volume / d_pack), d_volume
             except Exception:
                 return None, volume
 
@@ -314,7 +313,7 @@ class SupplierPriceExporter:
                 if wb_source is not None:
                     wb_source.Close(SaveChanges=False)
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
 
     @staticmethod
     def _excel_column_letter(col_num: int) -> str:
@@ -1025,12 +1024,12 @@ class SupplierPriceExporter:
                 if wb is not None:
                     wb.Close(SaveChanges=False)
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
             try:
                 if excel is not None:
                     excel.Quit()
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
             pythoncom.CoUninitialize()
 
     def export_qty_in_box_warnings(self, rows: list[dict], file_path: str | Path) -> Path:
@@ -1209,12 +1208,12 @@ class SupplierPriceExporter:
                 if wb is not None:
                     wb.Close(SaveChanges=False)
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
             try:
                 if excel is not None:
                     excel.Quit()
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
             pythoncom.CoUninitialize()
 
     @staticmethod

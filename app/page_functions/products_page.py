@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 from pathlib import Path
 from decimal import Decimal, InvalidOperation
 
@@ -40,6 +45,7 @@ from app.utils.pack_type_prompt import ask_pack_type
 from app.utils.output_headers import display_headers, standardize_output_header
 from app.utils.excel_fast_writer import write_excel_table
 from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
+from app.utils.money import parse_decimal_field
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -1000,7 +1006,7 @@ class ProductsPage(QWidget):
             try:
                 ws.Range("A1:H1").AutoFilter(1)
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
 
             ws.Columns("A:A").ColumnWidth = 10
             ws.Columns("B:B").ColumnWidth = 30
@@ -1025,18 +1031,18 @@ class ProductsPage(QWidget):
                 if wb is not None:
                     wb.Close(SaveChanges=False)
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
 
             try:
                 if excel is not None:
                     excel.Quit()
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
 
             try:
                 pythoncom.CoUninitialize()
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
 
     def _display_data(self, data):
         self.table.setSortingEnabled(False)
@@ -1135,19 +1141,10 @@ class ProductsPage(QWidget):
         return item
 
     def _to_decimal(self, value, field_name):
-        if isinstance(value, Decimal):
-            return value
-
-        text = str(value).strip()
-        if text == "":
-            return None
-
-        text = text.replace(",", ".")
-
-        try:
-            return Decimal(text)
-        except (InvalidOperation, ValueError):
-            raise Exception(f"Поле '{field_name}' должно быть числом")
+        # Empty stays None: callers (_resolve_pack_type_for_changes,
+        # _normalize_product_changes) do their own `if pack is None: raise`
+        # check with a message that includes the product name.
+        return parse_decimal_field(value, field_name, empty="none")
 
     def _format_decimal_display(self, value) -> str:
         number = parse_loose_number(value)

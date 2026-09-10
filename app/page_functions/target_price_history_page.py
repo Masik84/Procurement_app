@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
@@ -51,7 +56,7 @@ class SortableTableWidgetItem(QTableWidgetItem):
                 try:
                     return left < right
                 except Exception:
-                    pass
+                    logger.exception("Подавленная ошибка (см. traceback выше)")
         return super().__lt__(other)
 
 

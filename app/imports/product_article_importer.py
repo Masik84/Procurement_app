@@ -26,21 +26,12 @@ class ProductArticleImporter:
         df = df[self.REQUIRED_COLUMNS].copy()
         df = df.where(pd.notna(df), None)
 
-        rows: list[dict] = []
-        for _, row in df.iterrows():
-            product_name = clean_multi_spaces(row["Product name"]).upper()
-            article = excel_text(row["Article"])
-            variant_name = clean_multi_spaces(row["Product name (variant)"]).upper()
-
-            if not product_name and not article and not variant_name:
-                continue
-
-            rows.append(
-                {
-                    "product_name": product_name,
-                    "article": article,
-                    "variant_name": variant_name,
-                }
-            )
-
-        return rows
+        out = pd.DataFrame({
+            "product_name": df["Product name"].map(clean_multi_spaces).str.upper(),
+            "article": df["Article"].map(excel_text),
+            "variant_name": df["Product name (variant)"].map(clean_multi_spaces).str.upper(),
+        })
+        non_empty_mask = (
+            (out["product_name"] != "") | (out["article"] != "") | (out["variant_name"] != "")
+        )
+        return out.loc[non_empty_mask].to_dict(orient="records")

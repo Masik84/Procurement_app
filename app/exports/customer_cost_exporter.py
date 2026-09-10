@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
@@ -14,6 +19,7 @@ from app.utils.excel_freeze import apply_freeze_panes
 from app.utils.excel_format_rules import FORMATS, set_number_format_safe, save_workbook_xlsx
 
 from app.db.models import TempCustomerCostImport, TempCustomerCostOption
+from app.utils.money import to_decimal
 
 
 class CustomerCostExporter:
@@ -30,13 +36,7 @@ class CustomerCostExporter:
             s = s.replace(ch, '_')
         return s
 
-    @staticmethod
-    def _to_decimal(value: object) -> Decimal:
-        if value is None:
-            return Decimal("0")
-        if isinstance(value, Decimal):
-            return value
-        return Decimal(str(value))
+    _to_decimal = staticmethod(to_decimal)
 
     @staticmethod
     def _excel_value_or_blank(value: object):
@@ -159,12 +159,12 @@ class CustomerCostExporter:
                 if wb is not None:
                     wb.Close(SaveChanges=False)
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
             try:
                 if excel is not None:
                     excel.Quit()
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
             pythoncom.CoUninitialize()
 
     def _apply_kam_layout(self, ws, headers: list[str]):
@@ -465,12 +465,12 @@ class CustomerCostExporter:
                 if wb is not None:
                     wb.Close(SaveChanges=False)
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
             try:
                 if excel is not None:
                     excel.Quit()
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
             pythoncom.CoUninitialize()
 
     def _collect_kam_rows(self, batch_id: str, imported_by: str, manager_name: str, customer_name: str) -> list[dict]:
@@ -604,12 +604,12 @@ class CustomerCostExporter:
                 if wb is not None:
                     wb.Close(SaveChanges=False)
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
             try:
                 if excel is not None:
                     excel.Quit()
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
             pythoncom.CoUninitialize()
 
     def export_kam_files(self, batch_id: str, imported_by: str, folder_path: str | Path) -> list[Path]:

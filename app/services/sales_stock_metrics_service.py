@@ -13,6 +13,7 @@ from app.db.models import FixedCosts, Product, SalesProductLink
 from app.services.cost_calculation_service import CostCalculationService
 from app.services.product_matching_service import ProductMatchingService
 from app.utils.text import clean_multi_spaces
+from app.utils.money import to_decimal
 
 
 # Same sales DB that is used by order planning.
@@ -60,18 +61,7 @@ class SalesStockMetricsService:
     # ------------------------------------------------------------------
     # Basic helpers
     # ------------------------------------------------------------------
-    @staticmethod
-    def _to_decimal(value: object, default: Decimal = Decimal("0")) -> Decimal:
-        if value is None or value == "":
-            return default
-        if isinstance(value, Decimal):
-            return value
-        try:
-            if isinstance(value, str):
-                value = value.strip().replace("\u00a0", "").replace(" ", "").replace(",", ".")
-            return Decimal(str(value))
-        except (InvalidOperation, ValueError, TypeError):
-            return default
+    _to_decimal = staticmethod(to_decimal)
 
     @staticmethod
     def _normalize_sales_name(value: object) -> str:

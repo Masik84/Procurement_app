@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.db.models import OrderPlanningCalculation, Product, ProductStock, SalesProductLink
 from app.services.product_matching_service import ProductMatchingService
 from app.utils.text import clean_multi_spaces
+from app.utils.money import to_decimal, round4
 
 
 SALES_DB_URI = "postgresql+psycopg2://postgres:qwerty@localhost:5432/report_db?client_encoding=utf8"
@@ -49,20 +50,8 @@ class OrderPlanningService:
     # ------------------------------------------------------------------
     # Basic helpers
     # ------------------------------------------------------------------
-    @staticmethod
-    def _to_decimal(value: object, default: Decimal = Decimal("0")) -> Decimal:
-        if value is None or value == "":
-            return default
-        if isinstance(value, Decimal):
-            return value
-        try:
-            return Decimal(str(value))
-        except Exception:
-            return default
-
-    @staticmethod
-    def _round4(value: Decimal) -> Decimal:
-        return value.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+    _to_decimal = staticmethod(to_decimal)
+    _round4 = staticmethod(round4)
 
     @staticmethod
     def _ceil_decimal(value: Decimal) -> Decimal:
@@ -195,21 +184,38 @@ class OrderPlanningService:
 
         product_map = self._product_map(load_stock=False)
         links = self._link_map(load_products=False)
+
+        # Vectorized cleaning/typing of the simple columns. The matching and
+        # new/changed/auto-matched branching below still needs a per-row loop
+        # (it calls into ProductMatchingService and keeps running counters),
+        # but there is no reason to re-run clean_multi_spaces /
+        # _bool_from_sales_excise through a slow per-row Series.get() lookup
+        # on every iteration - itertuples() over a pre-cleaned frame is both
+        # faster and easier to read than iterrows() over the raw one.
+        cleaned = pd.DataFrame({
+            "sales_code": sales_df["Код"].map(clean_multi_spaces),
+            "sales_article": sales_df["Артикул"].map(clean_multi_spaces),
+            "sales_name": sales_df["Продукт_упаковка"].map(clean_multi_spaces),
+            "sales_pack": sales_df["Упаковка"],
+            "sales_brand": sales_df["Brand"].map(clean_multi_spaces),
+            "sales_excise": sales_df["Акциз_да_нет"].map(self._bool_from_sales_excise),
+        })
+
         rows: list[dict] = []
         auto_matched = 0
         new_count = 0
         changed_count = 0
 
-        for _, source in sales_df.iterrows():
-            sales_code = clean_multi_spaces(source.get("Код"))
+        for source in cleaned.itertuples(index=False):
+            sales_code = source.sales_code
             if not sales_code:
                 continue
 
-            sales_article = clean_multi_spaces(source.get("Артикул"))
-            sales_name = clean_multi_spaces(source.get("Продукт_упаковка"))
-            sales_pack = source.get("Упаковка")
-            sales_brand = clean_multi_spaces(source.get("Brand"))
-            sales_excise = self._bool_from_sales_excise(source.get("Акциз_да_нет"))
+            sales_article = source.sales_article
+            sales_name = source.sales_name
+            sales_pack = source.sales_pack
+            sales_brand = source.sales_brand
+            sales_excise = source.sales_excise
 
             link = links.get(sales_code)
             link_matches_source = self._sales_link_matches_source(
@@ -389,14 +395,29 @@ class OrderPlanningService:
         unmatched = 0
         rows: list[dict] = []
 
-        for _, source in grouped.iterrows():
-            sales_code = clean_multi_spaces(source.get("Код"))
-            sales_article = clean_multi_spaces(source.get("Артикул"))
-            sales_name = clean_multi_spaces(source.get("Продукт_упаковка"))
-            sales_pack = source.get("Упаковка")
-            sales_brand = clean_multi_spaces(source.get("Brand"))
-            sales_excise = self._bool_from_sales_excise(source.get("Акциз_да_нет"))
-            avg_sales = self._round4(self._to_decimal(source.get("avg_sales_month")))
+        # Same treatment as check_products(): clean/type the simple columns
+        # once, vectorized, then loop only for the matching + counters that
+        # genuinely need row-by-row logic.
+        cleaned = pd.DataFrame({
+            "sales_code": grouped["Код"].map(clean_multi_spaces),
+            "sales_article": grouped["Артикул"].map(clean_multi_spaces),
+            "sales_name": grouped["Продукт_упаковка"].map(clean_multi_spaces),
+            "sales_pack": grouped["Упаковка"],
+            "sales_brand": grouped["Brand"].map(clean_multi_spaces),
+            "sales_excise": grouped["Акциз_да_нет"].map(self._bool_from_sales_excise),
+            "avg_sales_month": grouped["avg_sales_month"].map(
+                lambda v: self._round4(self._to_decimal(v))
+            ),
+        })
+
+        for source in cleaned.itertuples(index=False):
+            sales_code = source.sales_code
+            sales_article = source.sales_article
+            sales_name = source.sales_name
+            sales_pack = source.sales_pack
+            sales_brand = source.sales_brand
+            sales_excise = source.sales_excise
+            avg_sales = source.avg_sales_month
 
             product = None
             link = links.get(sales_code)

@@ -19,6 +19,7 @@ from app.db.models import FixedCosts
 from app.db.db import SessionLocal
 from app.ui.table_style import *
 from app.utils.output_headers import display_headers
+from app.utils.money import parse_decimal_field
 from app.utils.parsers import parse_user_percent
 
 
@@ -112,17 +113,10 @@ class FixedCostsPage(QWidget):
                 raise Exception(f"Поле '{field_name}' должно быть числом")
             return parsed
 
-        if isinstance(value, Decimal):
-            return value
-
-        text = str(value).strip().replace(",", ".")
-        if text == "":
-            return Decimal("0")
-
-        try:
-            return Decimal(text)
-        except (InvalidOperation, ValueError):
-            raise Exception(f"Поле '{field_name}' должно быть числом")
+        # Only called from apply_pending_changes (final Save), never live per
+        # keystroke, so it's safe to reject an empty NOT NULL field right away
+        # instead of silently saving it as 0.
+        return parse_decimal_field(value, field_name, empty="raise")
 
     def on_item_changed(self, item):
         if self._updating_table:

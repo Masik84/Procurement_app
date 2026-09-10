@@ -16,6 +16,7 @@ from app.services.product_matching_service import ProductMatchingService
 from app.services.supplier_service import SupplierService
 from app.services.supplier_currency_cost_service import SupplierCurrencyCostService
 from app.services.temp_cleanup_service import TempCleanupService
+from app.utils.money import to_decimal
 
 
 class CustomerCostService:
@@ -32,13 +33,7 @@ class CustomerCostService:
         self.importer = CustomerCostImporter()
         self.exporter = CustomerCostExporter(session)
 
-    @staticmethod
-    def _to_decimal(value: object) -> Decimal:
-        if value is None:
-            return Decimal("0")
-        if isinstance(value, Decimal):
-            return value
-        return Decimal(str(value))
+    _to_decimal = staticmethod(to_decimal)
 
     def delete_temp_options(self, batch_id: str, imported_by: str) -> int:
         deleted_count = self.session.query(TempCustomerCostOption).filter(

@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 from pathlib import Path
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -33,6 +38,7 @@ from app.db.models import PriceHistory as PriceHistoryModel
 from app.db.models import CurrentSupplierPrice as CurrentSupplierPriceModel
 from app.workers.excel_export_worker import start_excel_export
 from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
+from app.utils.money import parse_decimal_field
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -53,7 +59,7 @@ class SortableTableWidgetItem(QTableWidgetItem):
                 try:
                     return left < right
                 except Exception:
-                    pass
+                    logger.exception("Подавленная ошибка (см. traceback выше)")
         return super().__lt__(other)
 
 
@@ -162,17 +168,11 @@ class PriceHistoryPage(QWidget):
         combobox.blockSignals(False)
 
     def _to_decimal(self, value, field_name):
-        if isinstance(value, Decimal):
-            return value
-
-        text = str(value).strip().replace(",", ".")
-        if text == "":
-            return None
-
-        try:
-            return Decimal(text)
-        except (InvalidOperation, ValueError):
-            raise Exception(f"Поле '{field_name}' должно быть числом")
+        # Called live from on_item_changed (per keystroke, not only on Save),
+        # and the caller already does its own `if price is None: raise ...`
+        # check with a friendlier message once editing is finished - so an
+        # empty cell must stay `None` here, not raise immediately.
+        return parse_decimal_field(value, field_name, empty="none")
 
     def _to_datetime(self, value, field_name):
         if isinstance(value, datetime):

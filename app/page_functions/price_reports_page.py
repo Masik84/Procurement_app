@@ -40,6 +40,7 @@ from app.services.price_repository import PriceRepository
 from app.services.cost_calculation_service import CostCalculationService
 from app.utils.excel_format_rules import FORMATS
 from app.workers.excel_export_worker import ExcelExportWorker
+from app.utils.money import to_decimal as _shared_to_decimal, round4 as money_round4
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -1704,17 +1705,18 @@ class PriceReportsPage(QWidget):
             return ""
 
     def _to_decimal(self, value, default: Optional[Decimal] = None) -> Optional[Decimal]:
-        if value is None or value == "":
-            return default
-        if isinstance(value, Decimal):
-            return value
-        try:
-            return Decimal(str(value).replace(",", "."))
-        except (InvalidOperation, ValueError, TypeError):
-            return default
+        # Delegates to the shared app.utils.money.to_decimal implementation.
+        # Kept as a thin wrapper (instead of `_to_decimal = staticmethod(...)`)
+        # because this file's default is `None` (used to mean "blank cell"),
+        # while the shared helper's own default is Decimal("0").
+        return _shared_to_decimal(value, default)
 
     def _round4(self, value: Decimal) -> Decimal:
-        return value.quantize(Decimal("0.0001"))
+        # Delegates to the single project-wide rounding rule (ROUND_HALF_UP).
+        # Previously this quantized without a rounding mode, which silently
+        # used ROUND_HALF_EVEN and could round the same amount differently
+        # than every other module in the app.
+        return money_round4(value)
 
     def _decimal_or_empty(self, value):
         decimal_value = self._to_decimal(value)
@@ -1768,7 +1770,7 @@ class PriceReportsPage(QWidget):
         decimal_value = self._to_decimal(value)
         if decimal_value is None:
             return ""
-        rounded = int(decimal_value.quantize(Decimal("1")))
+        rounded = int(decimal_value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
         if blank_zero and rounded == 0:
             return ""
         return f"{rounded:,}".replace(",", " ")
@@ -1838,7 +1840,7 @@ class PriceReportsPage(QWidget):
             if decimal_value is None:
                 cell.value = ""
             else:
-                cell.value = int(decimal_value.quantize(Decimal("1")))
+                cell.value = int(decimal_value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
                 cell.number_format = FORMATS.INTEGER
             return
 

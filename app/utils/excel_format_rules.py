@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 """Единые правила форматирования Excel.
 
 Все рабочие форматы хранятся в локальном виде, как в старых рабочих выгрузках:
@@ -191,10 +196,10 @@ def set_number_format_safe(
                     if str(actual or "").strip().lower() == FORMATS.GENERAL.lower():
                         continue
                 except Exception:
-                    pass
+                    logger.exception("Подавленная ошибка (см. traceback выше)")
             return fmt
         except Exception:
-            pass
+            logger.exception("Подавленная ошибка (см. traceback выше)")
 
     return FORMATS.GENERAL
 

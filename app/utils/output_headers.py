@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 import re
 from typing import Iterable
 
@@ -162,6 +167,6 @@ def apply_header_style_and_formats(ws, headers: list[str], column_letter_func) -
                 # Automatic/black. Avoid stale white font from fixed color blocks.
                 cell.Font.ColorIndex = -4105
         except Exception:
-            pass
+            logger.exception("Подавленная ошибка (см. traceback выше)")
         if number_format:
             set_number_format_safe(ws.Columns(f"{letter}:{letter}"), number_format)

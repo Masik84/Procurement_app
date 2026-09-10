@@ -24,6 +24,7 @@ from app.services.supplier_service import SupplierService
 from app.services.supplier_currency_cost_service import SupplierCurrencyCostService
 from app.services.temp_cleanup_service import TempCleanupService
 from app.utils.text import clean_multi_spaces
+from app.utils.money import to_decimal, round4
 
 
 class TargetPriceService:
@@ -39,17 +40,8 @@ class TargetPriceService:
         )
         self.importer = TargetPriceImporter()
 
-    @staticmethod
-    def _to_decimal(value: object) -> Decimal:
-        if value is None:
-            return Decimal("0")
-        if isinstance(value, Decimal):
-            return value
-        return Decimal(str(value))
-
-    @staticmethod
-    def _round4(value: Decimal) -> Decimal:
-        return value.quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+    _to_decimal = staticmethod(to_decimal)
+    _round4 = staticmethod(round4)
 
     def start_batch(self) -> str:
         return f"TP_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{uuid.uuid4().hex[:6]}"

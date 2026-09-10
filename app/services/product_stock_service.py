@@ -16,6 +16,7 @@ from app.services.product_matching_service import ProductCreateData, ProductMatc
 from app.services.sales_stock_metrics_service import ProductStockMetrics, SalesStockMetricsService
 from app.services.temp_cleanup_service import TempCleanupService
 from app.utils.text import clean_multi_spaces
+from app.utils.money import to_decimal
 
 
 class ProductStockService:
@@ -30,13 +31,7 @@ class ProductStockService:
         self.exporter = ProductStockExporter(session)
         self.sales_metrics_service = SalesStockMetricsService(session)
 
-    @staticmethod
-    def _to_decimal(value: object) -> Decimal:
-        if value is None:
-            return Decimal("0")
-        if isinstance(value, Decimal):
-            return value
-        return Decimal(str(value))
+    _to_decimal = staticmethod(to_decimal)
 
     def cleanup_old_temp_rows(self, imported_by: str | None = None, before_date: date | None = None) -> int:
         # Daily cleanup is global by date: all temp rows older than today are stale.

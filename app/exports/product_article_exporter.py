@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 from pathlib import Path
 
 import pythoncom
@@ -52,7 +57,7 @@ class ProductArticleExporter:
             try:
                 ws.Range(f"A1:{last_col}1").AutoFilter(1)
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
 
     def _normalize_save_path(self, file_path: str) -> str:
         path = Path(file_path).expanduser()
@@ -97,18 +102,18 @@ class ProductArticleExporter:
                 if wb is not None:
                     wb.Close(SaveChanges=False)
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
 
             try:
                 if excel is not None:
                     excel.Quit()
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
 
             try:
                 pythoncom.CoUninitialize()
             except Exception:
-                pass
+                logger.exception("Подавленная ошибка (см. traceback выше)")
 
 # Backward-compatible alias.
 ProductArticleExcelExporter = ProductArticleExporter
