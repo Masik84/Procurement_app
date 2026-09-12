@@ -34,6 +34,7 @@ class Product(Base):
 
     articles = relationship("ProductArticle", back_populates="product", passive_deletes=True)
     price_history = relationship("PriceHistory", back_populates="product", passive_deletes=True)
+    uc3_history = relationship("ProductUc3History", back_populates="product", passive_deletes=True)
     current_prices = relationship("CurrentSupplierPrice", back_populates="product", passive_deletes=True)
     price_calculations = relationship("SupplierPriceCalculation", back_populates="product", passive_deletes=True)
     stock = relationship("ProductStock", back_populates="product", uselist=False, passive_deletes=True)
@@ -223,6 +224,32 @@ class PriceHistory(Base):
             "product_id",
             "supplier_id",
             "price_date",
+            "id",
+        ),
+    )
+
+
+class ProductUc3History(Base):
+    __tablename__ = "product_uc3_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    product_id = Column(
+        Integer,
+        ForeignKey("products.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    target_uc3 = Column(Integer, nullable=True)
+    walk_away_uc3 = Column(Integer, nullable=True)
+    change_date = Column(DateTime, nullable=False, index=True)
+
+    product = relationship("Product", back_populates="uc3_history")
+
+    __table_args__ = (
+        Index(
+            "ix_product_uc3_history_product_date_id",
+            "product_id",
+            "change_date",
             "id",
         ),
     )
@@ -766,9 +793,10 @@ class TempTargetPriceOption(Base):
     supplier_id = Column(
         Integer,
         ForeignKey("suppliers.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
+    source_type = Column(String(32), nullable=False, default="SUPPLIER")
     product_id = Column(
         Integer,
         ForeignKey("products.id", ondelete="CASCADE"),
@@ -839,9 +867,10 @@ class TargetPriceCalculation(Base):
     donor_supplier_id = Column(
         Integer,
         ForeignKey("suppliers.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
+    source_type = Column(String(32), nullable=False, default="SUPPLIER")
     product_id = Column(
         Integer,
         ForeignKey("products.id", ondelete="CASCADE"),

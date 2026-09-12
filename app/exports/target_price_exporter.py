@@ -13,6 +13,7 @@ from app.utils.excel_format_rules import save_workbook_xlsx
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import Product, ProductStock, TargetPriceCalculation, TempTargetPriceImport, TempTargetPriceOption
+from app.services.product_uc3_service import SOURCE_LABELS, SOURCE_SUPPLIER
 from app.utils.excel_fast_writer import write_excel_table
 from app.exports.excel_column_format import (
     apply_standard_worksheet_format,
@@ -201,7 +202,11 @@ class TargetPriceExporter:
         out: list[dict] = []
         for row in rows:
             product = row.product
-            donor = row.donor_supplier.name if row.donor_supplier else ""
+            donor = (
+                row.donor_supplier.name
+                if row.donor_supplier
+                else SOURCE_LABELS.get(getattr(row, "source_type", SOURCE_SUPPLIER), "")
+            )
             out.append({
                 "Supplier Article": row.supplier_article,
                 "Supplier Product Name": row.supplier_product_name,

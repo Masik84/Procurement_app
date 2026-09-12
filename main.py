@@ -170,6 +170,7 @@ class MyWindow(QMainWindow):
         self.btn_marking_rates = self.ui.btn_MarkingRates
         self.btn_pack_types = self.ui.btn_PackTypes
         self.btn_price_history = self.ui.btn_PriceHistory
+        self.btn_product_uc3 = self.ui.btn_ProductUc3
         self.btn_product_search = self.ui.btn_ProdSearchDB
         self.btn_supplier_price = self.ui.btn_SupplierPrice
         self.btn_customer_cost = self.ui.btn_CustomerCost
@@ -191,6 +192,7 @@ class MyWindow(QMainWindow):
             self.btn_marking_rates: lazy_page("app.page_functions.marking_rates_page", "MarkingRatesPage"),
             self.btn_pack_types: lazy_page("app.page_functions.pack_types_page", "PackTypesPage"),
             self.btn_price_history: lazy_page("app.page_functions.price_history_page", "PriceHistoryPage"),
+            self.btn_product_uc3: lazy_page("app.page_functions.product_uc3_page", "ProductUc3Page"),
             self.btn_product_search: lazy_page("app.page_functions.product_search_page", "ProductSearchPage"),
             self.btn_supplier_price: lazy_page("app.page_functions.supplier_prices_page", "SupplierPricesPage"),
             self.btn_customer_cost: lazy_page("app.page_functions.customer_costs_page", "CustomerCostsPage"),

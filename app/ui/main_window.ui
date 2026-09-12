@@ -581,6 +581,19 @@ QTabBar::tab:hover:!selected {
              </widget>
             </item>
             <item>
+             <widget class="QPushButton" name="btn_ProductUc3">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>30</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>Target uC3</string>
+              </property>
+             </widget>
+            </item>
+            <item>
              <widget class="QPushButton" name="btn_ProdSearchDB">
               <property name="minimumSize">
                <size>

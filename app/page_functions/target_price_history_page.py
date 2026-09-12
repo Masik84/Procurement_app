@@ -36,6 +36,7 @@ from app.exports.excel_column_format import (
     normalize_header,
 )
 from app.exports.target_price_history_exporter import TargetPriceHistoryExporter
+from app.services.product_uc3_service import SOURCE_LABELS, SOURCE_SUPPLIER
 from app.ui.table_style import resize_columns_for_multiline_headers, setup_data_table
 from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 from app.utils.text import clean_multi_spaces
@@ -511,6 +512,11 @@ class TargetPriceHistoryPage(QWidget):
         product = calc.product
         target_supplier = calc.target_supplier
         donor_supplier = calc.donor_supplier
+        donor_label = (
+            donor_supplier.name
+            if donor_supplier
+            else SOURCE_LABELS.get(getattr(calc, "source_type", SOURCE_SUPPLIER), "")
+        )
         return [
             calc.id,
             calc.calc_date,
@@ -523,7 +529,7 @@ class TargetPriceHistoryPage(QWidget):
             calc.target_price_pack,
             calc.currency_code,
             calc.fx_rate_used,
-            donor_supplier.name if donor_supplier else "",
+            donor_label,
             calc.full_cost_msk_source,
             self._calc_attr(calc, "cost_novo_wvat", "cost_novo_wvat_recalculated"),
             self._calc_attr(calc, "donor_currency_code"),

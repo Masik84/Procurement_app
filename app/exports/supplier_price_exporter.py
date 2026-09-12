@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 from app.db.models import PriceHistory, Product, ProductStock, Supplier, SupplierPriceCalculation, TempPriceImport, OrderPlanningCalculation
 from app.services.cost_calculation_service import CostCalculationService
 from app.services.price_repository import PriceRepository
+from app.services.product_uc3_service import ProductUc3Service
 from app.services.supplier_currency_cost_service import SupplierCurrencyCostService
 from app.utils.excel_fast_writer import write_excel_table
 from app.utils.excel_freeze import apply_freeze_panes
@@ -137,77 +138,6 @@ class SupplierPriceExporter:
         col = self._excel_column_letter(headers.index(header) + 1)
         set_number_format_safe(ws.Columns(f"{col}:{col}"), FORMATS.FX_INTEGER)
         ws.Columns(f"{col}:{col}").ColumnWidth = 7.29
-
-    def _fixed_vat_formula_literal(self) -> str:
-        """Return FixedCosts.vat as an Excel formula numeric literal."""
-        fixed = self.cost_calculation.get_fixed_costs()
-        vat = self._to_decimal(fixed.vat)
-        return format(vat.normalize(), "f") if vat else "0"
-
-    @staticmethod
-    def _r1c1_ref(offset: int) -> str:
-        return "RC" if offset == 0 else f"RC[{offset}]"
-
-    def _write_uc3_formulas(self, ws, headers: list[str], first_row: int, last_row: int) -> None:
-        if last_row < first_row:
-            return
-        required_headers = ["uC3", "Full Cost Msk", "Дистр цена", "Промо цена"]
-        if any(header not in headers for header in required_headers):
-            return
-
-        vat_literal = self._fixed_vat_formula_literal()
-        uc3_idx = headers.index("uC3") + 1
-        full_cost_idx = headers.index("Full Cost Msk") + 1
-        distr_idx = headers.index("Дистр цена") + 1
-        promo_idx = headers.index("Промо цена") + 1
-
-        full_cost_ref = self._r1c1_ref(full_cost_idx - uc3_idx)
-        distr_ref = self._r1c1_ref(distr_idx - uc3_idx)
-        promo_ref = self._r1c1_ref(promo_idx - uc3_idx)
-
-        min_price_expr = (
-            f'IF({distr_ref}="",{promo_ref},'
-            f'IF({promo_ref}="",{distr_ref},MIN({distr_ref},{promo_ref})))'
-        )
-        formula = (
-            f'=IF(OR(AND({distr_ref}="",{promo_ref}=""),'
-            f'{full_cost_ref}="",{vat_literal}=0),"",'
-            f'({min_price_expr}-{full_cost_ref})/(1+{vat_literal}))'
-        )
-
-        uc3_col = self._excel_column_letter(uc3_idx)
-        ws.Range(f"{uc3_col}{first_row}:{uc3_col}{last_row}").FormulaR1C1 = formula
-
-    def _write_min_uc3_stock_formulas(self, ws, headers: list[str], first_row: int, last_row: int) -> None:
-        if last_row < first_row:
-            return
-        required_headers = ["min uC3 stock", "Дистр цена", "Промо цена", "curr Landed cost"]
-        if any(header not in headers for header in required_headers):
-            return
-
-        vat_literal = self._fixed_vat_formula_literal()
-        target_idx = headers.index("min uC3 stock") + 1
-        distr_idx = headers.index("Дистр цена") + 1
-        promo_idx = headers.index("Промо цена") + 1
-        landed_idx = headers.index("curr Landed cost") + 1
-
-        distr_ref = self._r1c1_ref(distr_idx - target_idx)
-        promo_ref = self._r1c1_ref(promo_idx - target_idx)
-        landed_ref = self._r1c1_ref(landed_idx - target_idx)
-
-        no_distr_expr = f'OR({distr_ref}="",{distr_ref}=0)'
-        no_promo_expr = f'OR({promo_ref}="",{promo_ref}=0)'
-        min_price_expr = (
-            f'IF({no_distr_expr},{promo_ref},'
-            f'IF({no_promo_expr},{distr_ref},MIN({distr_ref},{promo_ref})))'
-        )
-        formula = (
-            f'=IF(OR(AND({no_distr_expr},{no_promo_expr}),{landed_ref}="",{vat_literal}=0),"",'
-            f'({min_price_expr}-{landed_ref})/(1+{vat_literal}))'
-        )
-
-        target_col = self._excel_column_letter(target_idx)
-        ws.Range(f"{target_col}{first_row}:{target_col}{last_row}").FormulaR1C1 = formula
 
     @staticmethod
     def _calc_pack_price(price_per_l: object, pack: object):
@@ -373,7 +303,10 @@ class SupplierPriceExporter:
         header_map = self._header_map(headers)
 
         text_headers = ["Supplier Article", "Категория ABC"]
-        price_decimal_headers = ["Price, L", "Price, pack", "Price, L (prev)", "Target price, L"]
+        price_decimal_headers = [
+            "Price, L", "Price, pack", "Target price (for suppl)", "Price, L (prev)",
+            "Target price, L",
+        ]
         rub_headers = [
             "Cost Novo with VAT",
             "Full Cost Msk",
@@ -386,7 +319,10 @@ class SupplierPriceExporter:
             "Best full Price, L",
             "Best full Price, L 2",
         ]
-        uc3_headers = ["uC3", "min uC3 stock", "uC3 PY", "uC3 3 mnth"]
+        uc3_headers = ["uC3", "min uC3 stock", "uC3 PY", "uC3 3 mnth", "Best uC3", "Best 2 uC3"]
+        uc3_integer_headers = ["Target uC3", "Walk-Away uC3"]
+        percent_integer_headers = ["Markup % (from suppl price)"]
+        change_headers = ["abs Change"]
         date_headers = ["last update", "last update (prev)", "last update Best1", "last update Best2"]
         integer_headers = [
             "Qty, pcs",
@@ -415,6 +351,12 @@ class SupplierPriceExporter:
             self._set_format_by_header(ws, header_map, header, FORMATS.MONEY_RUB_SIMPLE)
         for header in uc3_headers:
             self._set_format_by_header(ws, header_map, header, FORMATS.DECIMAL_2)
+        for header in uc3_integer_headers:
+            self._set_format_by_header(ws, header_map, header, FORMATS.INTEGER)
+        for header in percent_integer_headers:
+            self._set_format_by_header(ws, header_map, header, "0%")
+        for header in change_headers:
+            self._set_format_by_header(ws, header_map, header, FORMATS.DECIMAL_2_SIMPLE)
         for header in date_headers:
             self._set_format_by_header(ws, header_map, header, FORMATS.DATE)
         for header in integer_headers:
@@ -429,6 +371,13 @@ class SupplierPriceExporter:
             self._set_width_by_header(ws, header_map, header, 10.50)
         for header in ("uC3", "Target price, L", "uC3 PY", "uC3 3 mnth"):
             self._set_width_by_header(ws, header_map, header, 7.57)
+        self._set_width_by_header(ws, header_map, "Target price (for suppl)", 12.0)
+        self._set_width_by_header(ws, header_map, "Target uC3", 10.0)
+        self._set_width_by_header(ws, header_map, "Walk-Away uC3", 12.0)
+        self._set_width_by_header(ws, header_map, "Markup % (from suppl price)", 13.0)
+        self._set_width_by_header(ws, header_map, "abs Change", 10.0)
+        self._set_width_by_header(ws, header_map, "Best uC3", 9.0)
+        self._set_width_by_header(ws, header_map, "Best 2 uC3", 9.0)
         self._set_width_by_header(ws, header_map, "min uC3 stock", 10.50)
         self._set_width_by_header(ws, header_map, "last update", 11.00)
         self._set_width_by_header(ws, header_map, "last update (prev)", 11.00)
@@ -486,58 +435,52 @@ class SupplierPriceExporter:
             return None
         return decimal_value if decimal_value > Decimal("0") else None
 
-    def _calc_target_full_cost_msk_from_stock(self, stock) -> Decimal | None:
-        """Source Full Cost Msk for target-price reverse calculation.
+    def _calc_target_full_cost_msk_from_stock(self, stock, target_uc3, vat) -> Decimal | None:
+        """Return target Full Cost Msk from the active product Target uC3.
 
-        This is the business value requested for CostCalc_:
-        min(Дистр цена, Промо цена) - uC3 PY.
-
-        It is not the final supplier target price. The final Target price, L must be
-        calculated by the same reverse calculation as target_prices_page.
+        uC3 = (min positive sales price - Full Cost Msk) / (1 + VAT), therefore:
+        Full Cost Msk = min positive sales price - Target uC3 * (1 + VAT).
         """
-        if stock is None:
-            return None
+        return ProductUc3Service.full_cost_from_uc3(
+            stock=stock,
+            uc3_value=target_uc3,
+            vat=vat,
+        )
 
-        prices = [
-            value
-            for value in (
-                self._positive_decimal_or_none(getattr(stock, "distr_price", None)),
-                self._positive_decimal_or_none(getattr(stock, "promo_price", None)),
-            )
-            if value is not None
-        ]
-        if not prices:
+    def _calc_uc3_from_full_cost(self, *, stock, full_cost, vat) -> Decimal | None:
+        sale_price = ProductUc3Service.sales_reference_price(stock)
+        if sale_price is None or full_cost is None:
             return None
-
-        uc3_py_raw = getattr(stock, "uc3_py", None)
-        if uc3_py_raw is None:
-            return None
-
         try:
-            uc3_py = self._to_decimal(uc3_py_raw)
+            cost = self._to_decimal(full_cost)
+            vat_value = self._to_decimal(vat)
+            denominator = Decimal("1") + vat_value
+            if denominator == 0:
+                return None
+            return round4((sale_price - cost) / denominator)
         except Exception:
             return None
 
-        # In product_stock this field has default 0, so zero means "no PY data"
-        # for the CostCalc_ target-price calculation.
-        if uc3_py == Decimal("0"):
+    @staticmethod
+    def _round_two(value) -> Decimal | None:
+        if value is None or value == "":
+            return None
+        try:
+            return SupplierPriceExporter._to_decimal(value).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        except Exception:
             return None
 
-        return min(prices) - uc3_py
+    def _calc_target_price_l_for_export(
+        self, *, supplier, product_id: int, stock, calc_row, target_uc3, vat
+    ) -> Decimal | None:
+        """Calculate Target price, L through the existing reverse target-price logic.
 
-    def _calc_target_price_l_for_export(self, *, supplier, product_id: int, stock, calc_row) -> Decimal | None:
-        """Calculate Target price, L exactly through TargetPriceService reverse logic.
-
-        In target_prices_page, the selected supplier's Full Cost Msk is passed into
-        reverse_calculate_target_price(), and the result is the supplier price per L.
-        In CostCalc_ the source Full Cost Msk is calculated as:
-            min(Дистр цена, Промо цена) - uC3 PY
-        Then the same reverse calculation is applied for the currently loaded supplier.
+        The source Full Cost Msk is derived from the active Target uC3 for the product.
         """
         if supplier is None or not getattr(supplier, "id", None) or not product_id:
             return None
 
-        full_cost_source = self._calc_target_full_cost_msk_from_stock(stock)
+        full_cost_source = self._calc_target_full_cost_msk_from_stock(stock, target_uc3, vat)
         if full_cost_source is None:
             return None
 
@@ -844,12 +787,24 @@ class SupplierPriceExporter:
             .all()
         )
 
+        fixed = self.cost_calculation.get_fixed_costs()
+        vat = self._to_decimal(getattr(fixed, "vat", 0))
+        product_ids = {
+            int(temp_row.selected_product_id)
+            for temp_row, _calc, _product, _stock, _supplier in rows
+            if temp_row.selected_product_id is not None
+        }
+        uc3_targets = ProductUc3Service(self.session).get_current_map(product_ids)
+
         out_rows: list[dict] = []
 
         for temp_row, calc_row, product, stock, supplier in rows:
             current_supplier_name = supplier.name if supplier else ""
             product_id_for_row = temp_row.selected_product_id or 0
             current_price_date = temp_row.import_date
+            uc3_target_row = uc3_targets.get(int(product_id_for_row)) if product_id_for_row else None
+            target_uc3 = getattr(uc3_target_row, "target_uc3", None) if uc3_target_row else None
+            walk_away_uc3 = getattr(uc3_target_row, "walk_away_uc3", None) if uc3_target_row else None
 
             best1 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": ""}
             best2 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": ""}
@@ -895,17 +850,53 @@ class SupplierPriceExporter:
                 order_months=order_months,
             )
 
+            full_cost_msk = calc_row.full_cost_msk if calc_row else None
+            uc3_value = self._calc_uc3_from_full_cost(stock=stock, full_cost=full_cost_msk, vat=vat)
+            min_uc3_stock = self._calc_uc3_from_full_cost(
+                stock=stock,
+                full_cost=getattr(stock, "landed_cost", None) if stock else None,
+                vat=vat,
+            )
+            best_uc3 = self._calc_uc3_from_full_cost(stock=stock, full_cost=best1.get("price"), vat=vat)
+            best2_uc3 = self._calc_uc3_from_full_cost(stock=stock, full_cost=best2.get("price"), vat=vat)
+
+            markup_from_supplier = None
+            if uc3_value is not None and full_cost_msk is not None:
+                try:
+                    d_full_cost = self._to_decimal(full_cost_msk)
+                    if d_full_cost != 0:
+                        markup_from_supplier = (uc3_value * (Decimal("1") + vat)) / d_full_cost
+                except Exception:
+                    markup_from_supplier = None
+
+            abs_change = None
+            if price_per_l is not None and prev_price is not None:
+                try:
+                    abs_change = self._round_two(self._to_decimal(price_per_l) - self._to_decimal(prev_price))
+                except Exception:
+                    abs_change = None
+
             target_price_l = self._calc_target_price_l_for_export(
                 supplier=supplier,
                 product_id=product_id_for_row,
                 stock=stock,
                 calc_row=calc_row,
+                target_uc3=target_uc3,
+                vat=vat,
             )
+            # Keep the existing -3% rule for now: user explicitly asked not to remove it yet.
             if target_price_l is not None and price_per_l is not None:
                 supplier_price_l = self._to_decimal(price_per_l)
                 target_price_l = self._to_decimal(target_price_l)
-                if supplier_price_l.is_finite() and target_price_l.is_finite() and supplier_price_l > 0 and target_price_l > supplier_price_l:
-                    target_price_l = (supplier_price_l * Decimal("0.97")).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+                if (
+                    supplier_price_l.is_finite()
+                    and target_price_l.is_finite()
+                    and supplier_price_l > 0
+                    and target_price_l > supplier_price_l
+                ):
+                    target_price_l = (supplier_price_l * Decimal("0.97")).quantize(
+                        Decimal("0.0001"), rounding=ROUND_HALF_UP
+                    )
                 elif not target_price_l.is_finite():
                     target_price_l = None
 
@@ -918,31 +909,39 @@ class SupplierPriceExporter:
                     "Категория ABC": (product.abc_category or "-") if product else "-",
                     "Qty, pcs": self._excel_value(temp_row.qty_pcs),
                     "Volume, L": self._excel_value(temp_row.volume_l),
+                    "Target price (for suppl)": None,
                     "Price, L": self._excel_value(price_per_l),
                     "Price, pack": self._excel_value(price_pack_export),
                     "Currency": calc_row.currency_code if calc_row else (supplier.base_currency if supplier else ""),
                     "FX rate": self._round_fx_rate(calc_row.fx_rate_used if calc_row else None),
                     "Cost Novo with VAT": self._excel_value(calc_row.cost_novo_wvat if calc_row else None),
-                    "Full Cost Msk": self._excel_value(calc_row.full_cost_msk if calc_row else None),
+                    "Full Cost Msk": self._excel_value(full_cost_msk),
+                    "uC3": self._excel_value(uc3_value),
                     "Target price, L": self._excel_value(target_price_l),
                     "uC3 PY": self._excel_value(getattr(stock, "uc3_py", None) if stock else None),
                     "uC3 3 mnth": self._excel_value(getattr(stock, "uc3_3m", None) if stock else None),
+                    "Target uC3": target_uc3,
+                    "Walk-Away uC3": walk_away_uc3,
+                    "Markup % (from suppl price)": self._excel_value(markup_from_supplier),
                     "last update (prev)": prev_price_date,
                     "Price, L (prev)": self._excel_value(prev_price),
+                    "abs Change": self._excel_value(abs_change),
                     "Cost Novo with VAT (prev)": self._excel_value(prev_cost_novo),
                     "Full Cost Msk (prev)": self._excel_value(prev_full_cost),
                     "Дистр цена": self._excel_value(stock.distr_price if stock else None),
                     "Промо цена": self._excel_value(stock.promo_price if stock else None),
                     "curr LPC": self._excel_value(stock.lpc if stock else None),
                     "curr Landed cost": self._excel_value(stock.landed_cost if stock else None),
-                    "min uC3 stock": None,
+                    "min uC3 stock": self._excel_value(min_uc3_stock),
                     "Best Suppl": best1["supplier"],
                     "Best full Price, L": self._excel_value(best1["price"]),
+                    "Best uC3": self._excel_value(best_uc3),
                     "last update Best1": best1["date"],
                     "FX rate Best1": self._round_fx_rate(best1.get("fx_rate")),
                     "Currency Best1": best1.get("currency", ""),
                     "Best Suppl 2": best2["supplier"],
                     "Best full Price, L 2": self._excel_value(best2["price"]),
+                    "Best 2 uC3": self._excel_value(best2_uc3),
                     "last update Best2": best2["date"],
                     "FX rate Best2": self._round_fx_rate(best2.get("fx_rate")),
                     "Currency Best2": best2.get("currency", ""),
@@ -997,9 +996,9 @@ class SupplierPriceExporter:
                 "Price, L",
                 "Price, pack",
                 "Price, box",
+                "Volume, L",
                 "Qty, pcs",
                 "Qty, box",
-                "Volume, L",
             ]
             for col_index, header in enumerate(headers, start=1):
                 ws.Cells(1, col_index).Value = header
@@ -1127,18 +1126,25 @@ class SupplierPriceExporter:
                 row["Volume, L"] = self._excel_value(volume_value)
                 prepared_rows.append(row)
 
+            zero_preserving_headers = {
+                "uC3",
+                "min uC3 stock",
+                "Target uC3",
+                "Walk-Away uC3",
+                "Markup % (from suppl price)",
+                "abs Change",
+                "Best uC3",
+                "Best 2 uC3",
+            }
+
             def value_for_header(row, header, _col_index):
                 value = self._row_value_by_export_header(row, header)
-                if self._is_order_plan_export_header(header):
-                    # Для колонок заказа 0 — это значение, а не пустая ячейка.
-                    # Формат Excel сам покажет ноль как "-".
+                if self._is_order_plan_export_header(header) or header in zero_preserving_headers:
+                    # Для расчетных колонок 0 является реальным значением.
                     return self._excel_value(value)
                 return self._excel_value_or_blank(value)
 
             write_excel_table(ws, headers, prepared_rows, value_getter=value_for_header)
-
-            self._write_uc3_formulas(ws, headers, first_row=2, last_row=len(prepared_rows) + 1)
-            self._write_min_uc3_stock_formulas(ws, headers, first_row=2, last_row=len(prepared_rows) + 1)
 
             self._apply_header_common(ws, len(headers))
 
@@ -1167,6 +1173,7 @@ class SupplierPriceExporter:
             _paint_header_block("Supplier Article", "Full Cost Msk", self._rgb(205, 205, 205))
             _paint_header_block("uC3", "Target price, L", self._rgb(0, 176, 240))
             _paint_header_block("uC3 PY", "uC3 3 mnth", self._rgb(21, 61, 100), self._rgb(255, 255, 255))
+            _paint_header_block("Target uC3", "Markup % (from suppl price)", self._rgb(146, 208, 80))
             _paint_header_block("last update (prev)", "Full Cost Msk (prev)", self._rgb(166, 166, 166))
             _paint_header_block("Дистр цена", "min uC3 stock", self._rgb(192, 0, 0), self._rgb(255, 255, 255))
             _paint_header_block("Best Suppl", "Currency Best1", self._rgb(0, 176, 240))
@@ -1195,6 +1202,19 @@ class SupplierPriceExporter:
             for _cur_header in ("Currency", "Currency Best1", "Currency Best2"):
                 if _cur_header in headers:
                     ws.Columns(f"{self._excel_column_letter(headers.index(_cur_header)+1)}:{self._excel_column_letter(headers.index(_cur_header)+1)}").ColumnWidth = 8.14
+
+            # abs Change: preserve the draft's green-yellow-red 3-color scale.
+            if prepared_rows and "abs Change" in headers:
+                try:
+                    change_col = self._excel_column_letter(headers.index("abs Change") + 1)
+                    change_range = ws.Range(f"{change_col}2:{change_col}{len(prepared_rows) + 1}")
+                    change_range.FormatConditions.Delete()
+                    color_scale = change_range.FormatConditions.AddColorScale(3)
+                    color_scale.ColorScaleCriteria(1).FormatColor.Color = self._rgb(99, 190, 123)
+                    color_scale.ColorScaleCriteria(2).FormatColor.Color = self._rgb(255, 235, 132)
+                    color_scale.ColorScaleCriteria(3).FormatColor.Color = self._rgb(248, 105, 107)
+                except Exception:
+                    logger.exception("Не удалось применить условное форматирование abs Change")
 
             ws.Range(f"A1:{self._excel_column_letter(len(headers))}1").AutoFilter(1)
 

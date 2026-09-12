@@ -20,6 +20,14 @@ from app.imports.target_price_importer import TargetPriceImporter
 from app.services.cost_calculation_service import CostCalculationService
 from app.services.price_repository import PriceRepository
 from app.services.product_matching_service import ProductMatchingService
+from app.services.product_uc3_service import (
+    ProductUc3Service,
+    SOURCE_LABELS,
+    SOURCE_MANUAL,
+    SOURCE_SUPPLIER,
+    SOURCE_TARGET_UC3,
+    SOURCE_WALK_AWAY_UC3,
+)
 from app.services.supplier_service import SupplierService
 from app.services.supplier_currency_cost_service import SupplierCurrencyCostService
 from app.services.temp_cleanup_service import TempCleanupService
@@ -214,16 +222,59 @@ class TargetPriceService:
             for prices in prices_by_product.values()
             for price in prices
         }
+        product_ids = {
+            int(row.selected_product_id)
+            for row in rows
+            if row.selected_product_id is not None
+        }
         self.currency_cost_service.preload_reference_data(
-            product_ids=(row.selected_product_id for row in rows),
+            product_ids=product_ids,
             supplier_ids=supplier_ids,
         )
 
+        uc3_service = ProductUc3Service(self.session)
+        current_uc3 = uc3_service.get_current_map(product_ids)
+        stocks = {
+            int(stock.product_id): stock
+            for stock in (
+                self.session.query(ProductStock).filter(ProductStock.product_id.in_(product_ids)).all()
+                if product_ids else []
+            )
+        }
+        fixed = self.cost_calculation.get_fixed_costs()
+        vat = self._to_decimal(getattr(fixed, "vat", 0))
+
         created = 0
         for row in rows:
-            for supplier_price in prices_by_product.get(int(row.selected_product_id), []):
+            product_id = int(row.selected_product_id)
+            for supplier_price in prices_by_product.get(product_id, []):
                 self._create_option_from_snapshot(row, batch_id, imported_by, supplier_price)
                 created += 1
+
+            uc3_row = current_uc3.get(product_id)
+            stock = stocks.get(product_id)
+            if uc3_row is not None:
+                for source_type, uc3_value in (
+                    (SOURCE_TARGET_UC3, uc3_row.target_uc3),
+                    (SOURCE_WALK_AWAY_UC3, uc3_row.walk_away_uc3),
+                ):
+                    full_cost = ProductUc3Service.full_cost_from_uc3(
+                        stock=stock,
+                        uc3_value=uc3_value,
+                        vat=vat,
+                    )
+                    if full_cost is None:
+                        continue
+                    self._create_uc3_option(
+                        row=row,
+                        batch_id=batch_id,
+                        imported_by=imported_by,
+                        source_type=source_type,
+                        full_cost_msk=full_cost,
+                        change_date=uc3_row.change_date,
+                        fixed=fixed,
+                    )
+                    created += 1
 
         self.session.flush()
         self.session.execute(text("""
@@ -252,14 +303,70 @@ class TargetPriceService:
         ).populate_existing().all()
         options_by_row = {}
         for option in ordered_options:
-            row_options = options_by_row.setdefault(int(option.temp_import_id), [])
-            row_options.append(option)
+            options_by_row.setdefault(int(option.temp_import_id), []).append(option)
 
         for row in rows:
             options = options_by_row.get(int(row.id), [])
             row.selected_option_id = options[0].id if len(options) == 1 else None
         self.session.flush()
         return created
+
+    def _create_uc3_option(
+        self,
+        *,
+        row: TempTargetPriceImport,
+        batch_id: str,
+        imported_by: str,
+        source_type: str,
+        full_cost_msk: Decimal,
+        change_date: datetime | None,
+        fixed: FixedCosts,
+    ) -> TempTargetPriceOption:
+        vat = self._to_decimal(getattr(fixed, "vat", 0))
+        money = self._to_decimal(getattr(fixed, "money", 0))
+        storage = self._to_decimal(getattr(fixed, "storage", 0))
+        denominator = Decimal("1") + money
+        cost_novo_wvat = Decimal("0")
+        if denominator != 0:
+            cost_novo_wvat = (self._to_decimal(full_cost_msk) - storage * (Decimal("1") + vat)) / denominator
+
+        product = self.cost_calculation.get_product(int(row.selected_product_id))
+        option = TempTargetPriceOption(
+            temp_import_id=row.id,
+            batch_id=batch_id,
+            imported_by=imported_by,
+            calc_date=datetime.utcnow(),
+            supplier_id=None,
+            source_type=source_type,
+            product_id=row.selected_product_id,
+            supplier_name=SOURCE_LABELS.get(source_type, source_type),
+            supplier_article=row.supplier_article,
+            supplier_product_name=row.product_name,
+            supplier_price=Decimal("0"),
+            price_date_used=change_date,
+            cost_novo_wvat=self._round4(cost_novo_wvat),
+            full_cost_msk=self._round4(full_cost_msk),
+            currency_code="-",
+            fx_rate_used=Decimal("0"),
+            fx_markup_used=Decimal("0"),
+            fx_markup_abs_used=Decimal("0"),
+            transport_used=Decimal("0"),
+            reexport_used=Decimal("0"),
+            insurance_used=Decimal("0"),
+            agent_fee_used=Decimal("0"),
+            has_customs_used=False,
+            via_novo_used=False,
+            bank_fee_used=self._to_decimal(getattr(fixed, "bank_fee", 0)),
+            customs_fee_used=self._to_decimal(getattr(fixed, "customs_fee", 0)),
+            move_used=self._to_decimal(getattr(fixed, "move", 0)),
+            is_excise_used=bool(getattr(product, "is_excise", False)),
+            additional_customs_used=self._to_decimal(getattr(fixed, "additional_customs", 0)),
+            storage_used=storage,
+            marking_used=self._to_decimal(self.cost_calculation.get_marking_cost(int(row.selected_product_id))),
+            opt_rank=None,
+        )
+        self.session.add(option)
+        return option
 
     def _create_option_from_snapshot(self, row: TempTargetPriceImport, batch_id: str, imported_by: str, supplier_price) -> TempTargetPriceOption:
         calc = self.currency_cost_service.calculate_costs_for_price_record(
@@ -278,6 +385,7 @@ class TargetPriceService:
             imported_by=imported_by,
             calc_date=datetime.utcnow(),
             supplier_id=supplier_price.supplier_id,
+            source_type=SOURCE_SUPPLIER,
             product_id=row.selected_product_id,
             supplier_name=supplier_price.supplier_name,
             supplier_article=getattr(supplier_price, "supplier_article", None) or row.supplier_article,
@@ -388,6 +496,7 @@ class TargetPriceService:
                 imported_by=imported_by,
                 calc_date=datetime.utcnow(),
                 supplier_id=manual_supplier.id,
+                source_type=SOURCE_MANUAL,
                 product_id=row.selected_product_id,
                 supplier_name="Manual",
                 supplier_article=row.supplier_article,
@@ -606,10 +715,10 @@ class TargetPriceService:
         saved = 0
         for row in rows:
             if row.selected_product_id is None or row.selected_option_id is None:
-                raise ValueError("Для всех строк нужно выбрать Our Product Name и финального поставщика.")
+                raise ValueError("Для всех строк нужно выбрать Our Product Name и источник расчета.")
             option = options_by_id.get(int(row.selected_option_id))
             if option is None:
-                raise ValueError("Выбранный финальный поставщик не найден.")
+                raise ValueError("Выбранный источник расчета не найден.")
             product = self.cost_calculation.get_product(row.selected_product_id)
             pack = self._to_decimal(product.pack)
             cost_novo_wvat, target_price_l = self.reverse_calculate_target_price(
@@ -634,6 +743,7 @@ class TargetPriceService:
                 import_row_no=row.import_row_no,
                 target_supplier_id=target_supplier_id,
                 donor_supplier_id=option.supplier_id,
+                source_type=option.source_type or SOURCE_SUPPLIER,
                 product_id=row.selected_product_id,
                 supplier_article=row.supplier_article,
                 supplier_product_name=row.product_name,
@@ -641,6 +751,9 @@ class TargetPriceService:
                 target_price_pack=target_price_pack,
                 currency_code=currency_code,
                 fx_rate_used=fx_rate,
+                donor_supplier_price=(option.supplier_price if option.supplier_id is not None else None),
+                donor_currency_code=(option.currency_code if option.supplier_id is not None else None),
+                donor_fx_rate_used=(option.fx_rate_used if option.supplier_id is not None else None),
                 full_cost_msk_source=option.full_cost_msk,
                 cost_novo_wvat=cost_novo_wvat,
                 fx_markup_used=fx_markup,
