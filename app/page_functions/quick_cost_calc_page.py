@@ -4,7 +4,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from PySide6.QtCore import QFile, QEvent, QPoint, Qt
-from PySide6.QtWidgets import QApplication, QMessageBox, QToolTip, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QToolTip, QVBoxLayout, QWidget
 from PySide6.QtUiTools import QUiLoader
 
 from app.db.db import SessionLocal
@@ -12,6 +12,7 @@ from app.db.models import ExchangeRate, MarkingRate, Supplier
 from app.services.quick_cost_calculation_service import QuickCostCalculationService
 from app.utils.parsers import parse_loose_number, parse_user_percent
 from app.utils.text import clean_multi_spaces
+from app.utils.message_dialogs import show_error
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -454,23 +455,4 @@ class QuickCostCalcPage(QWidget):
         )
 
     def show_error_message(self, text: str):
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Ошибка")
-        msg.setIcon(QMessageBox.Critical)
-        msg.setMinimumSize(700, 400)
-
-        if len(text) > 500:
-            msg.setText("Произошла ошибка. Подробности ниже (используйте кнопку 'Show Details')")
-            msg.setDetailedText(text)
-        else:
-            msg.setText(text)
-
-        copy_button = msg.addButton("Copy", QMessageBox.ActionRole)
-        msg.addButton(QMessageBox.Ok)
-
-        def copy_text():
-            QApplication.clipboard().setText(text)
-
-        copy_button.clicked.connect(copy_text)
-        msg.exec()
-
+        show_error(self, text)

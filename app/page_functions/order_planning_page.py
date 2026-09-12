@@ -9,13 +9,11 @@ from PySide6.QtCore import QFile, Qt, QDate, QTimer
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
-    QApplication,
     QAbstractItemView,
     QCheckBox,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
-    QMessageBox,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -34,6 +32,7 @@ from app.utils.text import clean_multi_spaces
 from app.workers.excel_export_worker import start_excel_export
 from app.utils.output_headers import display_headers
 from app.utils.money import to_decimal
+from app.utils.message_dialogs import ask_yes_no, show_error, show_info
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -716,14 +715,12 @@ class OrderPlanningPage(QWidget):
                 return
 
             if not self._today_dates_selected() and saved_from and saved_to and (period_from != saved_from or period_to != saved_to):
-                answer = QMessageBox.question(
+                if not ask_yes_no(
                     self,
-                    "Период не совпадает",
                     f"Период Ср.Продаж и Период фильтра не совпадает. В БД рассчитанный период {self._format_period(saved_from, saved_to)}. Продолжить?",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No,
-                )
-                if answer != QMessageBox.Yes:
+                    title="Период не совпадает",
+                    default_yes=False,
+                ):
                     return
 
             self._base_rows = base_rows
@@ -1012,17 +1009,7 @@ class OrderPlanningPage(QWidget):
             self.ui.label_msg.style().polish(self.ui.label_msg)
             self.ui.label_msg.setVisible(True)
         else:
-            QMessageBox.information(self, "Сообщение", text)
+            show_info(self, text, title="Сообщение")
 
     def show_error_message(self, text: str):
-        msg = QMessageBox(self)
-        msg.setIcon(QMessageBox.Warning)
-        msg.setWindowTitle("Ошибка")
-        msg.setText(text if len(text) <= 500 else "Произошла ошибка. Подробности ниже.")
-        if len(text) > 500:
-            msg.setDetailedText(text)
-        copy_btn = msg.addButton("Copy", QMessageBox.ActionRole)
-        msg.addButton(QMessageBox.Ok)
-        msg.exec()
-        if msg.clickedButton() == copy_btn:
-            QApplication.clipboard().setText(text)
+        show_error(self, text)

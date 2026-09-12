@@ -3,12 +3,13 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Mapping
 
-from PySide6.QtWidgets import QInputDialog, QMessageBox, QWidget
+from PySide6.QtWidgets import QInputDialog, QWidget
 
 from app.db.db import SessionLocal
 from app.db.models import PackType
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
+from app.utils.message_dialogs import show_warning
 
 
 def _format_decimal(value: object) -> str:
@@ -25,21 +26,17 @@ def ask_pack_type(parent: QWidget, error) -> Decimal | None:
     """Create a missing PackType volume using a package name selected from the DB."""
     options = list(getattr(error, "options", []) or [])
     if not options:
-        QMessageBox.warning(
+        show_warning(
             parent,
-            "Вид упаковки не найден",
             f"Нет вида упаковки для {_format_decimal(getattr(error, 'requested_pack', ''))}.\n"
             "Справочник видов упаковки пуст. Сначала добавьте упаковку в справочник Pack types.",
+            title="Вид упаковки не найден",
         )
         return None
 
     requested_pack = parse_loose_number(getattr(error, "requested_pack", None))
     if requested_pack is None:
-        QMessageBox.warning(
-            parent,
-            "Вид упаковки не найден",
-            "Не удалось определить объем упаковки.",
-        )
+        show_warning(parent, "Не удалось определить объем упаковки.", title="Вид упаковки не найден")
         return None
     requested_pack = Decimal(requested_pack)
 
@@ -54,11 +51,7 @@ def ask_pack_type(parent: QWidget, error) -> Decimal | None:
 
     names = sorted(names_by_key.values(), key=str.casefold)
     if not names:
-        QMessageBox.warning(
-            parent,
-            "Вид упаковки не найден",
-            "В справочнике Pack types нет заполненных названий упаковок.",
-        )
+        show_warning(parent, "В справочнике Pack types нет заполненных названий упаковок.", title="Вид упаковки не найден")
         return None
 
     selected_name, ok = QInputDialog.getItem(

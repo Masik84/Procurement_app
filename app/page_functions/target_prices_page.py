@@ -7,8 +7,8 @@ from pathlib import Path
 from PySide6.QtCore import QFile, Qt, QEvent, QPoint, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLineEdit,
-    QMenu, QMessageBox, QTableWidgetItem, QToolTip, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLineEdit,
+    QMenu, QTableWidgetItem, QToolTip, QVBoxLayout, QWidget,
 )
 from PySide6.QtUiTools import QUiLoader
 
@@ -27,6 +27,7 @@ from app.utils.text import clean_multi_spaces
 from app.ui.table_style import *
 from app.workers.excel_export_worker import start_excel_export
 from app.services.qty_in_box_service import normalize_qty_in_box
+from app.utils.message_dialogs import show_error
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -173,20 +174,7 @@ class TargetPricesPage(QWidget):
         self.ui.label_msg.setVisible(True)
 
     def show_error_message(self, text: str):
-        text = str(text or "Неизвестная ошибка").strip() or "Неизвестная ошибка"
-        msg = QMessageBox(self)
-        msg.setIcon(QMessageBox.Warning)
-        msg.setWindowTitle("Ошибка")
-        msg.setTextFormat(Qt.PlainText)
-        msg.setText(text)
-        msg.setMinimumWidth(520)
-        msg.setStyleSheet("QMessageBox { background-color: #fffaf4; } QMessageBox QLabel { color: #262626; } QPushButton { color: #262626; }")
-        copy_btn = msg.addButton("Copy", QMessageBox.ActionRole)
-        msg.addButton(QMessageBox.Ok)
-        msg.exec()
-        if msg.clickedButton() == copy_btn:
-            QApplication.clipboard().setText(text)
-
+        show_error(self, text)
     def set_combo_text(self, combo: QComboBox, value: str):
         idx = combo.findText(value)
         if idx >= 0:

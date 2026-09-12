@@ -16,10 +16,8 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QApplication,
     QComboBox,
     QFileDialog,
-    QMessageBox,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -41,6 +39,7 @@ from app.ui.table_style import resize_columns_for_multiline_headers, setup_data_
 from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 from app.utils.text import clean_multi_spaces
 from app.workers.excel_export_worker import start_excel_export
+from app.utils.message_dialogs import show_error
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -767,17 +766,4 @@ class TargetPriceHistoryPage(QWidget):
         self.show_message("")
 
     def show_error_message(self, text: str):
-        self.show_message(text)
-        msg = QMessageBox()
-        msg.setWindowTitle("Ошибка")
-        msg.setIcon(QMessageBox.Critical)
-        msg.setMinimumSize(900, 600)
-        if len(text) > 500:
-            msg.setText("Произошла ошибка. Подробности ниже (используйте кнопку 'Show Details')")
-            msg.setDetailedText(text)
-        else:
-            msg.setText(text)
-        copy_button = msg.addButton("Copy", QMessageBox.ActionRole)
-        msg.addButton(QMessageBox.Ok)
-        copy_button.clicked.connect(lambda: QApplication.clipboard().setText(text))
-        msg.exec_()
+        show_error(self, text)

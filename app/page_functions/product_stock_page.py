@@ -12,14 +12,12 @@ from openpyxl import Workbook
 from PySide6.QtCore import QFile, Qt, QUrl, QTimer, QEvent, QPoint
 from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QMenu,
-    QMessageBox,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -45,6 +43,7 @@ from app.services.qty_in_box_service import normalize_qty_in_box
 from app.utils.gui_table_actions import commit_active_table_item_editors
 from app.ui.table_style import *
 from app.utils.output_headers import display_headers
+from app.utils.message_dialogs import ask_yes_no, show_error
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 UI_PATH = BASE_DIR / "app" / "ui" / "windows" / "stock_supplier_orders.ui"
@@ -225,21 +224,7 @@ class ProductStockPage(QWidget):
         self.ui.label_msg.setVisible(True)
 
     def show_error_message(self, text: str):
-        self.clear_message()
-
-        msg = QMessageBox(self)
-        msg.setIcon(QMessageBox.Warning)
-        msg.setWindowTitle("Ошибка")
-        msg.setText(text)
-
-        copy_btn = msg.addButton("Copy", QMessageBox.ActionRole)
-        msg.addButton(QMessageBox.Ok)
-
-        msg.exec()
-
-        if msg.clickedButton() == copy_btn:
-            QApplication.clipboard().setText(text)
-
+        show_error(self, text)
     def start_new_batch(self):
         self._batch_id = f"PS_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{uuid.uuid4().hex[:6]}"
         self._imported_by = get_current_username()
@@ -1055,14 +1040,12 @@ class ProductStockPage(QWidget):
         if not sheets:
             return
 
-        answer = QMessageBox.question(
+        if not ask_yes_no(
             self,
-            "Ошибки импорта",
             "Сохранить файл с ошибками?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
-        )
-        if answer != QMessageBox.Yes:
+            title="Ошибки импорта",
+            default_yes=True,
+        ):
             return
 
         QTimer.singleShot(200, lambda s=sheets: self._open_issue_save_dialog(s))
@@ -1118,7 +1101,7 @@ class ProductStockPage(QWidget):
             self.show_error_message(str(e))
 
     def reset_all(self):
-        if QMessageBox.question(self, "Подтверждение", "Сбросить все данные текущего импорта?") != QMessageBox.Yes:
+        if not ask_yes_no(self, "Сбросить все данные текущего импорта?", title="Подтверждение", default_yes=False):
             return
         try:
             with self.get_session() as session:

@@ -7,13 +7,11 @@ from pathlib import Path
 from PySide6.QtCore import QFile, Qt, QUrl, QTimer
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
     QMenu,
-    QMessageBox,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -34,6 +32,7 @@ from app.utils.text import clean_multi_spaces
 from app.ui.table_style import *
 from app.workers.excel_export_worker import start_excel_export
 from app.services.qty_in_box_service import normalize_qty_in_box
+from app.utils.message_dialogs import show_error
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -203,19 +202,7 @@ class CustomerCostsPage(QWidget):
 
     def show_error_message(self, text: str):
         self.clear_message()
-
-        msg = QMessageBox(self)
-        msg.setIcon(QMessageBox.Warning)
-        msg.setWindowTitle("Ошибка")
-        msg.setText(text)
-
-        copy_btn = msg.addButton("Copy", QMessageBox.ActionRole)
-        msg.addButton(QMessageBox.Ok)
-
-        msg.exec()
-
-        if msg.clickedButton() == copy_btn:
-            QApplication.clipboard().setText(text)
+        show_error(self, text)
 
     def start_new_batch(self):
         self._batch_id = f"CC_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{uuid.uuid4().hex[:6]}"

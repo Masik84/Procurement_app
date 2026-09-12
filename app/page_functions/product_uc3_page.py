@@ -10,10 +10,8 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QApplication,
     QComboBox,
     QFileDialog,
-    QMessageBox,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -29,6 +27,7 @@ from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 from app.utils.gui_table_actions import commit_active_table_item_editors
 from app.utils.text import clean_multi_spaces, normalize_product_name
 from app.workers.excel_export_worker import start_excel_export
+from app.utils.message_dialogs import show_error
 
 
 logger = logging.getLogger(__name__)
@@ -156,21 +155,7 @@ class ProductUc3Page(QWidget):
         self.ui.label_msg.setVisible(True)
 
     def show_error_message(self, text: str):
-        msg = QMessageBox(self)
-        msg.setIcon(QMessageBox.Warning)
-        msg.setWindowTitle("Ошибка")
-        msg.setTextFormat(Qt.PlainText)
-        msg.setText(str(text or "Неизвестная ошибка"))
-        copy_btn = msg.addButton("Copy", QMessageBox.ActionRole)
-        msg.addButton(QMessageBox.Ok)
-        msg.exec()
-        if msg.clickedButton() == copy_btn:
-            QApplication.clipboard().setText(str(text or ""))
-
-    # ------------------------------------------------------------------
-    # Product editor search in the TOP panel. This intentionally does not
-    # filter the table; it only filters the product combo opened in a cell.
-    # ------------------------------------------------------------------
+        show_error(self, text)
     def load_find_brands(self):
         current = clean_multi_spaces(self.ui.cbo_FindBrand.currentText())
         with self.get_session() as session:

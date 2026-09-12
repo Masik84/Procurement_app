@@ -10,9 +10,7 @@ from PySide6.QtCore import QFile, Qt, QThread
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
-    QApplication,
     QAbstractItemView,
-    QMessageBox,
     QInputDialog,
     QFileDialog,
     QTableWidgetItem,
@@ -41,6 +39,7 @@ from app.services.cost_calculation_service import CostCalculationService
 from app.utils.excel_format_rules import FORMATS
 from app.workers.excel_export_worker import ExcelExportWorker
 from app.utils.money import to_decimal as _shared_to_decimal, round4 as money_round4
+from app.utils.message_dialogs import show_error
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -1864,22 +1863,4 @@ class PriceReportsPage(QWidget):
         self.ui.label_msg.setVisible(False)
 
     def show_error_message(self, text):
-        msg = QMessageBox()
-        msg.setWindowTitle("Ошибка")
-        msg.setIcon(QMessageBox.Critical)
-        msg.setMinimumSize(900, 600)
-
-        if len(text) > 500:
-            msg.setText("Произошла ошибка. Подробности ниже (используйте кнопку 'Show Details')")
-            msg.setDetailedText(text)
-        else:
-            msg.setText(text)
-
-        copy_button = msg.addButton("Copy", QMessageBox.ActionRole)
-        msg.addButton(QMessageBox.Ok)
-
-        def copy_text():
-            QApplication.clipboard().setText(text)
-
-        copy_button.clicked.connect(copy_text)
-        msg.exec_()
+        show_error(self, text)

@@ -14,11 +14,9 @@ import win32com.client as win32
 from app.utils.excel_format_rules import save_workbook_xlsx
 from sqlalchemy.exc import SQLAlchemyError
 from PySide6.QtWidgets import (
-    QMessageBox,
     QMenu,
     QTableWidgetItem,
     QWidget,
-    QApplication,
     QVBoxLayout,
     QCheckBox,
     QHBoxLayout,
@@ -46,6 +44,7 @@ from app.utils.output_headers import display_headers, standardize_output_header
 from app.utils.excel_fast_writer import write_excel_table
 from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 from app.utils.money import parse_decimal_field
+from app.utils.message_dialogs import show_error
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -1313,22 +1312,4 @@ class ProductsPage(QWidget):
         self.ui.label_msg.setVisible(False)
 
     def show_error_message(self, text):
-        msg = QMessageBox()
-        msg.setWindowTitle("Ошибка")
-        msg.setIcon(QMessageBox.Critical)
-        msg.setMinimumSize(900, 600)
-
-        if len(text) > 500:
-            msg.setText("Произошла ошибка. Подробности ниже (используйте кнопку 'Show Details')")
-            msg.setDetailedText(text)
-        else:
-            msg.setText(text)
-
-        copy_button = msg.addButton("Copy", QMessageBox.ActionRole)
-        msg.addButton(QMessageBox.Ok)
-
-        def copy_text():
-            QApplication.clipboard().setText(text)
-
-        copy_button.clicked.connect(copy_text)
-        msg.exec_()
+        show_error(self, text)

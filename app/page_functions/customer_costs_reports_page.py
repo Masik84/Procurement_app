@@ -13,11 +13,9 @@ from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QApplication,
     QComboBox,
     QFileDialog,
     QMenu,
-    QMessageBox,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -33,6 +31,7 @@ from app.ui.table_style import (
     setup_data_table,
 )
 from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
+from app.utils.message_dialogs import show_error
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -831,4 +830,4 @@ class CustomerCostsReportsPage(QWidget):
 
     def show_error_message(self, text: str):
         self.show_message(text)
-        QMessageBox.critical(self, "Ошибка", text)
+        show_error(self, text)

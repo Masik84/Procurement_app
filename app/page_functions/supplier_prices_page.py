@@ -13,7 +13,6 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QFile, QEvent, QPoint, QDate, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -22,7 +21,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLineEdit,
     QMenu,
-    QMessageBox,
     QTableWidget,
     QTableWidgetItem,
     QToolTip,
@@ -48,6 +46,7 @@ from app.utils.text import clean_multi_spaces
 from app.services.qty_in_box_service import normalize_qty_in_box
 from app.ui.table_style import *
 from app.workers.excel_export_worker import start_excel_export
+from app.utils.message_dialogs import ask_yes_no, show_error
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -296,27 +295,19 @@ class SupplierPricesPage(QWidget):
             combo.setCurrentText(value)
 
     def ask_rf_prices_include_vat(self) -> bool:
-        return (
-            QMessageBox.question(
-                self,
-                "Поставщик РФ",
-                "Цены поставщика с НДС?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes,
-            )
-            == QMessageBox.Yes
+        return ask_yes_no(
+            self,
+            "Цены поставщика с НДС?",
+            title="Поставщик РФ",
+            default_yes=True,
         )
 
     def ask_export_calculated_excel(self) -> bool:
-        return (
-            QMessageBox.question(
-                self,
-                "Excel",
-                "Сохранить рассчитанные данные в Excel?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes,
-            )
-            == QMessageBox.Yes
+        return ask_yes_no(
+            self,
+            "Сохранить рассчитанные данные в Excel?",
+            title="Excel",
+            default_yes=True,
         )
 
     def ask_order_planning_months_for_export(self):
@@ -1600,15 +1591,4 @@ class SupplierPricesPage(QWidget):
         self.ui.label_msg.setVisible(False)
 
     def show_error_message(self, text: str):
-        msg = QMessageBox(self)
-        msg.setIcon(QMessageBox.Warning)
-        msg.setWindowTitle("Ошибка")
-        msg.setText(text)
-
-        copy_btn = msg.addButton("Copy", QMessageBox.ActionRole)
-        msg.addButton(QMessageBox.Ok)
-
-        msg.exec()
-
-        if msg.clickedButton() == copy_btn:
-            QApplication.clipboard().setText(text)
+        show_error(self, text)

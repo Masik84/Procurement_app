@@ -7,14 +7,12 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QFile, QEvent, QPoint, QTimer
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
     QLineEdit,
     QMenu,
-    QMessageBox,
     QTableWidgetItem,
     QToolTip,
     QVBoxLayout,
@@ -37,6 +35,7 @@ from app.utils.text import clean_multi_spaces
 from app.workers.excel_export_worker import start_excel_export
 from app.services.qty_in_box_service import normalize_qty_in_box
 from app.utils.gui_table_actions import commit_active_table_item_editors
+from app.utils.message_dialogs import ask_yes_no, show_error
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -173,11 +172,11 @@ class ProductSearchPage(QWidget):
         self.ui.label_msg.setText(text)
 
     def show_error_message(self, text: str):
-        self.ui.label_msg.setText(text)
-        QMessageBox.warning(self, "Ошибка", text)
+        self.ui.label_msg.setText(str(text))
+        show_error(self, text)
 
     def show_popup_error(self, text: str):
-        QMessageBox.warning(self, "Ошибка", text)
+        show_error(self, text)
 
     def set_combo_text(self, combo: QComboBox, value: str):
         index = combo.findText(value)
@@ -813,14 +812,12 @@ class ProductSearchPage(QWidget):
 
         save_to_excel = False
         if not save_to_db_only:
-            answer = QMessageBox.question(
+            save_to_excel = ask_yes_no(
                 self,
-                "Сохранение",
                 "Сохранить в Excel?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
+                title="Сохранение",
+                default_yes=False,
             )
-            save_to_excel = answer == QMessageBox.Yes
 
         try:
             export_rows: list[dict] = []
