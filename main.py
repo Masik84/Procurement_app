@@ -1,19 +1,34 @@
 from __future__ import annotations
 
 import os
-import faulthandler
 import logging
 import sys
 import traceback
 from pathlib import Path
 
 from config import BASE_DIR
-from app.logging_config import setup_logging
+from app.logging_config import (
+    flush_logs,
+    install_thread_exception_logging,
+    log_startup_stage,
+    setup_logging,
+)
 
 LOG_PATH = setup_logging(BASE_DIR)
 logger = logging.getLogger(__name__)
+install_thread_exception_logging(logger)
+log_startup_stage(logger, "before PySide6 imports")
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt, QSize, QRect, QEvent
+from PySide6.QtCore import (
+    QEasingCurve,
+    QPropertyAnimation,
+    Qt,
+    QSize,
+    QRect,
+    QEvent,
+    QtMsgType,
+    qInstallMessageHandler,
+)
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
@@ -27,6 +42,39 @@ from PySide6.QtWidgets import (
     QListView,
     QStyledItemDelegate,
 )
+
+log_startup_stage(logger, "PySide6 imports complete")
+
+
+def _qt_message_handler(message_type, context, message):
+    """Mirror Qt diagnostics into app.log instead of losing them on console."""
+    level = logging.INFO
+    if message_type == QtMsgType.QtWarningMsg:
+        level = logging.WARNING
+    elif message_type in (QtMsgType.QtCriticalMsg, QtMsgType.QtFatalMsg):
+        level = logging.CRITICAL
+
+    location = ""
+    if context is not None:
+        file_name = getattr(context, "file", None)
+        line = getattr(context, "line", 0)
+        function = getattr(context, "function", None)
+        pieces = []
+        if file_name:
+            pieces.append(str(file_name))
+        if line:
+            pieces.append(str(line))
+        if function:
+            pieces.append(str(function))
+        if pieces:
+            location = " | " + ":".join(pieces)
+
+    logger.log(level, "QT | %s%s", message, location)
+    flush_logs()
+
+
+qInstallMessageHandler(_qt_message_handler)
+log_startup_stage(logger, "Qt message handler installed")
 
 from app.ui import resource_rc  # noqa: F401
 from app.ui.main_window_ui import Ui_MainWindow
@@ -53,6 +101,7 @@ def global_exception_handler(exc_type, exc_value, exc_traceback):
         LOG_PATH,
         exc_info=(exc_type, exc_value, exc_traceback),
     )
+    flush_logs()
 
     print("\n" + "=" * 80)
     print("APPLICATION CRASHED")
@@ -64,13 +113,6 @@ def global_exception_handler(exc_type, exc_value, exc_traceback):
 
 
 sys.excepthook = global_exception_handler
-
-# Also print the active Python frames for native Qt/PySide crashes such as
-# Windows 0xC0000005, which bypass sys.excepthook.
-try:
-    faulthandler.enable(all_threads=True)
-except Exception:
-    pass
 
 def lazy_page(module_name: str, class_name: str):
     def factory():
@@ -492,13 +534,26 @@ if __name__ == "__main__":
     os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
     os.environ["QT_QPA_PLATFORM"] = "windows"
 
+    log_startup_stage(logger, "creating QApplication")
     app = QApplication(sys.argv)
+    log_startup_stage(logger, "QApplication created")
+
+    log_startup_stage(logger, "initialising table scale manager")
     initialise_table_scale_manager(app)
+    log_startup_stage(logger, "table scale manager initialised")
 
     style_path = Path(__file__).resolve().parent / "app" / "ui" / "styles" / "app_styles.qss"
     PAGE_STYLESHEET = style_path.read_text(encoding="utf-8") if style_path.exists() else ""
+    log_startup_stage(logger, "stylesheet loaded")
 
+    log_startup_stage(logger, "creating main window")
     window = MyWindow()
-    window.show()
+    log_startup_stage(logger, "main window created")
 
-    sys.exit(app.exec())
+    window.show()
+    log_startup_stage(logger, "main window shown; entering event loop")
+
+    exit_code = app.exec()
+    logger.info("Application event loop finished, exit code: %s", exit_code)
+    flush_logs()
+    sys.exit(exit_code)

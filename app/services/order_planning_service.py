@@ -4,7 +4,7 @@ import os
 import math
 from dataclasses import dataclass
 from datetime import date, datetime
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Optional
 
@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import OrderPlanningCalculation, Product, ProductStock, SalesProductLink
 from app.services.product_matching_service import ProductMatchingService
+from app.services.qty_in_box_service import normalize_qty_in_box
 from app.utils.text import clean_multi_spaces
 from app.utils.money import to_decimal, round4
 
@@ -75,11 +76,19 @@ class OrderPlanningService:
             return False
         return None
 
+    @staticmethod
+    def _qty_in_box_from_sales(value: object) -> int | None:
+        """Return valid Qty in Box; bad source values must not crash product check."""
+        try:
+            return normalize_qty_in_box(value, field_name="Кол_во_в_упак")
+        except (TypeError, ValueError, InvalidOperation):
+            return None
+
     def _sales_engine(self):
         return create_engine(self.sales_db_uri, pool_pre_ping=True)
 
     def _read_sales_products(self, sales_codes: Optional[list[str]] = None) -> pd.DataFrame:
-        cols = ['"Код"', '"Артикул"', '"Продукт_упаковка"', '"Упаковка"', '"Brand"', '"Акциз_да_нет"', '"Группа_бренда"']
+        cols = ['"Код"', '"Артикул"', '"Продукт_упаковка"', '"Упаковка"', '"Кол_во_в_упак"', '"Brand"', '"Акциз_да_нет"', '"Группа_бренда"']
         query = (
             f"SELECT {', '.join(cols)} FROM products "
             "WHERE \"Группа_бренда\" = ANY(:brand_groups) "
@@ -197,6 +206,7 @@ class OrderPlanningService:
             "sales_article": sales_df["Артикул"].map(clean_multi_spaces),
             "sales_name": sales_df["Продукт_упаковка"].map(clean_multi_spaces),
             "sales_pack": sales_df["Упаковка"],
+            "sales_qty_in_box": sales_df["Кол_во_в_упак"].map(self._qty_in_box_from_sales),
             "sales_brand": sales_df["Brand"].map(clean_multi_spaces),
             "sales_excise": sales_df["Акциз_да_нет"].map(self._bool_from_sales_excise),
         })
@@ -214,6 +224,7 @@ class OrderPlanningService:
             sales_article = source.sales_article
             sales_name = source.sales_name
             sales_pack = source.sales_pack
+            sales_qty_in_box = source.sales_qty_in_box
             sales_brand = source.sales_brand
             sales_excise = source.sales_excise
 
@@ -245,6 +256,21 @@ class OrderPlanningService:
                     auto_found = True
                     auto_matched += 1
 
+            product_qty_in_box = None
+            qty_in_box_missing = False
+            qty_in_box_mismatch = False
+            if product is not None:
+                try:
+                    product_qty_in_box = normalize_qty_in_box(product.qty_in_box)
+                except ValueError:
+                    product_qty_in_box = None
+                if sales_qty_in_box is not None:
+                    qty_in_box_missing = product_qty_in_box is None
+                    qty_in_box_mismatch = (
+                        product_qty_in_box is not None
+                        and product_qty_in_box != sales_qty_in_box
+                    )
+
             is_new = link is None
             is_changed = False
             if is_new:
@@ -254,21 +280,33 @@ class OrderPlanningService:
                     is_changed = True
                 if linked_product is None and product is not None:
                     is_changed = True
+                if qty_in_box_missing or qty_in_box_mismatch:
+                    is_changed = True
                 if is_changed:
                     changed_count += 1
 
             if not is_new and not is_changed and not auto_found:
                 continue
 
+            unmatched = product is None
             rows.append({
                 "sales_code": sales_code,
                 "sales_article": sales_article,
                 "sales_product_name": sales_name,
                 "sales_pack": self._to_decimal(sales_pack),
+                "sales_qty_in_box": sales_qty_in_box,
+                "product_qty_in_box": product_qty_in_box,
                 "sales_brand": sales_brand,
                 "sales_is_excise": sales_excise,
                 "product_id": product.id if product else None,
                 "product_name": product.name if product else "",
+                "new_product_name": sales_name if unmatched else "",
+                "new_brand": sales_brand if unmatched else "",
+                "new_pack": self._to_decimal(sales_pack) if unmatched else None,
+                "new_qty_in_box": sales_qty_in_box if unmatched else None,
+                "new_is_excise": bool(sales_excise) if unmatched and sales_excise is not None else (False if unmatched else None),
+                "qty_in_box_missing": qty_in_box_missing,
+                "qty_in_box_mismatch": qty_in_box_mismatch,
                 "is_auto_matched": auto_found,
                 "is_new": is_new,
             })
@@ -276,25 +314,42 @@ class OrderPlanningService:
         return ProductCheckResult(rows, auto_matched, new_count, changed_count)
 
     def _ensure_product_for_row(self, row: dict) -> Product | None:
-        """Return selected product or create a new Product from manually typed Product Name."""
+        """Return selected product or create a new Product from dedicated new-product fields."""
         product_id = row.get("product_id")
+        sales_qty_in_box = self._qty_in_box_from_sales(row.get("sales_qty_in_box"))
         if product_id:
             product = self.session.query(Product).filter(Product.id == int(product_id)).first()
             if product:
+                # Sales Qty in Box may fill an empty Product value, but it never
+                # overwrites a non-empty value automatically.
+                if product.qty_in_box is None and sales_qty_in_box is not None:
+                    product.qty_in_box = sales_qty_in_box
                 row["product_id"] = product.id
                 row["product_name"] = product.name
                 row["brand"] = product.brand
                 row["family"] = product.family
                 row["pack"] = product.pack
+                row["product_qty_in_box"] = product.qty_in_box
                 return product
 
-        product_name = clean_multi_spaces(row.get("product_name")).upper()
+        product_name = clean_multi_spaces(
+            row.get("new_product_name") or row.get("product_name")
+        ).upper()
         if not product_name:
             return None
 
-        brand = clean_multi_spaces(row.get("sales_brand") or row.get("brand"))
-        pack = row.get("sales_pack") if row.get("sales_pack") not in (None, "") else row.get("pack")
-        is_excise = row.get("sales_is_excise")
+        brand = clean_multi_spaces(
+            row.get("new_brand") or row.get("sales_brand") or row.get("brand")
+        )
+        pack = row.get("new_pack")
+        if pack in (None, ""):
+            pack = row.get("sales_pack") if row.get("sales_pack") not in (None, "") else row.get("pack")
+        qty_in_box = row.get("new_qty_in_box")
+        if qty_in_box in (None, ""):
+            qty_in_box = sales_qty_in_box
+        is_excise = row.get("new_is_excise")
+        if is_excise is None:
+            is_excise = row.get("sales_is_excise")
         if is_excise is None:
             is_excise = False
 
@@ -302,6 +357,7 @@ class OrderPlanningService:
             name=product_name,
             brand=brand,
             pack=pack,
+            qty_in_box=qty_in_box,
             is_excise=bool(is_excise),
         )
 
@@ -310,6 +366,7 @@ class OrderPlanningService:
         row["brand"] = product.brand
         row["family"] = product.family
         row["pack"] = product.pack
+        row["product_qty_in_box"] = product.qty_in_box
         return product
 
     def _sales_codes_from_row(self, row: dict) -> list[str]:
@@ -381,7 +438,7 @@ class OrderPlanningService:
             return CalculationResult(self.build_display_rows([]), period_from, period_to, 0, 0)
 
         grouped = (
-            merged.groupby(["Код", "Артикул", "Продукт_упаковка", "Упаковка", "Brand", "Акциз_да_нет"], dropna=False)["Кол_во_л"]
+            merged.groupby(["Код", "Артикул", "Продукт_упаковка", "Упаковка", "Кол_во_в_упак", "Brand", "Акциз_да_нет"], dropna=False)["Кол_во_л"]
             .sum()
             .reset_index()
         )
@@ -403,6 +460,7 @@ class OrderPlanningService:
             "sales_article": grouped["Артикул"].map(clean_multi_spaces),
             "sales_name": grouped["Продукт_упаковка"].map(clean_multi_spaces),
             "sales_pack": grouped["Упаковка"],
+            "sales_qty_in_box": grouped["Кол_во_в_упак"].map(self._qty_in_box_from_sales),
             "sales_brand": grouped["Brand"].map(clean_multi_spaces),
             "sales_excise": grouped["Акциз_да_нет"].map(self._bool_from_sales_excise),
             "avg_sales_month": grouped["avg_sales_month"].map(
@@ -415,6 +473,7 @@ class OrderPlanningService:
             sales_article = source.sales_article
             sales_name = source.sales_name
             sales_pack = source.sales_pack
+            sales_qty_in_box = source.sales_qty_in_box
             sales_brand = source.sales_brand
             sales_excise = source.sales_excise
             avg_sales = source.avg_sales_month
@@ -453,6 +512,7 @@ class OrderPlanningService:
                 "sales_article": sales_article,
                 "sales_product_name": sales_name,
                 "sales_pack": self._to_decimal(sales_pack),
+                "sales_qty_in_box": sales_qty_in_box,
                 "sales_brand": sales_brand,
                 "sales_is_excise": sales_excise,
                 "product_id": product.id if product else None,
@@ -515,6 +575,7 @@ class OrderPlanningService:
                 "sales_article": "",
                 "sales_product_name": "",
                 "sales_pack": product.pack,
+                "sales_qty_in_box": product.qty_in_box,
                 "sales_brand": product.brand or "",
                 "sales_is_excise": getattr(product, "is_excise", None),
                 "product_id": product.id,
@@ -591,6 +652,8 @@ class OrderPlanningService:
                 "sales_article": item.get("sales_article", ""),
                 "sales_product_name": "" if product else item.get("sales_product_name", ""),
                 "sales_pack": item.get("sales_pack"),
+                "sales_qty_in_box": item.get("sales_qty_in_box"),
+                "product_qty_in_box": product.qty_in_box if product else None,
                 "sales_brand": item.get("sales_brand", ""),
                 "sales_is_excise": item.get("sales_is_excise"),
                 "product_id": product.id if product else item.get("product_id"),
@@ -643,6 +706,8 @@ class OrderPlanningService:
                 "sales_code": "",
                 "sales_article": "",
                 "sales_product_name": "",
+                "sales_qty_in_box": None,
+                "product_qty_in_box": product.qty_in_box,
                 "product_id": product.id,
                 "product_name": product.name,
                 "is_auto_matched": False,

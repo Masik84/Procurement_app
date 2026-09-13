@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QFontMetrics, QGuiApplication
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -22,7 +22,8 @@ LONG_TEXT_LIMIT = 420
 SUMMARY_TEXT_LIMIT = 280
 DETAILS_MAX_WIDTH = 760
 DETAILS_MAX_HEIGHT = 560
-COMPACT_MAX_WIDTH = 540
+COMPACT_MIN_WIDTH = 220
+COMPACT_MAX_WIDTH = 460
 
 
 class MessageKind(str, Enum):
@@ -171,13 +172,13 @@ class AppMessageDialog(QDialog):
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
 
-        copy_button = QPushButton("Copy", self)
-        copy_button.setToolTip("Скопировать полный текст сообщения")
-        copy_button.clicked.connect(self._copy_full_text)
-        buttons.addWidget(copy_button)
-
         self._show_button: QPushButton | None = None
         if self._has_details:
+            copy_button = QPushButton("Copy", self)
+            copy_button.setToolTip("Скопировать полный текст сообщения")
+            copy_button.clicked.connect(self._copy_full_text)
+            buttons.addWidget(copy_button)
+
             self._show_button = QPushButton("Show", self)
             self._show_button.setToolTip("Показать полный текст")
             self._show_button.clicked.connect(self._toggle_details)
@@ -218,14 +219,40 @@ class AppMessageDialog(QDialog):
     def _apply_compact_geometry(self) -> None:
         available = self._available_geometry()
         if available is None:
-            self.setMaximumWidth(COMPACT_MAX_WIDTH)
-            self.adjustSize()
-            return
+            max_width = COMPACT_MAX_WIDTH
+        else:
+            max_width = min(COMPACT_MAX_WIDTH, max(COMPACT_MIN_WIDTH, available.width() - 80))
 
-        width = min(COMPACT_MAX_WIDTH, max(360, available.width() - 80))
-        self.setMaximumWidth(width)
-        self.resize(width, self.sizeHint().height())
-        self._center_in_available_geometry(available)
+        # Size a compact popup from the *visible summary text*, rather than from
+        # a fixed dialog width.  This keeps short questions genuinely short
+        # while still allowing a longer summary to grow up to COMPACT_MAX_WIDTH.
+        summary = self.findChild(QLabel, "appMessageSummary")
+        if summary is not None:
+            metrics = QFontMetrics(summary.font())
+            lines = (summary.text() or "").splitlines() or [""]
+            text_width = max(metrics.horizontalAdvance(line) for line in lines)
+        else:
+            text_width = 0
+
+        # 18+18 outer margins, 36 icon, 14 spacing, plus a small allowance for
+        # layout/frame rounding.  The button row may require a little more room,
+        # which sizeHint() below will account for.
+        content_width = text_width + 18 + 18 + 36 + 14 + 12
+
+        self.setMinimumWidth(0)
+        self.setMaximumWidth(max_width)
+        self.adjustSize()
+        hint = self.sizeHint()
+
+        # Do not let a generic QSizePolicy/word-wrapped QLabel inflate a short
+        # popup.  Use whichever is wider: actual visible content or controls.
+        # For long summaries, width is capped and QLabel wraps naturally.
+        controls_floor = min(hint.width(), 260 if not self._has_details else 300)
+        width = min(max_width, max(COMPACT_MIN_WIDTH, content_width, controls_floor))
+        self.resize(int(width), hint.height())
+
+        if available is not None:
+            self._center_in_available_geometry(available)
 
     def _apply_expanded_geometry(self) -> None:
         available = self._available_geometry()

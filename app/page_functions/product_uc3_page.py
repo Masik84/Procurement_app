@@ -36,9 +36,10 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 UI_PATH = BASE_DIR / "app" / "ui" / "windows" / "product_uc3.ui"
 
 COL_PRODUCT = 0
-COL_TARGET = 1
-COL_WA = 2
-COL_DATE = 3
+COL_FILE_PRODUCT = 1
+COL_TARGET = 2
+COL_WA = 3
+COL_DATE = 4
 
 
 class SortableTableWidgetItem(QTableWidgetItem):
@@ -69,7 +70,7 @@ def load_ui(ui_path: Path):
 
 
 class ProductUc3Page(QWidget):
-    HEADERS = ["Product Name", "Target uC3", "Walk-Away uC3", "Change date"]
+    HEADERS = ["Our Product Name", "Product Name from file", "Target uC3", "Walk-Away uC3", "Change date"]
     TABLE_DELETE_MESSAGE = "Полное удаление строк будет сделано при сохранении"
 
     def __init__(self):
@@ -472,6 +473,7 @@ class ProductUc3Page(QWidget):
                     "row_key": f"db::{history.id}",
                     "product_id": int(history.product_id),
                     "product_name": product.name or "",
+                    "file_product_name": "",
                     "target_uc3": history.target_uc3,
                     "walk_away_uc3": history.walk_away_uc3,
                     "change_date": history.change_date,
@@ -515,13 +517,15 @@ class ProductUc3Page(QWidget):
             for row_index, data in enumerate(rows):
                 row_key = str(data["row_key"])
                 self.table.setItem(row_index, COL_PRODUCT, self._build_item(data.get("product_name", ""), row_key, editable=False, align_left=True))
+                self.table.setItem(row_index, COL_FILE_PRODUCT, self._build_item(data.get("file_product_name", ""), row_key, editable=False, align_left=True))
                 self.table.setItem(row_index, COL_TARGET, self._build_item(data.get("target_uc3"), row_key, editable=True))
                 self.table.setItem(row_index, COL_WA, self._build_item(data.get("walk_away_uc3"), row_key, editable=True))
                 self.table.setItem(row_index, COL_DATE, self._build_item(data.get("change_date"), row_key, editable=False))
             self.table.resizeColumnsToContents()
             resize_columns_for_multiline_headers(self.table)
-            if self.table.columnCount() >= 4:
-                self.table.setColumnWidth(COL_PRODUCT, max(self.table.columnWidth(COL_PRODUCT), 300))
+            if self.table.columnCount() >= 5:
+                self.table.setColumnWidth(COL_PRODUCT, max(self.table.columnWidth(COL_PRODUCT), 280))
+                self.table.setColumnWidth(COL_FILE_PRODUCT, max(self.table.columnWidth(COL_FILE_PRODUCT), 280))
                 self.table.setColumnWidth(COL_TARGET, max(self.table.columnWidth(COL_TARGET), 100))
                 self.table.setColumnWidth(COL_WA, max(self.table.columnWidth(COL_WA), 120))
                 self.table.setColumnWidth(COL_DATE, max(self.table.columnWidth(COL_DATE), 100))
@@ -549,6 +553,7 @@ class ProductUc3Page(QWidget):
         self._pending_changes[key] = {
             "product_id": None,
             "product_name": "",
+            "file_product_name": "",
             "target_uc3": None,
             "walk_away_uc3": None,
         }
@@ -558,6 +563,7 @@ class ProductUc3Page(QWidget):
         self._updating_table = True
         try:
             self.table.setItem(row, COL_PRODUCT, self._build_item("", key, editable=False, align_left=True))
+            self.table.setItem(row, COL_FILE_PRODUCT, self._build_item("", key, editable=False, align_left=True))
             self.table.setItem(row, COL_TARGET, self._build_item(None, key, editable=True))
             self.table.setItem(row, COL_WA, self._build_item(None, key, editable=True))
             self.table.setItem(row, COL_DATE, self._build_item(None, key, editable=False))
@@ -674,20 +680,38 @@ class ProductUc3Page(QWidget):
         except Exception as exc:
             self.show_error_message(str(exc))
 
-    def _find_product_for_import(self, session, product_name: str) -> Product | None:
+    def _build_import_product_indexes(self, session):
+        """Load Products once and build O(1) lookup indexes for the whole import."""
+        products = (
+            session.query(Product)
+            .filter(Product.name.isnot(None), Product.name != "")
+            .order_by(Product.id.asc())
+            .all()
+        )
+        exact: dict[str, Product] = {}
+        normalized: dict[str, Product] = {}
+        for product in products:
+            name = clean_multi_spaces(product.name)
+            if not name:
+                continue
+            # Keep the first product by id if duplicate names exist, matching the
+            # old .first() behavior as closely as possible.
+            exact.setdefault(name, product)
+            key = normalize_product_name(name)
+            if key:
+                normalized.setdefault(key, product)
+        return exact, normalized
+
+    @staticmethod
+    def _find_product_in_indexes(product_name: str, exact: dict[str, Product], normalized: dict[str, Product]) -> Product | None:
         name = clean_multi_spaces(product_name)
         if not name:
             return None
-        product = session.query(Product).filter(Product.name == name).first()
-        if product:
+        product = exact.get(name)
+        if product is not None:
             return product
-        normalized = normalize_product_name(name)
-        if not normalized:
-            return None
-        for candidate in session.query(Product).filter(Product.name.isnot(None)).all():
-            if normalize_product_name(candidate.name) == normalized:
-                return candidate
-        return None
+        key = normalize_product_name(name)
+        return normalized.get(key) if key else None
 
     def import_excel(self):
         try:
@@ -711,17 +735,20 @@ class ProductUc3Page(QWidget):
             self._deleted_row_snapshots.clear()
             self._new_rows.clear()
             with self.get_session() as session:
+                exact, normalized = self._build_import_product_indexes(session)
                 for source in rows:
                     key = f"new::{self._temp_row_id}"
                     self._temp_row_id -= 1
-                    product = self._find_product_for_import(session, source.get("product_name", ""))
+                    source_product_name = clean_multi_spaces(source.get("product_name"))
+                    product = self._find_product_in_indexes(source_product_name, exact, normalized)
                     product_id = int(product.id) if product else None
-                    product_name = product.name if product else clean_multi_spaces(source.get("product_name"))
+                    our_product_name = product.name if product else ""
                     if product is None:
-                        missing.append(product_name)
+                        missing.append(source_product_name)
                     values = {
                         "product_id": product_id,
-                        "product_name": product_name,
+                        "product_name": our_product_name,
+                        "file_product_name": source_product_name,
                         "target_uc3": source.get("target_uc3"),
                         "walk_away_uc3": source.get("walk_away_uc3"),
                     }
@@ -731,12 +758,9 @@ class ProductUc3Page(QWidget):
 
             self._populate_table(preview)
             if missing:
-                self.show_message(
-                    f"Загружено строк: {len(preview)}. Не сопоставлено продуктов: {len(missing)}. "
-                    "Выберите Product Name в таблице и нажмите Сохранить."
-                )
+                self.show_message(f"Импорт: {len(preview)}; не найдено: {len(missing)}.")
             else:
-                self.show_message(f"Загружено строк: {len(preview)}. Нажмите Сохранить для записи в БД.")
+                self.show_message(f"Импорт: {len(preview)} строк.")
         except Exception as exc:
             self.show_error_message(str(exc))
 

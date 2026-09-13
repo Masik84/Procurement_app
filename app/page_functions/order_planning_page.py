@@ -118,15 +118,29 @@ class OrderPlanningPage(QWidget):
         "sales_product_name",
         "product_name",
         "sales_pack",
+        "sales_qty_in_box",
+        "product_qty_in_box",
         "sales_brand",
         "sales_is_excise",
+        "new_product_name",
+        "new_brand",
+        "new_pack",
+        "new_qty_in_box",
+        "new_is_excise",
     ]
     CHECK_HEADERS = [
         "Продукт_упаковка",
         "Product Name",
         "Упаковка",
+        "Кол_во_в_упак",
+        "Qty in Box",
         "Бренд",
         "Акциз",
+        "Product name (for new)",
+        "Brand (for new)",
+        "Pack (for new)",
+        "Qty in Box (for new)",
+        "Is Excise (for new)",
     ]
 
     NUMERIC_COLUMNS = {
@@ -134,6 +148,7 @@ class OrderPlanningPage(QWidget):
         "quick_order_pcs", "quick_order_l", "std_order_pcs", "std_order_l", "distr_price", "promo_price",
         "free_stock_st", "free_stock_st_tr", "free_stock_ord", "stock", "transit",
         "purchase_order", "order_is", "stock_is", "reserve", "reserve_ecomm", "markdown", "sales_pack",
+        "sales_qty_in_box", "product_qty_in_box", "new_pack", "new_qty_in_box",
     }
 
     def __init__(self):
@@ -474,14 +489,18 @@ class OrderPlanningPage(QWidget):
                 if key == "sales_product_name" and mode != "check" and row.get("product_id"):
                     value = ""
 
-                if key == "sales_is_excise":
+                if key in {"sales_is_excise", "new_is_excise"}:
                     placeholder = QTableWidgetItem("")
                     placeholder.setData(Qt.UserRole, key)
                     placeholder.setData(Qt.UserRole + 1, row_index)
                     placeholder.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
                     placeholder.setTextAlignment(Qt.AlignCenter)
                     self.table.setItem(row_index, col_index, placeholder)
-                    self.table.setCellWidget(row_index, col_index, self.build_checkbox_widget(row_index, bool(value)))
+                    self.table.setCellWidget(
+                        row_index,
+                        col_index,
+                        self.build_checkbox_widget(row_index, bool(value), key),
+                    )
                     continue
 
                 if key in self.NUMERIC_COLUMNS:
@@ -502,13 +521,23 @@ class OrderPlanningPage(QWidget):
                 item = QTableWidgetItem(text)
                 item.setData(Qt.UserRole, key)
                 item.setData(Qt.UserRole + 1, row_index)
-                item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
+                if mode == "check" and key in {"new_product_name", "new_brand", "new_pack", "new_qty_in_box"}:
+                    flags |= Qt.ItemIsEditable
+                item.setFlags(flags)
                 item.setTextAlignment(Qt.AlignCenter if key in self.NUMERIC_COLUMNS else Qt.AlignLeft | Qt.AlignVCenter)
 
                 if row.get("is_auto_matched") and key == "product_name":
                     item.setBackground(QColor(255, 242, 204))
                 if not row.get("product_id") and key == "product_name":
                     item.setBackground(QColor(255, 199, 206))
+                if key == "product_qty_in_box":
+                    if row.get("qty_in_box_mismatch"):
+                        item.setBackground(QColor(255, 199, 206))
+                    elif row.get("qty_in_box_missing"):
+                        item.setBackground(QColor(255, 242, 204))
+                if mode == "check" and not row.get("product_id") and key.startswith("new_"):
+                    item.setBackground(QColor(226, 239, 218))
 
                 self.table.setItem(row_index, col_index, item)
 
@@ -523,6 +552,11 @@ class OrderPlanningPage(QWidget):
                 for row in rows
             )
             self.table.setColumnHidden(sales_name_col, not show_sales_name_col)
+
+        if mode == "check":
+            show_new_product_columns = any(not row.get("product_id") for row in rows)
+            for key in {"new_product_name", "new_brand", "new_pack", "new_qty_in_box", "new_is_excise"}:
+                self.table.setColumnHidden(columns.index(key), not show_new_product_columns)
 
         self.table.setSortingEnabled(True)
         self._updating_table = False
@@ -540,7 +574,7 @@ class OrderPlanningPage(QWidget):
                         return None
         return None
 
-    def build_checkbox_widget(self, row_index: int, checked: bool) -> QWidget:
+    def build_checkbox_widget(self, row_index: int, checked: bool, field_name: str = "sales_is_excise") -> QWidget:
         checkbox = QCheckBox()
         checkbox.setChecked(checked)
         checkbox.setStyleSheet(
@@ -549,7 +583,9 @@ class OrderPlanningPage(QWidget):
             QCheckBox::indicator { width: 14px; height: 14px; }
             """
         )
-        checkbox.toggled.connect(lambda state, idx=row_index: self.on_excise_checkbox_changed(idx, state))
+        checkbox.toggled.connect(
+            lambda state, idx=row_index, key=field_name: self.on_checkbox_changed(idx, key, state)
+        )
 
         container = QWidget()
         layout = QHBoxLayout(container)
@@ -558,24 +594,39 @@ class OrderPlanningPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         return container
 
-    def on_excise_checkbox_changed(self, row_index: int, checked: bool):
+    def on_checkbox_changed(self, row_index: int, field_name: str, checked: bool):
         if self._updating_table or row_index < 0 or row_index >= len(self._rows):
             return
-        self._rows[row_index]["sales_is_excise"] = bool(checked)
+        if field_name in {"sales_is_excise", "new_is_excise"}:
+            self._rows[row_index][field_name] = bool(checked)
 
     def on_item_changed(self, item: QTableWidgetItem):
         if self._updating_table:
             return
         key = item.data(Qt.UserRole)
-        if key != "sales_is_excise":
-            return
         source_row = item.data(Qt.UserRole + 1)
         try:
             source_row = int(source_row)
         except (TypeError, ValueError):
             return
-        if 0 <= source_row < len(self._rows):
-            self._rows[source_row]["sales_is_excise"] = item.checkState() == Qt.Checked
+        if not (0 <= source_row < len(self._rows)):
+            return
+
+        if key in {"new_product_name", "new_brand"}:
+            self._rows[source_row][key] = clean_multi_spaces(item.text())
+            return
+
+        if key in {"new_pack", "new_qty_in_box"}:
+            text = clean_multi_spaces(item.text())
+            if not text:
+                self._rows[source_row][key] = None
+                return
+            value = parse_loose_number(text)
+            self._rows[source_row][key] = value if value is not None else text
+            return
+
+        if key in {"sales_is_excise", "new_is_excise"}:
+            self._rows[source_row][key] = item.checkState() == Qt.Checked
 
     def update_volume_labels(self):
         quick_total = sum(self._to_decimal(row.get("quick_order_l")) for row in self._rows)
@@ -795,8 +846,11 @@ class OrderPlanningPage(QWidget):
             for row in self._rows:
                 if row.get("product_id"):
                     continue
-                row_pack = row.get("sales_pack") if row.get("sales_pack") not in (None, "") else row.get("pack")
+                row_pack = row.get("new_pack")
+                if row_pack in (None, ""):
+                    row_pack = row.get("sales_pack") if row.get("sales_pack") not in (None, "") else row.get("pack")
                 if parse_loose_number(row_pack) == requested_pack:
+                    row["new_pack"] = selected_pack
                     row["sales_pack"] = selected_pack
                     row["pack"] = selected_pack
             self._base_rows = [dict(row) for row in self._rows]
@@ -969,14 +1023,32 @@ class OrderPlanningPage(QWidget):
                     self._rows[source_row]["brand"] = product.brand
                     self._rows[source_row]["family"] = product.family
                     self._rows[source_row]["pack"] = product.pack
+                    self._rows[source_row]["product_qty_in_box"] = product.qty_in_box
+            # Choosing an existing product cancels the proposed new-product data.
+            self._rows[source_row]["new_product_name"] = ""
+            self._rows[source_row]["new_brand"] = ""
+            self._rows[source_row]["new_pack"] = None
+            self._rows[source_row]["new_qty_in_box"] = None
+            self._rows[source_row]["new_is_excise"] = None
         elif not product_name:
             product_id = None
             product_name = ""
+            self._rows[source_row]["new_product_name"] = self._rows[source_row].get("sales_product_name") or ""
+            self._rows[source_row]["new_brand"] = self._rows[source_row].get("sales_brand") or ""
+            self._rows[source_row]["new_pack"] = self._rows[source_row].get("sales_pack")
+            self._rows[source_row]["new_qty_in_box"] = self._rows[source_row].get("sales_qty_in_box")
+            self._rows[source_row]["new_is_excise"] = bool(self._rows[source_row].get("sales_is_excise"))
         else:
+            # A typed value that is not an existing Product is moved to the
+            # dedicated new-product fields instead of being mixed with Product Name.
+            typed_new_name = product_name
             product_id = None
-            # For a manually typed new product keep source brand/pack/excise from sales DB.
-            self._rows[source_row]["brand"] = self._rows[source_row].get("sales_brand") or self._rows[source_row].get("brand") or ""
-            self._rows[source_row]["pack"] = self._rows[source_row].get("sales_pack") or self._rows[source_row].get("pack")
+            product_name = ""
+            self._rows[source_row]["new_product_name"] = typed_new_name
+            self._rows[source_row]["new_brand"] = self._rows[source_row].get("sales_brand") or ""
+            self._rows[source_row]["new_pack"] = self._rows[source_row].get("sales_pack")
+            self._rows[source_row]["new_qty_in_box"] = self._rows[source_row].get("sales_qty_in_box")
+            self._rows[source_row]["new_is_excise"] = bool(self._rows[source_row].get("sales_is_excise"))
 
         self._rows[source_row]["product_id"] = product_id
         self._rows[source_row]["product_name"] = product_name
