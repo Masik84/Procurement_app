@@ -469,6 +469,47 @@ class TableScaleManager(QObject):
         for target_id in state.event_target_ids:
             self._event_targets.pop(target_id, None)
 
+    def shutdown(self) -> None:
+        """Detach Python event filters/timers before QApplication teardown.
+
+        Qt may destroy widgets in an order that differs from Python reference
+        cleanup.  Keeping this global QObject registered as an event filter
+        while Qt is tearing down can leave C++ calling back into a partially
+        destroyed Python wrapper.  Remove those hooks while all objects are
+        still valid and clear strong references to tables.
+        """
+        try:
+            self.blockSignals(True)
+        except RuntimeError:
+            pass
+
+        for table_id, state in list(self._states.items()):
+            for timer in (state.header_refresh_timer, state.columns_refresh_timer):
+                if timer is not None and is_qt_object_valid(timer):
+                    try:
+                        timer.stop()
+                        timer.timeout.disconnect()
+                    except (RuntimeError, TypeError):
+                        pass
+
+            table = state.table
+            if table is not None and is_qt_object_valid(table):
+                try:
+                    table.removeEventFilter(self)
+                except RuntimeError:
+                    pass
+                try:
+                    viewport = table.viewport()
+                    if viewport is not None and is_qt_object_valid(viewport):
+                        viewport.removeEventFilter(self)
+                except RuntimeError:
+                    pass
+
+            state.event_target_ids.clear()
+
+        self._event_targets.clear()
+        self._states.clear()
+
     @staticmethod
     def _normalise_scale(value: int) -> int:
         try:
@@ -584,6 +625,21 @@ def initialise_table_scale_manager(app: QApplication) -> TableScaleManager:
 
 def get_table_scale_manager() -> TableScaleManager | None:
     return _manager
+
+
+def shutdown_table_scale_manager() -> None:
+    """Release the global manager before QApplication/native Qt teardown."""
+    global _manager
+    manager = _manager
+    _manager = None
+    if manager is None:
+        return
+
+    try:
+        if is_qt_object_valid(manager):
+            manager.shutdown()
+    except RuntimeError:
+        pass
 
 
 def register_table_for_scaling(table: QAbstractItemView) -> None:

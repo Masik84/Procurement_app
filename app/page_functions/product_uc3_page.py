@@ -144,6 +144,7 @@ class ProductUc3Page(QWidget):
         self.ui.btn_AddLine.clicked.connect(self.add_line)
         self.ui.btn_DownFile.clicked.connect(self.download_template)
         self.ui.btn_Import.clicked.connect(self.import_excel)
+        self.ui.btn_ResetAll.clicked.connect(self.reset_all)
         self.ui.btn_SaveExcel.clicked.connect(self.save_excel)
         self.ui.btn_Save.clicked.connect(self.apply_pending_changes)
 
@@ -664,6 +665,40 @@ class ProductUc3Page(QWidget):
             self.show_message("; ".join(parts))
         except Exception as exc:
             self.show_error_message(str(exc))
+
+
+    def reset_all(self):
+        """Reset editor fields, left-side filters and unsaved preview/edits."""
+        self._updating_filters = True
+        try:
+            # Top controls are only for choosing another Product in a GUI row.
+            self.ui.line_FindProduct.clear()
+            brand_index = self.ui.cbo_FindBrand.findText("-")
+            self.ui.cbo_FindBrand.setCurrentIndex(brand_index if brand_index >= 0 else 0)
+
+            # Left-side filters for the displayed table.
+            self._selected_brand_values = None
+            self._selected_family_values = None
+            self._selected_product_ids = None
+            self.ui.line_NameSearch.clear()
+
+            today = QDate.currentDate()
+            self.ui.line_Start_date.setDate(today)
+            self.ui.line_End_date.setDate(today)
+            self.ui.chb_CalcToday.setChecked(True)
+            self._date_filter_changed = False
+
+            # Discard an unsaved import preview / edits and return to DB data.
+            self._pending_changes.clear()
+            self._pending_deletes.clear()
+            self._deleted_row_snapshots.clear()
+            self._new_rows.clear()
+        finally:
+            self._updating_filters = False
+
+        self._refresh_filter_buttons(prune=False)
+        self.find_rows()
+        self.show_message("Фильтры и поля сброшены")
 
     def download_template(self):
         try:

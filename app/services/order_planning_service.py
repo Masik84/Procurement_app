@@ -13,7 +13,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import OrderPlanningCalculation, Product, ProductStock, SalesProductLink
-from app.services.product_matching_service import ProductMatchingService
+from app.services.product_mapping_service import ProductMappingService
 from app.services.qty_in_box_service import normalize_qty_in_box
 from app.utils.text import clean_multi_spaces
 from app.utils.money import to_decimal, round4
@@ -23,6 +23,7 @@ SALES_DB_URI = "postgresql+psycopg2://postgres:qwerty@localhost:5432/report_db?c
 SALES_BRAND_GROUPS_FOR_ORDER_PLANNING = ("Import", "CNRG", "TEBOIL")
 EXCLUDED_SALES_BRANDS_FOR_ORDER_PLANNING = ("-", "Phoenix Oil", "MEVAG")
 EXCLUDED_SALES_PACK_TYPES_FOR_ORDER_PLANNING = ("комплект", "комплект 4+1")
+EXCLUDED_SALES_TYPES_FOR_PRODUCT_CHECK = ("SPARES", "FILTER")
 
 
 @dataclass(slots=True)
@@ -46,7 +47,7 @@ class OrderPlanningService:
     def __init__(self, session: Session, sales_db_uri: str = SALES_DB_URI) -> None:
         self.session = session
         self.sales_db_uri = sales_db_uri
-        self.matcher = ProductMatchingService(session)
+        self.product_mapping = ProductMappingService(session, sales_db_uri)
 
     # ------------------------------------------------------------------
     # Basic helpers
@@ -87,22 +88,42 @@ class OrderPlanningService:
     def _sales_engine(self):
         return create_engine(self.sales_db_uri, pool_pre_ping=True)
 
-    def _read_sales_products(self, sales_codes: Optional[list[str]] = None) -> pd.DataFrame:
+    def _read_sales_products(
+        self,
+        sales_codes: Optional[list[str]] = None,
+        *,
+        planning_scope_only: bool = True,
+    ) -> pd.DataFrame:
         cols = ['"Код"', '"Артикул"', '"Продукт_упаковка"', '"Упаковка"', '"Кол_во_в_упак"', '"Brand"', '"Акциз_да_нет"', '"Группа_бренда"']
-        query = (
-            f"SELECT {', '.join(cols)} FROM products "
-            "WHERE \"Группа_бренда\" = ANY(:brand_groups) "
-            "AND COALESCE(\"Brand\", '') <> ALL(:excluded_brands) "
-            "AND LOWER(TRIM(COALESCE(\"Вид_упаковки\", ''))) <> ALL(:excluded_pack_types)"
-        )
-        params: dict[str, object] = {
-            "brand_groups": list(SALES_BRAND_GROUPS_FOR_ORDER_PLANNING),
-            "excluded_brands": list(EXCLUDED_SALES_BRANDS_FOR_ORDER_PLANNING),
-            "excluded_pack_types": list(EXCLUDED_SALES_PACK_TYPES_FOR_ORDER_PLANNING),
-        }
+
+        params: dict[str, object] = {}
+
+        if planning_scope_only:
+            # The actual purchasing calculation keeps its original scope.
+            where_parts = [
+                '"Группа_бренда" = ANY(:brand_groups)',
+                "COALESCE(\"Brand\", '') <> ALL(:excluded_brands)",
+                "LOWER(TRIM(COALESCE(\"Вид_упаковки\", ''))) <> ALL(:excluded_pack_types)",
+            ]
+            params.update({
+                "brand_groups": list(SALES_BRAND_GROUPS_FOR_ORDER_PLANNING),
+                "excluded_brands": list(EXCLUDED_SALES_BRANDS_FOR_ORDER_PLANNING),
+                "excluded_pack_types": list(EXCLUDED_SALES_PACK_TYPES_FOR_ORDER_PLANNING),
+            })
+        else:
+            # "Проверить продукты" must inspect the whole sales product catalogue.
+            # The only catalogue-level exclusions requested for this check are
+            # Type = SPARES and Type = Filter (case/whitespace insensitive).
+            where_parts = [
+                "UPPER(TRIM(COALESCE(\"Type\", ''))) <> ALL(:excluded_product_types)"
+            ]
+            params["excluded_product_types"] = list(EXCLUDED_SALES_TYPES_FOR_PRODUCT_CHECK)
+
         if sales_codes:
-            query += ' AND "Код" = ANY(:codes)'
+            where_parts.append('"Код" = ANY(:codes)')
             params["codes"] = sales_codes
+
+        query = f"SELECT {', '.join(cols)} FROM products WHERE " + " AND ".join(where_parts)
         with self._sales_engine().connect() as conn:
             df = pd.read_sql(text(query), conn, params=params)
         if df.empty:
@@ -132,11 +153,7 @@ class OrderPlanningService:
         return {int(product.id): product for product in products}
 
     def _link_map(self, *, load_products: bool = True) -> dict[str, SalesProductLink]:
-        query = self.session.query(SalesProductLink)
-        if load_products:
-            query = query.options(joinedload(SalesProductLink.product))
-        rows = query.all()
-        return {row.sales_code: row for row in rows}
+        return self.product_mapping.link_map(load_products=load_products)
 
     def get_brand_values(self) -> list[str]:
         rows = (
@@ -173,252 +190,18 @@ class OrderPlanningService:
         brand: object,
         is_excise: Optional[bool],
     ) -> bool:
-        if link is None:
-            return False
-        return (
-            clean_multi_spaces(link.sales_article) == clean_multi_spaces(article)
-            and clean_multi_spaces(link.sales_product_name) == clean_multi_spaces(product_name)
-            and self._to_decimal(link.sales_pack) == self._to_decimal(pack)
-            and clean_multi_spaces(link.sales_brand) == clean_multi_spaces(brand)
-            and link.sales_is_excise == is_excise
-        )
-
-    # ------------------------------------------------------------------
-    # Product check / linking
-    # ------------------------------------------------------------------
-    def check_products(self) -> ProductCheckResult:
-        sales_df = self._read_sales_products()
-        if sales_df.empty:
-            return ProductCheckResult([], 0, 0, 0)
-
-        product_map = self._product_map(load_stock=False)
-        links = self._link_map(load_products=False)
-
-        # Vectorized cleaning/typing of the simple columns. The matching and
-        # new/changed/auto-matched branching below still needs a per-row loop
-        # (it calls into ProductMatchingService and keeps running counters),
-        # but there is no reason to re-run clean_multi_spaces /
-        # _bool_from_sales_excise through a slow per-row Series.get() lookup
-        # on every iteration - itertuples() over a pre-cleaned frame is both
-        # faster and easier to read than iterrows() over the raw one.
-        cleaned = pd.DataFrame({
-            "sales_code": sales_df["Код"].map(clean_multi_spaces),
-            "sales_article": sales_df["Артикул"].map(clean_multi_spaces),
-            "sales_name": sales_df["Продукт_упаковка"].map(clean_multi_spaces),
-            "sales_pack": sales_df["Упаковка"],
-            "sales_qty_in_box": sales_df["Кол_во_в_упак"].map(self._qty_in_box_from_sales),
-            "sales_brand": sales_df["Brand"].map(clean_multi_spaces),
-            "sales_excise": sales_df["Акциз_да_нет"].map(self._bool_from_sales_excise),
-        })
-
-        rows: list[dict] = []
-        auto_matched = 0
-        new_count = 0
-        changed_count = 0
-
-        for source in cleaned.itertuples(index=False):
-            sales_code = source.sales_code
-            if not sales_code:
-                continue
-
-            sales_article = source.sales_article
-            sales_name = source.sales_name
-            sales_pack = source.sales_pack
-            sales_qty_in_box = source.sales_qty_in_box
-            sales_brand = source.sales_brand
-            sales_excise = source.sales_excise
-
-            link = links.get(sales_code)
-            link_matches_source = self._sales_link_matches_source(
-                link,
-                article=sales_article,
-                product_name=sales_name,
-                pack=sales_pack,
-                brand=sales_brand,
-                is_excise=sales_excise,
-            )
-            linked_product = (
-                product_map.get(int(link.product_id))
-                if link_matches_source and link and link.product_id is not None
-                else None
-            )
-            product = linked_product
-            auto_found = False
-
-            if product is None:
-                product = self.matcher.find_customer_product(
-                    sales_article,
-                    sales_name,
-                    sales_pack,
-                    brand=sales_brand,
-                )
-                if product is not None:
-                    auto_found = True
-                    auto_matched += 1
-
-            product_qty_in_box = None
-            qty_in_box_missing = False
-            qty_in_box_mismatch = False
-            if product is not None:
-                try:
-                    product_qty_in_box = normalize_qty_in_box(product.qty_in_box)
-                except ValueError:
-                    product_qty_in_box = None
-                if sales_qty_in_box is not None:
-                    qty_in_box_missing = product_qty_in_box is None
-                    qty_in_box_mismatch = (
-                        product_qty_in_box is not None
-                        and product_qty_in_box != sales_qty_in_box
-                    )
-
-            is_new = link is None
-            is_changed = False
-            if is_new:
-                new_count += 1
-            else:
-                if not link_matches_source:
-                    is_changed = True
-                if linked_product is None and product is not None:
-                    is_changed = True
-                if qty_in_box_missing or qty_in_box_mismatch:
-                    is_changed = True
-                if is_changed:
-                    changed_count += 1
-
-            if not is_new and not is_changed and not auto_found:
-                continue
-
-            unmatched = product is None
-            rows.append({
-                "sales_code": sales_code,
-                "sales_article": sales_article,
-                "sales_product_name": sales_name,
-                "sales_pack": self._to_decimal(sales_pack),
-                "sales_qty_in_box": sales_qty_in_box,
-                "product_qty_in_box": product_qty_in_box,
-                "sales_brand": sales_brand,
-                "sales_is_excise": sales_excise,
-                "product_id": product.id if product else None,
-                "product_name": product.name if product else "",
-                "new_product_name": sales_name if unmatched else "",
-                "new_brand": sales_brand if unmatched else "",
-                "new_pack": self._to_decimal(sales_pack) if unmatched else None,
-                "new_qty_in_box": sales_qty_in_box if unmatched else None,
-                "new_is_excise": bool(sales_excise) if unmatched and sales_excise is not None else (False if unmatched else None),
-                "qty_in_box_missing": qty_in_box_missing,
-                "qty_in_box_mismatch": qty_in_box_mismatch,
-                "is_auto_matched": auto_found,
-                "is_new": is_new,
-            })
-
-        return ProductCheckResult(rows, auto_matched, new_count, changed_count)
-
-    def _ensure_product_for_row(self, row: dict) -> Product | None:
-        """Return selected product or create a new Product from dedicated new-product fields."""
-        product_id = row.get("product_id")
-        sales_qty_in_box = self._qty_in_box_from_sales(row.get("sales_qty_in_box"))
-        if product_id:
-            product = self.session.query(Product).filter(Product.id == int(product_id)).first()
-            if product:
-                # Sales Qty in Box may fill an empty Product value, but it never
-                # overwrites a non-empty value automatically.
-                if product.qty_in_box is None and sales_qty_in_box is not None:
-                    product.qty_in_box = sales_qty_in_box
-                row["product_id"] = product.id
-                row["product_name"] = product.name
-                row["brand"] = product.brand
-                row["family"] = product.family
-                row["pack"] = product.pack
-                row["product_qty_in_box"] = product.qty_in_box
-                return product
-
-        product_name = clean_multi_spaces(
-            row.get("new_product_name") or row.get("product_name")
-        ).upper()
-        if not product_name:
-            return None
-
-        brand = clean_multi_spaces(
-            row.get("new_brand") or row.get("sales_brand") or row.get("brand")
-        )
-        pack = row.get("new_pack")
-        if pack in (None, ""):
-            pack = row.get("sales_pack") if row.get("sales_pack") not in (None, "") else row.get("pack")
-        qty_in_box = row.get("new_qty_in_box")
-        if qty_in_box in (None, ""):
-            qty_in_box = sales_qty_in_box
-        is_excise = row.get("new_is_excise")
-        if is_excise is None:
-            is_excise = row.get("sales_is_excise")
-        if is_excise is None:
-            is_excise = False
-
-        product = self.matcher.get_or_create_product(
-            name=product_name,
-            brand=brand,
+        return self.product_mapping.sales_link_matches_source(
+            link,
+            article=article,
+            product_name=product_name,
             pack=pack,
-            qty_in_box=qty_in_box,
-            is_excise=bool(is_excise),
+            brand=brand,
+            is_excise=is_excise,
         )
 
-        row["product_id"] = product.id
-        row["product_name"] = product.name
-        row["brand"] = product.brand
-        row["family"] = product.family
-        row["pack"] = product.pack
-        row["product_qty_in_box"] = product.qty_in_box
-        return product
-
-    def _sales_codes_from_row(self, row: dict) -> list[str]:
-        raw = clean_multi_spaces(row.get("sales_code"))
-        if not raw:
-            return []
-        codes: list[str] = []
-        for part in raw.replace(",", ";").split(";"):
-            code = clean_multi_spaces(part)
-            if code and code not in codes:
-                codes.append(code)
-        return codes
-
-    def _upsert_sales_link_for_row(self, row: dict, product: Product | None, sales_code: str | None = None) -> bool:
-        code = clean_multi_spaces(sales_code or row.get("sales_code"))
-        if not code:
-            return False
-
-        link = (
-            self.session.query(SalesProductLink)
-            .filter(SalesProductLink.sales_code == code)
-            .first()
-        )
-        if link is None:
-            link = SalesProductLink(sales_code=code)
-            self.session.add(link)
-
-        link.product_id = product.id if product else None
-        link.sales_article = clean_multi_spaces(row.get("sales_article")) or None
-        link.sales_product_name = clean_multi_spaces(row.get("sales_product_name")) or None
-        link.sales_pack = self._to_decimal(row.get("sales_pack"))
-        link.sales_brand = clean_multi_spaces(row.get("sales_brand")) or None
-        link.sales_is_excise = row.get("sales_is_excise")
-        link.updated_at = datetime.now()
-
-        if product is not None:
-            self.matcher.create_article_link_from_source(
-                product_id=int(product.id),
-                source_article=row.get("sales_article"),
-                source_name=row.get("sales_product_name"),
-            )
-        return True
-
-    def save_product_links(self, rows: list[dict]) -> int:
-        saved = 0
-        for row in rows:
-            product = self._ensure_product_for_row(row)
-            for sales_code in self._sales_codes_from_row(row):
-                if self._upsert_sales_link_for_row(row, product, sales_code):
-                    saved += 1
-        self.session.flush()
-        return saved
+    # ------------------------------------------------------------------
+    # Product matching lives in ProductMappingService / "Сопоставление продуктов".
+    # Order planning only consumes saved SalesProductLink records.
 
     # ------------------------------------------------------------------
     # Calculation
@@ -496,16 +279,9 @@ class OrderPlanningService:
             if linked_product is not None:
                 product = linked_product
             else:
-                product = self.matcher.find_customer_product(
-                    sales_article,
-                    sales_name,
-                    sales_pack,
-                    brand=sales_brand,
-                )
-                if product:
-                    auto_matched += 1
-                else:
-                    unmatched += 1
+                # No automatic matching inside Order Planning. Mapping is maintained
+                # in References -> Product Mapping and must be explicitly saved there.
+                unmatched += 1
 
             rows.append({
                 "sales_code": sales_code,
@@ -517,7 +293,7 @@ class OrderPlanningService:
                 "sales_is_excise": sales_excise,
                 "product_id": product.id if product else None,
                 "product_name": product.name if product else "",
-                "is_auto_matched": bool(product and linked_product is None),
+                "is_auto_matched": False,
                 "avg_sales_month": avg_sales,
             })
 
@@ -716,18 +492,11 @@ class OrderPlanningService:
         return base_rows, period_from, period_to
 
     def save_calculation(self, display_rows: list[dict], period_from: date, period_to: date) -> int:
-        # rows must already contain the user-selected products. Re-group before saving.
-        prepared_rows: list[dict] = []
-        for row in display_rows:
-            row_copy = dict(row)
-            product = self._ensure_product_for_row(row_copy)
-            if product is not None:
-                for sales_code in self._sales_codes_from_row(row_copy):
-                    self._upsert_sales_link_for_row(row_copy, product, sales_code)
-                prepared_rows.append(row_copy)
-
+        # Product mapping is maintained separately. Planning never creates Products
+        # or SalesProductLink rows while saving a calculation.
+        prepared_rows = [dict(row) for row in display_rows if row.get("product_id")]
         if not prepared_rows:
-            raise ValueError("Нет строк с выбранным или введенным Product name для сохранения")
+            raise ValueError("Нет сопоставленных продуктов для сохранения")
 
         grouped: dict[int, Decimal] = {}
         for row in prepared_rows:

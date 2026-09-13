@@ -187,7 +187,7 @@ QScrollBar::handle:vertical {
             <enum>Qt::LayoutDirection::LeftToRight</enum>
            </property>
            <property name="text">
-            <string>Target uC3 и Walk-Away uC3</string>
+            <string>Сопоставление продуктов</string>
            </property>
           </widget>
          </item>
@@ -292,6 +292,9 @@ QScrollBar::handle:vertical {
          </item>
          <item>
           <widget class="QPushButton" name="btn_AddLine">
+           <property name="visible">
+            <bool>false</bool>
+           </property>
            <property name="minimumSize">
             <size>
              <width>150</width>
@@ -390,7 +393,7 @@ QScrollBar::handle:vertical {
                </font>
               </property>
               <property name="text">
-               <string>Параметры списка</string>
+               <string>Фильтры</string>
               </property>
              </widget>
             </item>
@@ -548,10 +551,16 @@ QScrollBar::handle:vertical {
                 <height>25</height>
                </size>
               </property>
+              <property name="placeholderText">
+               <string>Источник или Our Product Name</string>
+              </property>
              </widget>
             </item>
             <item>
              <widget class="QFrame" name="frame_7">
+              <property name="visible">
+               <bool>false</bool>
+              </property>
               <property name="minimumSize">
                <size>
                 <width>0</width>
@@ -608,10 +617,16 @@ QScrollBar::handle:vertical {
             </item>
             <item>
              <widget class="QCheckBox" name="chb_CalcToday">
+              <property name="visible">
+               <bool>false</bool>
+              </property>
               <property name="text">
                <string>Действующие</string>
               </property>
-             <property name="checked"><bool>true</bool></property></widget>
+              <property name="checked">
+               <bool>true</bool>
+              </property>
+             </widget>
             </item>
             <item>
              <spacer name="verticalSpacer_filters">
@@ -680,18 +695,21 @@ QScrollBar::handle:vertical {
                 </widget>
                </item>
                <item>
-                <widget class="QPushButton" name="btn_DownFile">
+                <widget class="QPushButton" name="btn_CheckProducts">
                  <property name="text">
-                  <string>Скачать Шаблон</string>
+                  <string>Проверить</string>
                  </property>
                  <property name="icon">
                   <iconset>
-                   <normaloff>:/icon/icon/arrow-down-circle — копия — копия.svg</normaloff>:/icon/icon/arrow-down-circle — копия — копия.svg</iconset>
+                   <normaloff>:/icon/icon/check-circle — копия — копия.svg</normaloff>:/icon/icon/arrow-down-circle — копия — копия.svg</iconset>
                  </property>
                 </widget>
                </item>
                <item>
                 <widget class="QPushButton" name="btn_Import">
+                 <property name="visible">
+                  <bool>false</bool>
+                 </property>
                  <property name="text">
                   <string>Импорт</string>
                  </property>

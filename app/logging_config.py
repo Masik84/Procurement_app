@@ -124,3 +124,29 @@ def install_thread_exception_logging(logger: logging.Logger) -> None:
         flush_logs()
 
     threading.excepthook = _thread_hook
+
+
+def shutdown_native_crash_capture() -> None:
+    """Disable faulthandler and close its dedicated stream cleanly.
+
+    The stream is deliberately kept open while Qt objects are being destroyed,
+    so a native crash during teardown is still captured.  Call this only after
+    QApplication itself has been released successfully.
+    """
+    global _FAULT_STREAM
+    try:
+        faulthandler.disable()
+    except Exception:
+        pass
+
+    stream = _FAULT_STREAM
+    _FAULT_STREAM = None
+    if stream is not None:
+        try:
+            stream.flush()
+        except Exception:
+            pass
+        try:
+            stream.close()
+        except Exception:
+            pass

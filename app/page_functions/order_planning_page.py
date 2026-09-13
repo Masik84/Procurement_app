@@ -220,14 +220,10 @@ class OrderPlanningPage(QWidget):
 
         self.ui.btn_Search.clicked.connect(self.search_saved)
         self.ui.btn_Calculate.clicked.connect(self.calculate)
-        self.ui.btn_CheckProducts.clicked.connect(self.check_products)
         self.ui.btn_Reset.clicked.connect(self.reset_form)
         self.ui.btn_SaveExcel.clicked.connect(self.save_excel)
         self.ui.btn_Save.clicked.connect(self.save)
-        self.table.cellDoubleClicked.connect(self.start_product_edit)
         self.table.itemChanged.connect(self.on_item_changed)
-        self.ui.cbo_FindBrand.currentTextChanged.connect(self.refresh_current_product_combo)
-        self.ui.line_FindProduct.textChanged.connect(self.refresh_current_product_combo)
 
     def load_initial_data(self):
         self.load_find_brands()
@@ -747,10 +743,8 @@ class OrderPlanningPage(QWidget):
             self._set_period_label()
             self.recalculate_current_rows()
             msg = f"Расчет выполнен. Строк: {len(self._rows)}."
-            if result.auto_matched_count:
-                msg += f" Автоматически подобрано продуктов: {result.auto_matched_count}, проверь."
             if result.unmatched_count:
-                msg += f" Не найдено продуктов: {result.unmatched_count}."
+                msg += f" Не сопоставлено продуктов: {result.unmatched_count}. Справочники → Сопоставление продуктов."
             self.show_message(msg)
         except Exception as e:
             self.show_error_message(str(e))
@@ -830,9 +824,11 @@ class OrderPlanningPage(QWidget):
             if not self._period_from or not self._period_to:
                 self.show_error_message("Сначала сделай расчет")
                 return
-            missing = [row for row in self._rows if not row.get("product_id") and not clean_multi_spaces(row.get("product_name"))]
+            missing = [row for row in self._rows if row.get("sales_code") and not row.get("product_id")]
             if missing:
-                self.show_error_message("Есть строки без Product Name. Выбери продукт или впиши новый Product Name перед сохранением")
+                self.show_error_message(
+                    f"Не сопоставлено продуктов: {len(missing)}. Открой Справочники → Сопоставление продуктов."
+                )
                 return
             with self.get_session() as session:
                 count = self.service(session).save_calculation(self._rows, self._period_from, self._period_to)

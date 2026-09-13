@@ -276,6 +276,12 @@ class Ui_MainWindow(object):
 
         self.verticalLayout_3.addWidget(self.btn_Articles)
 
+        self.btn_ProductMapping = QPushButton(self.updater_page)
+        self.btn_ProductMapping.setObjectName(u"btn_ProductMapping")
+        self.btn_ProductMapping.setMinimumSize(QSize(0, 30))
+
+        self.verticalLayout_3.addWidget(self.btn_ProductMapping)
+
         self.btn_Supplier = QPushButton(self.updater_page)
         self.btn_Supplier.setObjectName(u"btn_Supplier")
         self.btn_Supplier.setMinimumSize(QSize(0, 30))
@@ -649,6 +655,7 @@ class Ui_MainWindow(object):
         self.toolBox.setItemText(self.toolBox.indexOf(self.general_page), QCoreApplication.translate("MainWindow", u"General", None))
         self.btn_Products.setText(QCoreApplication.translate("MainWindow", u"\u041f\u0440\u043e\u0434\u0443\u043a\u0442\u044b", None))
         self.btn_Articles.setText(QCoreApplication.translate("MainWindow", u"\u0411\u0430\u0437\u0430 \u0430\u0440\u0442\u0438\u043a\u0443\u043b\u043e\u0432 \u0438 \u043d\u0430\u0437\u0432\u0430\u043d\u0438\u0439", None))
+        self.btn_ProductMapping.setText(QCoreApplication.translate("MainWindow", u"\u0421\u043e\u043f\u043e\u0441\u0442\u0430\u0432\u043b\u0435\u043d\u0438\u0435 \u043f\u0440\u043e\u0434\u0443\u043a\u0442\u043e\u0432", None))
         self.btn_Supplier.setText(QCoreApplication.translate("MainWindow", u"\u041f\u043e\u0441\u0442\u0430\u0432\u0449\u0438\u043a\u0438", None))
         self.btn_ExchangeRates.setText(QCoreApplication.translate("MainWindow", u"\u041a\u0443\u0440\u0441\u044b \u0432\u0430\u043b\u044e\u0442", None))
         self.btn_FixedCosts.setText(QCoreApplication.translate("MainWindow", u"Tax / Fees", None))

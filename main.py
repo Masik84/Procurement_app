@@ -12,6 +12,7 @@ from app.logging_config import (
     install_thread_exception_logging,
     log_startup_stage,
     setup_logging,
+    shutdown_native_crash_capture,
 )
 
 LOG_PATH = setup_logging(BASE_DIR)
@@ -84,6 +85,7 @@ from app.ui.table_scale import (
     MIN_TABLE_SCALE,
     get_table_scale_manager,
     initialise_table_scale_manager,
+    shutdown_table_scale_manager,
 )
 
 # ВАЖНО: страницы не импортируем при старте программы.
@@ -113,6 +115,39 @@ def global_exception_handler(exc_type, exc_value, exc_traceback):
 
 
 sys.excepthook = global_exception_handler
+
+_QT_SHUTDOWN_PREPARED = False
+
+
+def _prepare_qt_shutdown() -> None:
+    """Remove Python callbacks from Qt before native object destruction starts."""
+    global _QT_SHUTDOWN_PREPARED
+    if _QT_SHUTDOWN_PREPARED:
+        return
+    _QT_SHUTDOWN_PREPARED = True
+
+    logger.info("SHUTDOWN | preparing Qt teardown")
+    flush_logs()
+
+    # The table scale manager is a long-lived Python QObject installed as an
+    # event filter on many child widgets.  Detach it while those widgets and
+    # QApplication are still alive.
+    try:
+        shutdown_table_scale_manager()
+    except Exception:
+        logger.exception("SHUTDOWN | failed to stop table scale manager")
+        flush_logs()
+
+    # qInstallMessageHandler stores a process-global callback in native Qt.
+    # Never leave a Python callback installed while Python/Qt are finalising.
+    try:
+        qInstallMessageHandler(None)
+    except Exception:
+        logger.exception("SHUTDOWN | failed to remove Qt message handler")
+
+    logger.info("SHUTDOWN | Python Qt callbacks detached")
+    flush_logs()
+
 
 def lazy_page(module_name: str, class_name: str):
     def factory():
@@ -152,6 +187,10 @@ class CompactComboDelegate(QStyledItemDelegate):
 class MyWindow(QMainWindow):
     def __init__(self):
         super(MyWindow, self).__init__()
+        # Ensure the C++ window tree is destroyed while QApplication and the
+        # Python runtime are still fully alive, not later during interpreter
+        # finalisation.
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
 
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
@@ -206,6 +245,7 @@ class MyWindow(QMainWindow):
         self.home_btn = self.ui.btn_Home
         self.btn_product = self.ui.btn_Products
         self.btn_articles = self.ui.btn_Articles
+        self.btn_product_mapping = self.ui.btn_ProductMapping
         self.btn_supplier = self.ui.btn_Supplier
         self.btn_exchange_rates = self.ui.btn_ExchangeRates
         self.btn_fixed_costs = self.ui.btn_FixedCosts
@@ -228,6 +268,7 @@ class MyWindow(QMainWindow):
             self.home_btn: lambda: PlaceholderPage("Главная"),
             self.btn_product: lazy_page("app.page_functions.products_page", "ProductsPage"),
             self.btn_articles: lazy_page("app.page_functions.product_articles_page", "ProductArticlesPage"),
+            self.btn_product_mapping: lazy_page("app.page_functions.product_mapping_page", "ProductMappingPage"),
             self.btn_supplier: lazy_page("app.page_functions.suppliers_page", "SuppliersPage"),
             self.btn_exchange_rates: lazy_page("app.page_functions.exchange_rates_page", "ExchangeRatesPage"),
             self.btn_fixed_costs: lazy_page("app.page_functions.fixed_costs_page", "FixedCostsPage"),
@@ -536,6 +577,7 @@ if __name__ == "__main__":
 
     log_startup_stage(logger, "creating QApplication")
     app = QApplication(sys.argv)
+    app.aboutToQuit.connect(_prepare_qt_shutdown)
     log_startup_stage(logger, "QApplication created")
 
     log_startup_stage(logger, "initialising table scale manager")
@@ -556,4 +598,23 @@ if __name__ == "__main__":
     exit_code = app.exec()
     logger.info("Application event loop finished, exit code: %s", exit_code)
     flush_logs()
+
+    # aboutToQuit normally performed this while the event loop was active.
+    # Keep a fallback for unusual exits where that signal was not delivered.
+    _prepare_qt_shutdown()
+
+    # Drop Python references explicitly instead of leaving PySide/Shiboken
+    # wrappers to be finalised in arbitrary order at interpreter shutdown.
+    try:
+        del window
+    except NameError:
+        pass
+
+    # Destroy QApplication in a controlled point while native crash capture is
+    # still active. If Qt itself fails here, faulthandler will still record it.
+    del app
+
+    logger.info("SHUTDOWN | QApplication released cleanly")
+    flush_logs()
+    shutdown_native_crash_capture()
     sys.exit(exit_code)
