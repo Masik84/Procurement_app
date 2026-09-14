@@ -341,6 +341,13 @@ def show_standard_table_context_menu(owner: Any, table: QTableWidget, position) 
     delete_action.triggered.connect(lambda: delete_selected_rows_visual(owner, table, rows))
     undo_delete_action.triggered.connect(lambda: undo_visual_delete(owner, table))
 
+    # Pages may append domain-specific actions while keeping the same standard
+    # copy/delete menu everywhere in the application.  This is intentionally a
+    # hook instead of a page replacing the shared context menu implementation.
+    extra_menu_hook = getattr(owner, "populate_standard_table_context_menu", None)
+    if callable(extra_menu_hook):
+        extra_menu_hook(menu, table, rows, index)
+
     menu.exec(table.viewport().mapToGlobal(viewport_pos))
 
 

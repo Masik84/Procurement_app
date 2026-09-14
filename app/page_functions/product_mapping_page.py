@@ -27,6 +27,7 @@ from app.ui.table_style import format_table_field_value, resize_columns_for_mult
 from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 from app.utils.message_dialogs import show_error
 from app.utils.pack_type_prompt import ask_pack_type
+from app.utils.gui_table_actions import install_standard_table_context_menu
 from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
 
@@ -63,6 +64,8 @@ def load_ui(ui_path: Path):
 
 
 class ProductMappingPage(QWidget):
+    TABLE_DELETE_MESSAGE = "Удаление сопоставлений будет выполнено после Сохранить"
+
     COLUMNS = [
         "sales_code",
         "sales_article",
@@ -118,6 +121,10 @@ class ProductMappingPage(QWidget):
         self._selected_family_values: set[str] | None = None
         self._selected_product_ids: set[int] | None = None
         self._product_meta: dict[int, tuple[str, str, str]] = {}
+        self._pending_deletes: set[str] = set()
+        self._deleted_row_snapshots: list[dict] = []
+        self._visually_deleted_codes: set[str] = set()
+        self._show_ignored = False
 
         self.setup_ui()
         self.setup_connections()
@@ -139,6 +146,7 @@ class ProductMappingPage(QWidget):
         self.table.setColumnCount(len(self.HEADERS))
         self.table.setHorizontalHeaderLabels(self.HEADERS)
         self.table.horizontalHeader().setVisible(True)
+        install_standard_table_context_menu(self, self.table)
         self.clear_message()
 
     def setup_connections(self):
@@ -402,6 +410,9 @@ class ProductMappingPage(QWidget):
         text_filter = clean_multi_spaces(self.ui.line_NameSearch.text()).casefold()
         rows = []
         for row in self._all_rows:
+            code = clean_multi_spaces(row.get("sales_code"))
+            if code and code in self._visually_deleted_codes:
+                continue
             if self._selected_brand_values is not None and self._brand_for_row(row) not in self._selected_brand_values:
                 continue
             if self._selected_family_values is not None and self._family_for_row(row) not in self._selected_family_values:
@@ -421,6 +432,91 @@ class ProductMappingPage(QWidget):
         self._rows = rows
         self._populate_table(rows)
 
+    # ------------------------------------------------------------------
+    # Shared context menu integration.
+    # ------------------------------------------------------------------
+    def after_standard_table_rows_deleted(self, table, rows, snapshots):
+        for snapshot in snapshots:
+            code = clean_multi_spaces(snapshot.get("key"))
+            if code:
+                self._visually_deleted_codes.add(code)
+
+    def after_standard_table_rows_restored(self, table, snapshots):
+        for snapshot in snapshots:
+            code = clean_multi_spaces(snapshot.get("key"))
+            if code:
+                self._visually_deleted_codes.discard(code)
+
+    def _selected_codes_from_rows(self, table_rows: list[int]) -> list[str]:
+        result: list[str] = []
+        for table_row in table_rows:
+            code = self._code_at_table_row(table_row)
+            if code and code not in result:
+                result.append(code)
+        return result
+
+    def populate_standard_table_context_menu(self, menu, table, rows, index):
+        """Append mapping-specific actions to the common table menu."""
+        menu.addSeparator()
+        codes = self._selected_codes_from_rows(rows)
+        selected_data = [self._row_by_code(code) for code in codes]
+        selected_data = [row for row in selected_data if row is not None]
+
+        ignore_action = menu.addAction("Не использовать / больше не проверять")
+        restore_action = menu.addAction("Вернуть в проверку")
+        menu.addSeparator()
+        toggle_text = "Скрыть игнорируемые" if self._show_ignored else "Показать игнорируемые"
+        toggle_action = menu.addAction(toggle_text)
+
+        ignore_action.setEnabled(any(not bool(row.get("is_ignored")) for row in selected_data))
+        restore_action.setEnabled(any(bool(row.get("is_ignored")) for row in selected_data))
+
+        ignore_action.triggered.connect(lambda: self._set_selected_ignored(codes, True))
+        restore_action.triggered.connect(lambda: self._set_selected_ignored(codes, False))
+        toggle_action.triggered.connect(self._toggle_show_ignored)
+
+    def _set_selected_ignored(self, codes: list[str], ignored: bool):
+        rows = [self._row_by_code(code) for code in codes]
+        rows = [row for row in rows if row is not None]
+        if not rows:
+            return
+        try:
+            with self.get_session() as session:
+                count = self.service(session).set_ignored(rows, ignored=ignored)
+                session.commit()
+
+            # Ignore is persistent immediately: it is not tied to the ordinary
+            # Save button, because its purpose is to stop future system checks.
+            self._pending_deletes.difference_update(codes)
+            self._visually_deleted_codes.difference_update(codes)
+            self._deleted_row_snapshots.clear()
+
+            if self._mode == "search":
+                self.search_saved()
+            else:
+                self._all_rows = [
+                    row for row in self._all_rows
+                    if clean_multi_spaces(row.get("sales_code")) not in set(codes)
+                ]
+                self.apply_filters()
+
+            self.show_message(
+                f"Помечено как неиспользуемые: {count}"
+                if ignored
+                else f"Возвращено в проверку: {count}"
+            )
+        except Exception as exc:
+            self.show_error_message(str(exc))
+
+    def _toggle_show_ignored(self):
+        self._show_ignored = not self._show_ignored
+        self.search_saved()
+
+    def _reset_visual_delete_state(self):
+        self._pending_deletes.clear()
+        self._deleted_row_snapshots.clear()
+        self._visually_deleted_codes.clear()
+
     def reset_all(self):
         self.ui.line_FindProduct.clear()
         self.ui.cbo_FindBrand.setCurrentIndex(0)
@@ -428,6 +524,8 @@ class ProductMappingPage(QWidget):
         self._selected_brand_values = None
         self._selected_family_values = None
         self._selected_product_ids = None
+        self._show_ignored = False
+        self._reset_visual_delete_state()
         self._refresh_filter_buttons()
         self.apply_filters()
         self.show_message("Фильтры и поля сброшены")
@@ -438,8 +536,9 @@ class ProductMappingPage(QWidget):
     def search_saved(self):
         try:
             with self.get_session() as session:
-                rows = self.service(session).search_links()
+                rows = self.service(session).search_links(include_ignored=self._show_ignored)
             self._mode = "search"
+            self._reset_visual_delete_state()
             self._all_rows = [dict(r) for r in rows]
             self._load_product_meta()
             self.apply_filters()
@@ -452,6 +551,7 @@ class ProductMappingPage(QWidget):
             with self.get_session() as session:
                 result = self.service(session).check_products()
             self._mode = "check"
+            self._reset_visual_delete_state()
             self._all_rows = [dict(r) for r in result.rows]
             self._load_product_meta()
             self.apply_filters()
@@ -466,18 +566,28 @@ class ProductMappingPage(QWidget):
 
     def save(self):
         self._commit_open_product_editor()
-        rows = self._all_rows if self._mode == "check" else self._rows
-        if not rows:
+        pending_deletes = {clean_multi_spaces(code) for code in self._pending_deletes if clean_multi_spaces(code)}
+        base_rows = self._all_rows if self._mode == "check" else self._rows
+        rows = [
+            row for row in base_rows
+            if clean_multi_spaces(row.get("sales_code")) not in pending_deletes
+            and not bool(row.get("is_ignored"))
+        ]
+        if not rows and not pending_deletes:
             self.show_message("Нет строк для сохранения")
             return
         try:
             with self.get_session() as session:
-                count = self.service(session).save_rows(rows)
+                deleted = self.service(session).delete_links(pending_deletes)
+                count = self.service(session).save_rows(rows) if rows else 0
                 session.commit()
             # After saving, show persisted mappings. This intentionally does not
             # run the system matching/check algorithm again.
             self.search_saved()
-            self.show_message(f"Сопоставления сохранены: {count}")
+            if deleted:
+                self.show_message(f"Сопоставления сохранены: {count}; удалено: {deleted}")
+            else:
+                self.show_message(f"Сопоставления сохранены: {count}")
         except MissingPackTypeError as exc:
             selected_pack = ask_pack_type(self, exc)
             if selected_pack is None:

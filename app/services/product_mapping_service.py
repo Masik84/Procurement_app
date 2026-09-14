@@ -17,7 +17,7 @@ from app.utils.text import clean_multi_spaces
 
 
 SALES_DB_URI = "postgresql+psycopg2://postgres:qwerty@localhost:5432/report_db?client_encoding=utf8"
-EXCLUDED_SALES_TYPES = ("SPARES", "FILTER")
+EXCLUDED_SALES_TYPES = ("SPARES", "FILTER", "PROMOTION")
 
 
 @dataclass(slots=True)
@@ -71,7 +71,7 @@ class ProductMappingService:
         return create_engine(self.sales_db_uri, pool_pre_ping=True)
 
     def read_sales_products(self) -> pd.DataFrame:
-        """Read the whole source catalogue except Type SPARES / Filter."""
+        """Read the source catalogue except Type SPARES / Filter / Promotion."""
         query = text(
             '''
             SELECT
@@ -135,6 +135,90 @@ class ProductMappingService:
             if clean_code:
                 result[clean_code] = self._qty_in_box_from_sales(value)
         return result
+
+    def ignored_sales_codes(self) -> set[str]:
+        """Return source product codes explicitly excluded by the user.
+
+        ``is_ignored`` is kept as a persisted flag in ``sales_product_links``.
+        The ORM model is intentionally not required for this small source-state
+        flag, so older project branches can still apply this patch cleanly.
+        """
+        rows = self.session.execute(
+            text(
+                """
+                SELECT sales_code
+                FROM sales_product_links
+                WHERE COALESCE(is_ignored, FALSE) = TRUE
+                """
+            )
+        ).all()
+        return {
+            clean_multi_spaces(code)
+            for (code,) in rows
+            if clean_multi_spaces(code)
+        }
+
+    def set_ignored(self, rows: list[dict], *, ignored: bool) -> int:
+        """Persist the user's decision to ignore/unignore source products.
+
+        Ignoring a new row never creates a Product in our catalogue.  It only
+        saves the source snapshot and the ignore flag, so future checks can
+        skip it.  Existing mapped Products are not deleted.
+        """
+        changed = 0
+        for row in rows:
+            code = clean_multi_spaces(row.get("sales_code"))
+            if not code:
+                continue
+
+            link = (
+                self.session.query(SalesProductLink)
+                .filter(SalesProductLink.sales_code == code)
+                .first()
+            )
+            if link is None:
+                link = SalesProductLink(sales_code=code)
+                self.session.add(link)
+
+            # Keep an existing mapping when the source row is ignored. For a
+            # brand-new ignored row product_id remains NULL: no Product is made.
+            link.sales_article = clean_multi_spaces(row.get("sales_article")) or None
+            link.sales_product_name = clean_multi_spaces(row.get("sales_product_name")) or None
+            link.sales_pack = self._to_decimal(row.get("sales_pack"))
+            link.sales_brand = clean_multi_spaces(row.get("sales_brand")) or None
+            link.sales_is_excise = row.get("sales_is_excise")
+            link.updated_at = datetime.now()
+            self.session.flush()
+
+            self.session.execute(
+                text(
+                    """
+                    UPDATE sales_product_links
+                    SET sales_qty_in_box = :qty_in_box,
+                        is_ignored = :is_ignored
+                    WHERE sales_code = :sales_code
+                    """
+                ),
+                {
+                    "sales_code": code,
+                    "qty_in_box": self._qty_in_box_from_sales(row.get("sales_qty_in_box")),
+                    "is_ignored": bool(ignored),
+                },
+            )
+            changed += 1
+
+        self.session.flush()
+        return changed
+
+    def delete_links(self, sales_codes: set[str] | list[str]) -> int:
+        codes = [clean_multi_spaces(code) for code in sales_codes if clean_multi_spaces(code)]
+        if not codes:
+            return 0
+        return (
+            self.session.query(SalesProductLink)
+            .filter(SalesProductLink.sales_code.in_(codes))
+            .delete(synchronize_session=False)
+        )
 
     def get_brand_values(self) -> list[str]:
         rows = (
@@ -204,6 +288,7 @@ class ProductMappingService:
         status: str,
         is_new: bool,
         auto_found: bool = False,
+        is_ignored: bool = False,
     ) -> dict:
         product_qty_in_box = None
         if product is not None:
@@ -232,6 +317,7 @@ class ProductMappingService:
             "new_is_excise": bool(sales_excise) if unmatched and sales_excise is not None else (False if unmatched else None),
             "is_auto_matched": bool(auto_found),
             "is_new": bool(is_new),
+            "is_ignored": bool(is_ignored),
         }
 
     def check_products(self) -> ProductMappingCheckResult:
@@ -243,6 +329,7 @@ class ProductMappingService:
         product_map = self.product_map()
         links = self.link_map(load_products=False)
         saved_sales_qty = self.saved_sales_qty_in_box_map()
+        ignored_codes = self.ignored_sales_codes()
         cleaned = self._clean_sales_frame(sales_df)
 
         rows: list[dict] = []
@@ -252,7 +339,7 @@ class ProductMappingService:
 
         for source in cleaned.itertuples(index=False):
             sales_code = source.sales_code
-            if not sales_code:
+            if not sales_code or sales_code in ignored_codes:
                 continue
             link = links.get(sales_code)
             link_matches = self.sales_link_matches_source(
@@ -331,36 +418,43 @@ class ProductMappingService:
 
         return ProductMappingCheckResult(rows, auto_matched, new_count, changed_count)
 
-    def search_links(self) -> list[dict]:
-        """Show only mappings already stored in the local Procurement DB.
+    def search_links(self, *, include_ignored: bool = False) -> list[dict]:
+        """Show mappings already stored in the local Procurement DB only.
 
-        ``Search`` must never connect to the sales DB and must never run
-        ProductMatchingService.  It is a read-only view of ``SalesProductLink``
-        plus the linked local ``Product`` record.
+        ``Search`` never connects to the sales DB and never runs automatic
+        matching. Ignored rows are hidden by default, but can be shown from the
+        table context menu so the user can restore them.
         """
         links = self.link_map(load_products=True)
         if not links:
             return []
 
         saved_sales_qty = self.saved_sales_qty_in_box_map()
+        ignored_codes = self.ignored_sales_codes()
         rows: list[dict] = []
         for code, link in sorted(links.items(), key=lambda item: item[0]):
+            is_ignored = code in ignored_codes
+            if is_ignored and not include_ignored:
+                continue
             product = link.product
             rows.append(self._row_payload(
                 sales_code=code,
                 sales_article=clean_multi_spaces(link.sales_article),
                 sales_name=clean_multi_spaces(link.sales_product_name),
                 sales_pack=link.sales_pack,
-                # Search is local-only: show the source Qty in Box snapshot
-                # saved in our own sales_product_links table.
                 sales_qty_in_box=saved_sales_qty.get(code),
                 sales_brand=clean_multi_spaces(link.sales_brand),
                 sales_excise=link.sales_is_excise,
                 sales_type="",
                 product=product,
-                status="Сопоставлен" if product is not None else "Без продукта",
+                status=(
+                    "Игнорируется"
+                    if is_ignored
+                    else ("Сопоставлен" if product is not None else "Без продукта")
+                ),
                 is_new=False,
                 auto_found=False,
+                is_ignored=is_ignored,
             ))
         return rows
 
@@ -453,7 +547,8 @@ class ProductMappingService:
                 text(
                     """
                     UPDATE sales_product_links
-                    SET sales_qty_in_box = :qty_in_box
+                    SET sales_qty_in_box = :qty_in_box,
+                        is_ignored = FALSE
                     WHERE sales_code = :sales_code
                     """
                 ),
