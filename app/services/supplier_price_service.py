@@ -532,10 +532,13 @@ class SupplierPriceService:
                 self.product_matching_service.validate_product_name_pack_format(
                     product_name=new_name,
                     pack_value=product.pack,
+                    brand=product.brand,
                 )
                 product.name = new_name
                 product.family = self.product_matching_service.build_product_family_from_name(
-                    new_name, product.pack
+                    new_name,
+                    product.pack,
+                    brand=product.brand,
                 )
 
             if row.new_is_excise is not None:

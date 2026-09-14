@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from app.db.db import SessionLocal
 from app.db.models import Product
+from app.imports.product_mapping_portfolio_importer import ProductMappingPortfolioImporter
 from app.services.product_mapping_service import ProductMappingService
 from app.services.product_matching_service import MissingPackTypeError
 from app.ui.table_style import format_table_field_value, resize_columns_for_multiline_headers, setup_data_table
@@ -86,10 +87,10 @@ class ProductMappingPage(QWidget):
     HEADERS = [
         "Код",
         "Артикул",
-        "Product Name from sales DB",
+        "Product Name from Portfolio",
         "Упаковка",
         "Кол-во в упак",
-        "Brand from sales DB",
+        "Brand from Portfolio",
         "Акциз",
         "Статус",
         "Our Product Name",
@@ -120,18 +121,27 @@ class ProductMappingPage(QWidget):
         self._selected_brand_values: set[str] | None = None
         self._selected_family_values: set[str] | None = None
         self._selected_product_ids: set[int] | None = None
+
+        # Left-side filter controls are only applied after Search, like on the
+        # other reference pages.  These values are a snapshot of the filters
+        # that were actually applied to the table.
+        self._applied_brand_values: set[str] | None = None
+        self._applied_family_values: set[str] | None = None
+        self._applied_product_ids: set[int] | None = None
+        self._applied_name_search: str = ""
         self._product_meta: dict[int, tuple[str, str, str]] = {}
         self._pending_deletes: set[str] = set()
         self._deleted_row_snapshots: list[dict] = []
         self._visually_deleted_codes: set[str] = set()
         self._show_ignored = False
+        self._portfolio_df: pd.DataFrame | None = None
 
         self.setup_ui()
         self.setup_connections()
         self.load_find_brands()
         self._load_product_meta()
         self._refresh_filter_buttons()
-        self.show_message("Нажмите Search или Проверить")
+        self.show_message("Выберите файл Портфель или нажмите Search")
 
     def get_session(self):
         return SessionLocal()
@@ -151,7 +161,7 @@ class ProductMappingPage(QWidget):
 
     def setup_connections(self):
         self.ui.btn_Search.clicked.connect(self.search_saved)
-        self.ui.btn_CheckProducts.clicked.connect(self.check_products)
+        self.ui.btn_Import.clicked.connect(self.import_portfolio)
         self.ui.btn_ResetAll.clicked.connect(self.reset_all)
         self.ui.btn_Save.clicked.connect(self.save)
         self.ui.btn_SaveExcel.clicked.connect(self.save_excel)
@@ -159,7 +169,6 @@ class ProductMappingPage(QWidget):
         self.ui.btn_FilterBrand.clicked.connect(self.open_brand_filter)
         self.ui.btn_FilterProductFamily.clicked.connect(self.open_family_filter)
         self.ui.btn_FilterProduct.clicked.connect(self.open_product_filter)
-        self.ui.line_NameSearch.textChanged.connect(self.apply_filters)
 
         self.table.cellDoubleClicked.connect(self.start_product_edit)
         self.table.itemChanged.connect(self.on_item_changed)
@@ -385,41 +394,59 @@ class ProductMappingPage(QWidget):
         if accepted:
             self._selected_brand_values = None if selected is None else {str(v) for v in selected}
             self._refresh_filter_buttons()
-            self.apply_filters()
 
     def open_family_filter(self):
         accepted, selected = self._open_checked_filter(title="Фильтр по Product Family", options=self._family_options(), selected=self._selected_family_values)
         if accepted:
             self._selected_family_values = None if selected is None else {str(v) for v in selected}
             self._refresh_filter_buttons()
-            self.apply_filters()
 
     def open_product_filter(self):
         accepted, selected = self._open_checked_filter(title="Фильтр по продуктам", options=self._product_options(), selected=self._selected_product_ids)
         if accepted:
             self._selected_product_ids = None if selected is None else {int(v) for v in selected}
             self._refresh_filter_buttons()
-            self.apply_filters()
 
     def _refresh_filter_buttons(self):
         self.ui.btn_FilterBrand.setText("все Бренды" if self._selected_brand_values is None else f"все Бренды ({len(self._selected_brand_values)})")
         self.ui.btn_FilterProductFamily.setText("все Product Family" if self._selected_family_values is None else f"все Product Family ({len(self._selected_family_values)})")
         self.ui.btn_FilterProduct.setText("все Продукты" if self._selected_product_ids is None else f"все Продукты ({len(self._selected_product_ids)})")
 
+    def _capture_left_filter_state(self):
+        """Apply the current left-side controls only when Search is pressed."""
+        self._applied_brand_values = (
+            None if self._selected_brand_values is None else set(self._selected_brand_values)
+        )
+        self._applied_family_values = (
+            None if self._selected_family_values is None else set(self._selected_family_values)
+        )
+        self._applied_product_ids = (
+            None if self._selected_product_ids is None else set(self._selected_product_ids)
+        )
+        self._applied_name_search = clean_multi_spaces(
+            self.ui.line_NameSearch.text()
+        ).casefold()
+
+    def _clear_applied_left_filters(self):
+        self._applied_brand_values = None
+        self._applied_family_values = None
+        self._applied_product_ids = None
+        self._applied_name_search = ""
+
     def apply_filters(self):
-        text_filter = clean_multi_spaces(self.ui.line_NameSearch.text()).casefold()
+        text_filter = self._applied_name_search
         rows = []
         for row in self._all_rows:
             code = clean_multi_spaces(row.get("sales_code"))
             if code and code in self._visually_deleted_codes:
                 continue
-            if self._selected_brand_values is not None and self._brand_for_row(row) not in self._selected_brand_values:
+            if self._applied_brand_values is not None and self._brand_for_row(row) not in self._applied_brand_values:
                 continue
-            if self._selected_family_values is not None and self._family_for_row(row) not in self._selected_family_values:
+            if self._applied_family_values is not None and self._family_for_row(row) not in self._applied_family_values:
                 continue
-            if self._selected_product_ids is not None:
+            if self._applied_product_ids is not None:
                 pid = row.get("product_id")
-                if not pid or int(pid) not in self._selected_product_ids:
+                if not pid or int(pid) not in self._applied_product_ids:
                     continue
             if text_filter:
                 haystack = " ".join(clean_multi_spaces(row.get(key)) for key in (
@@ -524,6 +551,7 @@ class ProductMappingPage(QWidget):
         self._selected_brand_values = None
         self._selected_family_values = None
         self._selected_product_ids = None
+        self._clear_applied_left_filters()
         self._show_ignored = False
         self._reset_visual_delete_state()
         self._refresh_filter_buttons()
@@ -531,10 +559,20 @@ class ProductMappingPage(QWidget):
         self.show_message("Фильтры и поля сброшены")
 
     # ------------------------------------------------------------------
-    # Search / Check / Save
+    # Search / Import / Save
     # ------------------------------------------------------------------
     def search_saved(self):
         try:
+            self._capture_left_filter_state()
+
+            # After Portfolio import Search is only the left-filter apply button.
+            # It must not replace the current Portfolio result with historical
+            # rows from sales_product_links.
+            if self._mode == "check" and self._portfolio_df is not None:
+                self.apply_filters()
+                self.show_message(f"Найдено: {len(self._rows)}")
+                return
+
             with self.get_session() as session:
                 rows = self.service(session).search_links(include_ignored=self._show_ignored)
             self._mode = "search"
@@ -542,27 +580,63 @@ class ProductMappingPage(QWidget):
             self._all_rows = [dict(r) for r in rows]
             self._load_product_meta()
             self.apply_filters()
-            self.show_message(f"Сохранённых сопоставлений: {len(rows)}")
+            self.show_message(
+                f"Сохранённых сопоставлений: {len(rows)}; найдено: {len(self._rows)}"
+            )
         except Exception as exc:
             self.show_error_message(str(exc))
 
-    def check_products(self):
+    def _apply_check_result(self, result, *, loaded_rows: int | None = None):
+        self._mode = "check"
+        self._reset_visual_delete_state()
+        self._all_rows = [dict(r) for r in result.rows]
+        self._load_product_meta()
+        self.apply_filters()
+
+        if loaded_rows is not None:
+            unresolved_names = sum(
+                1 for row in result.rows
+                if not row.get("product_id")
+            )
+            self.show_message(
+                f"Загружено строк: {loaded_rows}; "
+                f"не определено названий: {unresolved_names}."
+            )
+            return
+
+        if not result.rows:
+            self.show_message("Изменений не найдено")
+        else:
+            self.show_message(f"Требуют обработки: {len(result.rows)}")
+
+    def import_portfolio(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Выберите файл Портфель",
+            "",
+            "Excel files (*.xlsx *.xlsm *.xls)",
+        )
+        if not file_path:
+            return
+
         try:
+            portfolio_df = ProductMappingPortfolioImporter().read_excel(file_path)
             with self.get_session() as session:
-                result = self.service(session).check_products()
-            self._mode = "check"
-            self._reset_visual_delete_state()
-            self._all_rows = [dict(r) for r in result.rows]
-            self._load_product_meta()
-            self.apply_filters()
-            if not result.rows:
-                self.show_message("Изменений не найдено")
-            else:
-                self.show_message(
-                    f"Изменений: {len(result.rows)}; новых: {result.new_count}; автоподбор: {result.auto_matched_count}."
-                )
+                service = self.service(session)
+                deleted = service.cleanup_stale_new_links(portfolio_df)
+                # The stale NEW links must disappear from the DB before the
+                # matching pass starts, exactly as the Portfolio refresh rule
+                # requires.
+                session.commit()
+                result = service.check_products(portfolio_df)
+
+            self._portfolio_df = portfolio_df.copy()
+            self._clear_applied_left_filters()
+
+            self._apply_check_result(result, loaded_rows=len(portfolio_df))
         except Exception as exc:
             self.show_error_message(str(exc))
+
 
     def save(self):
         self._commit_open_product_editor()
@@ -581,9 +655,19 @@ class ProductMappingPage(QWidget):
                 deleted = self.service(session).delete_links(pending_deletes)
                 count = self.service(session).save_rows(rows) if rows else 0
                 session.commit()
-            # After saving, show persisted mappings. This intentionally does not
-            # run the system matching/check algorithm again.
-            self.search_saved()
+            # Do not jump to Search after Portfolio save: Search shows the full
+            # historical sales_product_links table and can contain legacy links
+            # that are not present in the current filtered Portfolio. Re-run the
+            # current Portfolio comparison instead, so the GUI stays tied to the
+            # imported source. Search remains available as a separate explicit
+            # action.
+            if self._mode == "check" and self._portfolio_df is not None:
+                with self.get_session() as session:
+                    result = self.service(session).check_products(self._portfolio_df)
+                self._apply_check_result(result)
+            else:
+                self.search_saved()
+
             if deleted:
                 self.show_message(f"Сопоставления сохранены: {count}; удалено: {deleted}")
             else:

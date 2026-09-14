@@ -694,21 +694,11 @@ QScrollBar::handle:vertical {
                  </property>
                 </widget>
                </item>
-               <item>
-                <widget class="QPushButton" name="btn_CheckProducts">
-                 <property name="text">
-                  <string>Проверить</string>
-                 </property>
-                 <property name="icon">
-                  <iconset>
-                   <normaloff>:/icon/icon/check-circle — копия — копия.svg</normaloff>:/icon/icon/arrow-down-circle — копия — копия.svg</iconset>
-                 </property>
-                </widget>
-               </item>
+
                <item>
                 <widget class="QPushButton" name="btn_Import">
                  <property name="visible">
-                  <bool>false</bool>
+                  <bool>true</bool>
                  </property>
                  <property name="text">
                   <string>Импорт</string>

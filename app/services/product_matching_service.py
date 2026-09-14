@@ -30,6 +30,11 @@ class ProductCreateData:
     pack: float
     is_excise: bool
     qty_in_box: int | None = None
+    pack_type: object = None
+    density: object = None
+    net_weight: object = None
+    unit: object = None
+    preserve_text_spacing: bool = False
 
 
 
@@ -54,6 +59,11 @@ class ProductMatchingService:
         "GM": "GM",
         "GENERAL MOTORS": "GM",
     }
+
+    TEBOIL_RELAXED_PACK_TYPES = {"БОЧКА", "КЕГА"}
+    TEBOIL_RELAXED_MIN_NOMINAL = Decimal("50")
+    TEBOIL_PACK_RELATIVE_TOLERANCE = Decimal("0.15")
+    TEBOIL_DENSITY_TOLERANCE = Decimal("0.1")
 
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -259,6 +269,89 @@ class ProductMatchingService:
     # =========================================================
 
     @staticmethod
+    def _decimal_value(value: object) -> Decimal | None:
+        number = parse_loose_number(value)
+        if number is None:
+            return None
+        try:
+            return Decimal(str(number))
+        except Exception:
+            return None
+
+    @classmethod
+    def _extract_name_pack_match(cls, product_name: object):
+        text = str(product_name or "").upper()
+        matches = list(
+            re.finditer(
+                r"(?<!\d)([0-9]+(?:[.,][0-9]+)?)\s*(L|KG)\b",
+                text,
+                flags=re.IGNORECASE,
+            )
+        )
+        return matches[-1] if matches else None
+
+    @classmethod
+    def _is_teboil_relaxed_pack(
+        cls,
+        *,
+        brand: object,
+        pack_type: object = None,
+        nominal_pack: Decimal | None = None,
+    ) -> bool:
+        if cls._brand_key(brand) != "TEBOIL":
+            return False
+        pack_type_key = clean_multi_spaces(pack_type).upper()
+        if pack_type_key in cls.TEBOIL_RELAXED_PACK_TYPES:
+            return True
+        return bool(
+            nominal_pack is not None
+            and nominal_pack >= cls.TEBOIL_RELAXED_MIN_NOMINAL
+        )
+
+    @classmethod
+    def _validate_teboil_pack_consistency(
+        cls,
+        *,
+        product_name: str,
+        actual_pack: Decimal,
+        nominal_pack: Decimal,
+        pack_type: object = None,
+        density: object = None,
+        net_weight: object = None,
+        unit: object = None,
+    ) -> None:
+        if nominal_pack <= 0:
+            raise ValueError(f"Для '{product_name}' некорректная упаковка в названии.")
+
+        relative_diff = abs(actual_pack - nominal_pack) / nominal_pack
+        if relative_diff > cls.TEBOIL_PACK_RELATIVE_TOLERANCE:
+            raise ValueError(
+                f"Для '{product_name}' фактическая упаковка {actual_pack} слишком сильно "
+                f"отличается от номинальной {nominal_pack} в названии."
+            )
+
+        density_num = cls._decimal_value(density)
+        net_weight_num = cls._decimal_value(net_weight)
+        if net_weight_num is None:
+            return
+
+        unit_key = clean_multi_spaces(unit).upper()
+        calculated_pack: Decimal | None = None
+        if unit_key in {"КГ", "KG"}:
+            calculated_pack = net_weight_num
+        elif density_num is not None and density_num > 0:
+            calculated_pack = net_weight_num * Decimal("1000") / density_num
+
+        if calculated_pack is None:
+            return
+
+        if abs(actual_pack - calculated_pack) > cls.TEBOIL_DENSITY_TOLERANCE:
+            raise ValueError(
+                f"Для '{product_name}' проверь упаковку: указано {actual_pack}, "
+                f"по весу нетто/плотности получается {calculated_pack.quantize(Decimal('0.01'))}."
+            )
+
+    @staticmethod
     def _normalize_pack_text(value: object) -> str:
         num = parse_loose_number(value)
         if num is None:
@@ -325,19 +418,21 @@ class ProductMatchingService:
         return f"{s} {p_name} {unit_text}"
     
     @classmethod
-    def build_product_family_from_name(cls, product_name: str, pack_value: object) -> str:
+    def build_product_family_from_name(
+        cls,
+        product_name: str,
+        pack_value: object,
+        *,
+        brand: object = None,
+        pack_type: object = None,
+    ) -> str:
         s_name = clean_multi_spaces(product_name).upper()
-        expected_pack = ProductMatchingService._pack_to_name_format(pack_value)
+        actual_pack = cls._decimal_value(pack_value)
 
         if not s_name:
             raise ValueError("Не заполнен ProductName.")
-
-        if not expected_pack:
+        if actual_pack is None:
             raise ValueError("Не заполнен Pack.")
-
-        pack_num = parse_loose_number(expected_pack)
-        if pack_num is None:
-            raise ValueError("Некорректный Pack.")
 
         matches = list(
             re.finditer(
@@ -347,12 +442,10 @@ class ProductMatchingService:
             )
         )
 
+        # Standard rule: the pack embedded in the name must equal Product.pack.
         for match in matches:
-            found_num = parse_loose_number(match.group(1))
-            if found_num is None:
-                continue
-
-            if float(found_num) == float(pack_num):
+            found_pack = cls._decimal_value(match.group(1))
+            if found_pack is not None and found_pack == actual_pack:
                 family = s_name[:match.start()].strip()
                 if not family:
                     raise ValueError(
@@ -360,6 +453,27 @@ class ProductMatchingService:
                     )
                 return family
 
+        # TEBOIL drums/kegs use a nominal pack in the name (e.g. 205L/60L),
+        # while Product.pack contains the density-converted actual volume.
+        if matches:
+            match = matches[-1]
+            nominal_pack = cls._decimal_value(match.group(1))
+            if (
+                nominal_pack is not None
+                and cls._is_teboil_relaxed_pack(
+                    brand=brand,
+                    pack_type=pack_type,
+                    nominal_pack=nominal_pack,
+                )
+                and nominal_pack > 0
+                and abs(actual_pack - nominal_pack) / nominal_pack
+                <= cls.TEBOIL_PACK_RELATIVE_TOLERANCE
+            ):
+                family = s_name[:match.start()].strip()
+                if family:
+                    return family
+
+        expected_pack = cls._pack_to_name_format(pack_value)
         raise ValueError(
             f"Для '{product_name}' проверь упаковку в названии. "
             f"Ожидается наличие упаковки '{expected_pack}L' или '{expected_pack}KG' "
@@ -586,6 +700,10 @@ class ProductMatchingService:
         pack: object,
         is_excise: object,
         qty_in_box: object = None,
+        pack_type: object = None,
+        density: object = None,
+        net_weight: object = None,
+        unit: object = None,
     ) -> None:
         clean_name = clean_multi_spaces(product_name).upper()
         clean_brand = clean_multi_spaces(brand)
@@ -614,6 +732,11 @@ class ProductMatchingService:
         self.validate_product_name_pack_format(
             product_name=clean_name,
             pack_value=pack_num,
+            brand=clean_brand,
+            pack_type=pack_type,
+            density=density,
+            net_weight=net_weight,
+            unit=unit,
         )
 
     def _ensure_pack_type_cache(self) -> None:
@@ -647,19 +770,24 @@ class ProductMatchingService:
         )
 
     @classmethod
-    def validate_product_name_pack_format(cls, *, product_name: str, pack_value: object) -> None:
+    def validate_product_name_pack_format(
+        cls,
+        *,
+        product_name: str,
+        pack_value: object,
+        brand: object = None,
+        pack_type: object = None,
+        density: object = None,
+        net_weight: object = None,
+        unit: object = None,
+    ) -> None:
         s_name = clean_multi_spaces(product_name).upper()
-        expected_pack = cls._pack_to_name_format(pack_value)
+        actual_pack = cls._decimal_value(pack_value)
 
         if not s_name:
             raise ValueError("Не заполнено название нового продукта.")
-
-        if not expected_pack:
+        if actual_pack is None:
             raise ValueError(f"Для '{s_name}' не заполнено поле 'Упаковка'.")
-
-        pack_num = parse_loose_number(expected_pack)
-        if pack_num is None:
-            raise ValueError(f"Для '{product_name}' некорректное поле 'Упаковка'.")
 
         matches = list(
             re.finditer(
@@ -669,14 +797,35 @@ class ProductMatchingService:
             )
         )
 
+        # Default rule for every brand except the special TEBOIL large-pack case.
         for match in matches:
-            found_num = parse_loose_number(match.group(1))
-            if found_num is None:
-                continue
-
-            if float(found_num) == float(pack_num):
+            found_pack = cls._decimal_value(match.group(1))
+            if found_pack is not None and found_pack == actual_pack:
                 return
 
+        if matches:
+            match = matches[-1]
+            nominal_pack = cls._decimal_value(match.group(1))
+            if (
+                nominal_pack is not None
+                and cls._is_teboil_relaxed_pack(
+                    brand=brand,
+                    pack_type=pack_type,
+                    nominal_pack=nominal_pack,
+                )
+            ):
+                cls._validate_teboil_pack_consistency(
+                    product_name=product_name,
+                    actual_pack=actual_pack,
+                    nominal_pack=nominal_pack,
+                    pack_type=pack_type,
+                    density=density,
+                    net_weight=net_weight,
+                    unit=unit,
+                )
+                return
+
+        expected_pack = cls._pack_to_name_format(pack_value)
         raise ValueError(
             f"Для '{product_name}' проверь упаковку в названии. "
             f"Ожидается наличие упаковки '{expected_pack}L' или '{expected_pack}KG' "
@@ -692,6 +841,11 @@ class ProductMatchingService:
         pack: object,
         is_excise: object,
         qty_in_box: object = None,
+        pack_type: object = None,
+        density: object = None,
+        net_weight: object = None,
+        unit: object = None,
+        preserve_text_spacing: bool = False,
     ) -> Product:
         return self.get_or_create_products_batch([
             ProductCreateData(
@@ -700,6 +854,11 @@ class ProductMatchingService:
                 pack=pack,
                 is_excise=is_excise,
                 qty_in_box=qty_in_box,
+                pack_type=pack_type,
+                density=density,
+                net_weight=net_weight,
+                unit=unit,
+                preserve_text_spacing=preserve_text_spacing,
             )
         ])[0]
 
@@ -714,8 +873,12 @@ class ProductMatchingService:
         created: list[Product] = []
 
         for item in items:
-            clean_name = clean_multi_spaces(item.name).upper()
-            clean_brand = clean_multi_spaces(item.brand)
+            if item.preserve_text_spacing:
+                clean_name = str(item.name or "").upper()
+                clean_brand = str(item.brand or "").upper()
+            else:
+                clean_name = clean_multi_spaces(item.name).upper()
+                clean_brand = clean_multi_spaces(item.brand)
             pack_num = parse_loose_number(item.pack)
             qty_in_box = normalize_qty_in_box(item.qty_in_box)
             self.validate_new_product_fields(
@@ -724,6 +887,10 @@ class ProductMatchingService:
                 pack=pack_num,
                 is_excise=item.is_excise,
                 qty_in_box=qty_in_box,
+                pack_type=item.pack_type,
+                density=item.density,
+                net_weight=item.net_weight,
+                unit=item.unit,
             )
 
             product = exact_cache.get(clean_name)
@@ -739,7 +906,12 @@ class ProductMatchingService:
                     pack=pack_num,
                     qty_in_box=qty_in_box,
                     is_excise=bool(item.is_excise),
-                    family=self.build_product_family_from_name(clean_name, pack_num),
+                    family=self.build_product_family_from_name(
+                        clean_name,
+                        pack_num,
+                        brand=clean_brand,
+                        pack_type=item.pack_type,
+                    ),
                 )
                 self.session.add(product)
                 created.append(product)

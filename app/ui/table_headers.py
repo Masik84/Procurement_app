@@ -61,6 +61,8 @@ GUI_HEADER_LABELS: dict[str, str] = {
     "Best full Price, L 2": "Best full\nPrice, L 2",
     "Product Name from sales DB": "Product Name\nfrom sales DB",
     "Brand from sales DB": "Brand from\nsales DB",
+    "Product Name from Portfolio": "Product Name\nfrom Portfolio",
+    "Brand from Portfolio": "Brand from\nPortfolio",
     "Кол-во в упак": "Кол-во\nв упак",
     "Our Product Name": "Our Product\nName",
     "Volume to take": "Volume\nto take",

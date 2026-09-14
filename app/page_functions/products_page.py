@@ -376,7 +376,7 @@ class ProductsPage(QWidget):
         if pack is None:
             raise Exception(f"Для '{name}' поле Pack обязательно")
 
-        family_calc = self._build_family_from_name(name, pack)
+        family_calc = self._build_family_from_name(name, pack, brand)
         if family and family != family_calc:
             raise Exception(
                 f"Для '{name}' неверно заполнено family. Ожидается '{family_calc}'."
@@ -1149,42 +1149,13 @@ class ProductsPage(QWidget):
         text = f"{float(number):.4f}".rstrip("0").rstrip(".")
         return text.replace(".", ",")
 
-    def _build_family_from_name(self, name: str, pack: Decimal) -> str:
-        product_name = clean_multi_spaces(name).upper()
-        pack_value = parse_loose_number(pack)
-
-        if not product_name:
-            raise Exception("Не заполнено название продукта.")
-
-        if pack_value is None:
-            raise Exception("Поле 'Pack' должно быть числом.")
-
-        matches = list(
-            re.finditer(
-                r"(?<!\d)([0-9]+(?:[.,][0-9]+)?)\s*(L|KG)\b",
-                product_name,
-                flags=re.IGNORECASE,
-            )
-        )
-
-        for match in matches:
-            found_num = parse_loose_number(match.group(1))
-            if found_num is None:
-                continue
-
-            if float(found_num) == float(pack_value):
-                family = product_name[:match.start()].strip()
-                if not family:
-                    raise Exception(
-                        f"Для '{product_name}' не удалось определить family до упаковки."
-                    )
-                return family
-
-        pack_display = self._format_decimal_display(pack)
-        raise Exception(
-            f"Для '{product_name}' проверь упаковку в названии. "
-            f"Ожидается наличие '{pack_display}L' или '{pack_display}KG' внутри названия, "
-            f"например: '... {pack_display}L BIB'."
+    def _build_family_from_name(self, name: str, pack: Decimal, brand: str = "") -> str:
+        # Keep all name/pack validation in the shared matcher so TEBOIL large
+        # packs follow the same relaxed rule here as in imports and matching.
+        return ProductMatchingService.build_product_family_from_name(
+            name,
+            pack,
+            brand=brand,
         )
 
     def add_line(self):

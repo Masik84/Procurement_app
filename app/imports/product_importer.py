@@ -105,8 +105,13 @@ class ProductImporter:
             ProductMatchingService.validate_product_name_pack_format(
                 product_name=name,
                 pack_value=pack,
+                brand=brand,
             )
-            family = ProductMatchingService.build_product_family_from_name(name, pack)
+            family = ProductMatchingService.build_product_family_from_name(
+                name,
+                pack,
+                brand=brand,
+            )
 
             if excise_raw in self.TRUE_VALUES:
                 is_excise = True
