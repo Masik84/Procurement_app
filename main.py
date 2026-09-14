@@ -79,6 +79,7 @@ log_startup_stage(logger, "Qt message handler installed")
 
 from app.ui import resource_rc  # noqa: F401
 from app.ui.main_window_ui import Ui_MainWindow
+from app.ui.table_style import apply_global_table_display_rules
 from app.ui.table_scale import (
     DEFAULT_TABLE_SCALE,
     MAX_TABLE_SCALE,
@@ -187,10 +188,10 @@ class CompactComboDelegate(QStyledItemDelegate):
 class MyWindow(QMainWindow):
     def __init__(self):
         super(MyWindow, self).__init__()
-        # Ensure the C++ window tree is destroyed while QApplication and the
-        # Python runtime are still fully alive, not later during interpreter
-        # finalisation.
-        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        # Do NOT use WA_DeleteOnClose here.  The main window owns many PySide
+        # children with Python callbacks/event filters.  Qt deleting that tree
+        # during the native close event can race our shutdown cleanup and cause
+        # Windows 0xC0000005 before aboutToQuit is emitted.
 
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
@@ -335,6 +336,7 @@ class MyWindow(QMainWindow):
                 if PAGE_STYLESHEET:
                     page.setStyleSheet(PAGE_STYLESHEET)
             self.setup_all_compact_comboboxes(page)
+            apply_global_table_display_rules(page)
             self.table_scale_manager.register_tables(page)
             cur_index = self.ui.tabWidget.addTab(page, title)
             self.ui.tabWidget.setCurrentIndex(cur_index)
@@ -359,6 +361,7 @@ class MyWindow(QMainWindow):
                 if PAGE_STYLESHEET:
                     page.setStyleSheet(PAGE_STYLESHEET)
             self.setup_all_compact_comboboxes(page)
+            apply_global_table_display_rules(page)
             self.table_scale_manager.register_tables(page)
             cur_index = self.ui.tabWidget.addTab(page, title)
             self.ui.tabWidget.setCurrentIndex(cur_index)
@@ -499,6 +502,32 @@ class MyWindow(QMainWindow):
 
         return super().eventFilter(obj, event)
 
+    def closeEvent(self, event):
+        # Detach Python event filters BEFORE Qt starts processing the native
+        # close path.  These filters point back to this Python QMainWindow and
+        # must not receive events while its child widgets are being torn down.
+        logger.info("SHUTDOWN | main window closeEvent begin")
+        flush_logs()
+        for target in (
+            self,
+            self.ui.centralwidget,
+            self.ui.search_widget,
+            self.ui.menu_widget,
+            self.ui.tabWidget,
+            self.ui.tableScaleLabel,
+        ):
+            try:
+                target.removeEventFilter(self)
+            except RuntimeError:
+                pass
+
+        # Detach the global table event filters/timers and Qt's process-global
+        # Python message handler while all widgets are still valid.
+        _prepare_qt_shutdown()
+        logger.info("SHUTDOWN | main window closeEvent cleanup complete")
+        flush_logs()
+        super().closeEvent(event)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and not self.isMaximized():
             edge = self.get_resize_edge(event.position().toPoint())
@@ -616,5 +645,20 @@ if __name__ == "__main__":
 
     logger.info("SHUTDOWN | QApplication released cleanly")
     flush_logs()
+
+    # At this point Qt has already shut down cleanly. On Windows/PySide the
+    # remaining interpreter finalisation can still destroy global Shiboken/Qt
+    # wrappers in an unsafe order and cause 0xC0000005 after all application
+    # shutdown checkpoints have completed. Close logging explicitly and leave
+    # the process without running Python's remaining module/global destructors.
     shutdown_native_crash_capture()
-    sys.exit(exit_code)
+    try:
+        logging.shutdown()
+    except Exception:
+        pass
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:
+        pass
+    os._exit(int(exit_code))

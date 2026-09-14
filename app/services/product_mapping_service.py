@@ -114,6 +114,28 @@ class ProductMappingService:
             query = query.options(joinedload(SalesProductLink.product))
         return {row.sales_code: row for row in query.all()}
 
+    def saved_sales_qty_in_box_map(self) -> dict[str, int | None]:
+        """Return the saved sales-db Qty in Box snapshot from our DB only.
+
+        The field is intentionally read with SQL instead of the ORM model so
+        this patch does not require changing model declarations just for a
+        display-only source snapshot.
+        """
+        rows = self.session.execute(
+            text(
+                """
+                SELECT sales_code, sales_qty_in_box
+                FROM sales_product_links
+                """
+            )
+        ).all()
+        result: dict[str, int | None] = {}
+        for code, value in rows:
+            clean_code = clean_multi_spaces(code)
+            if clean_code:
+                result[clean_code] = self._qty_in_box_from_sales(value)
+        return result
+
     def get_brand_values(self) -> list[str]:
         rows = (
             self.session.query(Product.brand)
@@ -220,6 +242,7 @@ class ProductMappingService:
 
         product_map = self.product_map()
         links = self.link_map(load_products=False)
+        saved_sales_qty = self.saved_sales_qty_in_box_map()
         cleaned = self._clean_sales_frame(sales_df)
 
         rows: list[dict] = []
@@ -273,7 +296,9 @@ class ProductMappingService:
             )
 
             is_new = link is None
-            source_changed = link is not None and not link_matches
+            saved_qty = saved_sales_qty.get(sales_code)
+            qty_snapshot_changed = link is not None and saved_qty != source.sales_qty_in_box
+            source_changed = link is not None and (not link_matches or qty_snapshot_changed)
             is_changed = source_changed or (linked_product is None and product is not None) or qty_missing or qty_mismatch
             if is_new:
                 new_count += 1
@@ -317,6 +342,7 @@ class ProductMappingService:
         if not links:
             return []
 
+        saved_sales_qty = self.saved_sales_qty_in_box_map()
         rows: list[dict] = []
         for code, link in sorted(links.items(), key=lambda item: item[0]):
             product = link.product
@@ -325,9 +351,9 @@ class ProductMappingService:
                 sales_article=clean_multi_spaces(link.sales_article),
                 sales_name=clean_multi_spaces(link.sales_product_name),
                 sales_pack=link.sales_pack,
-                # Qty in Box from the sales DB is intentionally not refreshed
-                # here: it is external source data and Search is local-only.
-                sales_qty_in_box=None,
+                # Search is local-only: show the source Qty in Box snapshot
+                # saved in our own sales_product_links table.
+                sales_qty_in_box=saved_sales_qty.get(code),
                 sales_brand=clean_multi_spaces(link.sales_brand),
                 sales_excise=link.sales_is_excise,
                 sales_type="",
@@ -404,6 +430,7 @@ class ProductMappingService:
 
     def save_rows(self, rows: list[dict]) -> int:
         saved = 0
+        qty_snapshots: list[tuple[str, int | None]] = []
         for row in rows:
             product = self._ensure_product_for_row(row)
             if product is None:
@@ -412,5 +439,25 @@ class ProductMappingService:
                 )
             if self._upsert_sales_link_for_row(row, product):
                 saved += 1
+                code = clean_multi_spaces(row.get("sales_code"))
+                if code:
+                    qty_snapshots.append(
+                        (code, self._qty_in_box_from_sales(row.get("sales_qty_in_box")))
+                    )
+
+        # New SalesProductLink ORM rows must exist before the local snapshot
+        # column can be updated by sales_code.
+        self.session.flush()
+        for code, qty_in_box in qty_snapshots:
+            self.session.execute(
+                text(
+                    """
+                    UPDATE sales_product_links
+                    SET sales_qty_in_box = :qty_in_box
+                    WHERE sales_code = :sales_code
+                    """
+                ),
+                {"sales_code": code, "qty_in_box": qty_in_box},
+            )
         self.session.flush()
         return saved

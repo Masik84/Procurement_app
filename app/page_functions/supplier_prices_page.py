@@ -797,8 +797,8 @@ class SupplierPricesPage(QWidget):
                 "volume_l": self.value_to_text(row.volume_l),
                 "new_product_name": new_product_name_text,
                 "new_brand": self._clean_table_text(row.new_brand),
-                "new_pack": self.value_to_text(row.new_pack),
-                "new_qty_in_box": self.value_to_text(row.new_qty_in_box),
+                "new_pack": format_table_field_value("new_pack", row.new_pack),
+                "new_qty_in_box": format_table_field_value("new_qty_in_box", row.new_qty_in_box),
             }
 
             for column, column_name in enumerate(self.columns):
@@ -968,7 +968,14 @@ class SupplierPricesPage(QWidget):
         self.table.setItem(row, new_name_column, self.build_table_item("new_product_name", ""))
         self.table.setItem(row, brand_column, self.build_display_item(row_id, "new_brand", ""))
         self.table.setItem(row, pack_column, self.build_table_item("new_pack", ""))
-        self.table.setItem(row, qty_in_box_column, self.build_table_item("new_qty_in_box", self.value_to_text(qty_in_box)))
+        self.table.setItem(
+            row,
+            qty_in_box_column,
+            self.build_table_item(
+                "new_qty_in_box",
+                format_table_field_value("new_qty_in_box", qty_in_box),
+            ),
+        )
         old_checkbox = self.table.cellWidget(row, excise_column)
         if old_checkbox is not None:
             self.table.removeCellWidget(row, excise_column)

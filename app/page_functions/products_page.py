@@ -1113,10 +1113,7 @@ class ProductsPage(QWidget):
         display_value = "" if value is None else str(value)
 
         if col_name in {"pack", "qty_in_box"}:
-            parsed = parse_loose_number(value)
-            if parsed is not None:
-                display_value = self._format_decimal_display(parsed)
-            item_text = format_table_value(display_value)
+            item_text = format_table_field_value(col_name, value)
         else:
             item_text = display_value
 

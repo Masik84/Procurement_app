@@ -23,7 +23,7 @@ from app.db.db import SessionLocal
 from app.db.models import Product
 from app.services.product_mapping_service import ProductMappingService
 from app.services.product_matching_service import MissingPackTypeError
-from app.ui.table_style import format_table_value, resize_columns_for_multiline_headers, setup_data_table
+from app.ui.table_style import format_table_field_value, resize_columns_for_multiline_headers, setup_data_table
 from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 from app.utils.message_dialogs import show_error
 from app.utils.pack_type_prompt import ask_pack_type
@@ -523,15 +523,10 @@ class ProductMappingPage(QWidget):
         if isinstance(value, bool):
             return "Да" if value else "Нет"
 
-        # Same numeric presentation rule as Supplier Price:
-        # decimal Pack values use a comma, while Qty in Box is always integer.
-        if field in {"sales_qty_in_box", "product_qty_in_box", "new_qty_in_box"}:
-            number = parse_loose_number(value)
-            if number is None:
-                return str(value)
-            return str(int(number))
-        if field in {"sales_pack", "new_pack"}:
-            return format_table_value(value)
+        # Numeric display rules are shared application-wide in table_style.py:
+        # Pack is a decimal with comma; Qty in Box is an integer without ',0'.
+        if field in ProductMappingPage.NUMERIC_FIELDS:
+            return format_table_field_value(field, value)
         return str(value)
 
     def _item(self, field: str, value, code: str, *, editable: bool = False, left: bool = False):
