@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QFontMetrics, QGuiApplication
 from PySide6.QtWidgets import (
     QApplication,
@@ -69,9 +69,6 @@ def _summary_for(text: str) -> str:
     if not lines:
         return "Нет текста сообщения."
 
-    # Database/traceback errors usually start with the useful human-readable
-    # exception and then continue with LINE/SQL/parameters.  Keep the useful
-    # first part in the compact view and put the complete payload behind Show.
     stop_prefixes = (
         "LINE ",
         "[SQL:",
@@ -89,7 +86,6 @@ def _summary_for(text: str) -> str:
         useful.append(line)
         if len(" ".join(useful)) >= SUMMARY_TEXT_LIMIT:
             break
-        # One normal exception line is usually the best compact summary.
         if len(useful) >= 2:
             break
 
@@ -105,11 +101,7 @@ def _summary_for(text: str) -> str:
 
 
 class AppMessageDialog(QDialog):
-    """Single application-wide popup for info, warnings, errors and questions.
-
-    Long messages always open compact.  The complete text is available through
-    Show in a bounded, scrollable text area and can be copied in full.
-    """
+    """Single application-wide popup for info, warnings, errors and questions."""
 
     def __init__(
         self,
@@ -223,9 +215,6 @@ class AppMessageDialog(QDialog):
         else:
             max_width = min(COMPACT_MAX_WIDTH, max(COMPACT_MIN_WIDTH, available.width() - 80))
 
-        # Size a compact popup from the *visible summary text*, rather than from
-        # a fixed dialog width.  This keeps short questions genuinely short
-        # while still allowing a longer summary to grow up to COMPACT_MAX_WIDTH.
         summary = self.findChild(QLabel, "appMessageSummary")
         if summary is not None:
             metrics = QFontMetrics(summary.font())
@@ -234,9 +223,6 @@ class AppMessageDialog(QDialog):
         else:
             text_width = 0
 
-        # 18+18 outer margins, 36 icon, 14 spacing, plus a small allowance for
-        # layout/frame rounding.  The button row may require a little more room,
-        # which sizeHint() below will account for.
         content_width = text_width + 18 + 18 + 36 + 14 + 12
 
         self.setMinimumWidth(0)
@@ -244,9 +230,6 @@ class AppMessageDialog(QDialog):
         self.adjustSize()
         hint = self.sizeHint()
 
-        # Do not let a generic QSizePolicy/word-wrapped QLabel inflate a short
-        # popup.  Use whichever is wider: actual visible content or controls.
-        # For long summaries, width is capped and QLabel wraps naturally.
         controls_floor = min(hint.width(), 260 if not self._has_details else 300)
         width = min(max_width, max(COMPACT_MIN_WIDTH, content_width, controls_floor))
         self.resize(int(width), hint.height())
@@ -289,7 +272,6 @@ class AppMessageDialog(QDialog):
             self._apply_expanded_geometry()
             self._details.setFocus()
         else:
-            # Drop expanded size limits before recalculating compact size.
             self.setMaximumSize(16777215, 16777215)
             self._apply_compact_geometry()
 
@@ -338,3 +320,42 @@ def ask_yes_no(
         default_yes=default_yes,
     )
     return dialog.exec() == QDialog.Accepted
+
+
+# ---------------------------------------------------------------------------
+# Lazy page post-construction integration
+# ---------------------------------------------------------------------------
+
+class _PageIntegrationEventFilter(QObject):
+    """Attach optional page integrations after a lazy-created page is complete."""
+
+    TARGET_PAGE_CLASSES = {"ProductMappingPage", "SupplierPricesPage", "ProductUc3Page", "ProductsPage", "ProductArticlesPage"}
+
+    def eventFilter(self, watched: QObject, event) -> bool:  # noqa: N802 - Qt API
+        if event.type() == QEvent.Show and watched.__class__.__name__ in self.TARGET_PAGE_CLASSES:
+            try:
+                from app.utils.page_background_integration import attach_page_background_integration
+
+                attach_page_background_integration(watched)
+            except Exception:
+                # Never break showing a page because an optional integration
+                # failed to attach; the normal exception path/log remains useful.
+                import logging
+
+                logging.getLogger(__name__).exception("Не удалось подключить фоновые операции страницы")
+        return super().eventFilter(watched, event)
+
+
+def _install_page_integration_event_filter() -> None:
+    app = QApplication.instance()
+    if app is None:
+        return
+    existing = getattr(app, "_procurement_page_integration_event_filter", None)
+    if isinstance(existing, _PageIntegrationEventFilter):
+        return
+    event_filter = _PageIntegrationEventFilter(app)
+    setattr(app, "_procurement_page_integration_event_filter", event_filter)
+    app.installEventFilter(event_filter)
+
+
+_install_page_integration_event_filter()
