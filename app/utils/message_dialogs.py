@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 
 from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtGui import QFontMetrics, QGuiApplication
+from PySide6.QtGui import QColor, QFontMetrics, QGuiApplication, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QStyle,
     QVBoxLayout,
     QWidget,
+    QTableWidget,
 )
 
 
@@ -164,13 +165,15 @@ class AppMessageDialog(QDialog):
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
 
+        # Copy is always available, including short errors. This keeps every
+        # standard application error useful for support/debugging.
+        copy_button = QPushButton("Copy", self)
+        copy_button.setToolTip("Скопировать полный текст сообщения")
+        copy_button.clicked.connect(self._copy_full_text)
+        buttons.addWidget(copy_button)
+
         self._show_button: QPushButton | None = None
         if self._has_details:
-            copy_button = QPushButton("Copy", self)
-            copy_button.setToolTip("Скопировать полный текст сообщения")
-            copy_button.clicked.connect(self._copy_full_text)
-            buttons.addWidget(copy_button)
-
             self._show_button = QPushButton("Show", self)
             self._show_button.setToolTip("Показать полный текст")
             self._show_button.clicked.connect(self._toggle_details)
@@ -322,6 +325,26 @@ def ask_yes_no(
     return dialog.exec() == QDialog.Accepted
 
 
+
+def _apply_theme_safe_table_palette(table: QTableWidget) -> None:
+    """Keep table row colors stable across Windows/Qt light/dark themes.
+
+    Procurement enables alternating row colors globally.  Without an explicit
+    AlternateBase color Qt falls back to the OS palette; on a dark system theme
+    every second row can become nearly black while the application text stays
+    dark.  Pin the corporate light palette on the table itself.
+    """
+    if not isinstance(table, QTableWidget):
+        return
+    palette = table.palette()
+    palette.setColor(QPalette.ColorRole.Base, QColor("#FFFFFF"))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#F8F8F2"))
+    palette.setColor(QPalette.ColorRole.Text, QColor("#262626"))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor("#F5D3B5"))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#262626"))
+    table.setPalette(palette)
+
+
 # ---------------------------------------------------------------------------
 # Lazy page post-construction integration
 # ---------------------------------------------------------------------------
@@ -329,20 +352,25 @@ def ask_yes_no(
 class _PageIntegrationEventFilter(QObject):
     """Attach optional page integrations after a lazy-created page is complete."""
 
-    TARGET_PAGE_CLASSES = {"ProductMappingPage", "SupplierPricesPage", "ProductUc3Page", "ProductsPage", "ProductArticlesPage"}
+    TARGET_PAGE_CLASSES = {"ProductMappingPage", "SupplierPricesPage", "ProductUc3Page", "ProductsPage", "ProductArticlesPage", "ProductStockPage", "ProductSearchPage", "CustomerCostsPage", "TargetPricesPage", "OrderPlanningPage", "PriceReportsPage", "CustomerCostsReportsPage"}
 
     def eventFilter(self, watched: QObject, event) -> bool:  # noqa: N802 - Qt API
-        if event.type() == QEvent.Show and watched.__class__.__name__ in self.TARGET_PAGE_CLASSES:
-            try:
-                from app.utils.page_background_integration import attach_page_background_integration
+        if event.type() == QEvent.Show:
+            if isinstance(watched, QTableWidget):
+                _apply_theme_safe_table_palette(watched)
+            if watched.__class__.__name__ in self.TARGET_PAGE_CLASSES:
+                try:
+                    from app.utils.page_background_integration import attach_page_background_integration
 
-                attach_page_background_integration(watched)
-            except Exception:
-                # Never break showing a page because an optional integration
-                # failed to attach; the normal exception path/log remains useful.
-                import logging
+                    attach_page_background_integration(watched)
+                    for table in watched.findChildren(QTableWidget):
+                        _apply_theme_safe_table_palette(table)
+                except Exception:
+                    # Never break showing a page because an optional integration
+                    # failed to attach; the normal exception path/log remains useful.
+                    import logging
 
-                logging.getLogger(__name__).exception("Не удалось подключить фоновые операции страницы")
+                    logging.getLogger(__name__).exception("Не удалось подключить фоновые операции страницы")
         return super().eventFilter(watched, event)
 
 

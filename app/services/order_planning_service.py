@@ -47,7 +47,10 @@ class OrderPlanningService:
     def __init__(self, session: Session, sales_db_uri: str = SALES_DB_URI) -> None:
         self.session = session
         self.sales_db_uri = sales_db_uri
-        self.product_mapping = ProductMappingService(session, sales_db_uri)
+        # ProductMappingService now works only with Procurement's local DB.
+        # Access to the Sales DB remains owned by OrderPlanningService itself
+        # through self.sales_db_uri / _sales_engine().
+        self.product_mapping = ProductMappingService(session)
 
     # ------------------------------------------------------------------
     # Basic helpers
@@ -230,7 +233,22 @@ class OrderPlanningService:
         grouped["avg_sales_month"] = grouped["Кол_во_л"] / days_count * 30
 
         product_map = self._product_map()
-        links = self._link_map(load_products=False)
+        # Product Mapping is the single source of truth for Portfolio -> Product
+        # associations.  Order Planning must consume already saved mappings by
+        # sales code and must not invalidate them by re-comparing a snapshot of
+        # article/name/pack/brand/excise.  Source changes are handled in the
+        # Product Mapping screen itself.
+        raw_links = self._link_map(load_products=False)
+        links = {
+            clean_multi_spaces(code).casefold(): link
+            for code, link in raw_links.items()
+            if clean_multi_spaces(code)
+        }
+        ignored_codes = {
+            clean_multi_spaces(code).casefold()
+            for code in self.product_mapping.ignored_sales_codes()
+            if clean_multi_spaces(code)
+        }
         auto_matched = 0
         unmatched = 0
         rows: list[dict] = []
@@ -262,18 +280,11 @@ class OrderPlanningService:
             avg_sales = source.avg_sales_month
 
             product = None
-            link = links.get(sales_code)
-            link_matches_source = self._sales_link_matches_source(
-                link,
-                article=sales_article,
-                product_name=sales_name,
-                pack=sales_pack,
-                brand=sales_brand,
-                is_excise=sales_excise,
-            )
+            code_key = clean_multi_spaces(sales_code).casefold()
+            link = None if code_key in ignored_codes else links.get(code_key)
             linked_product = (
                 product_map.get(int(link.product_id))
-                if link_matches_source and link and link.product_id is not None
+                if link is not None and link.product_id is not None
                 else None
             )
             if linked_product is not None:

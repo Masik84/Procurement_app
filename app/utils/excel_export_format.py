@@ -1,18 +1,33 @@
 from __future__ import annotations
 
 import logging
-
-logger = logging.getLogger(__name__)
-
-
-from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Mapping, Sequence
 
-from app.utils.excel_headers import article_text, display_header, is_article_header
 from app.utils.excel_fast_writer import write_excel_table
-from app.utils.excel_format_rules import FORMATS, set_number_format_safe
+from app.utils.excel_format_rules import (
+    ABC_VALUE_FILLS,
+    FORMATS,
+    header_fill_for_header,
+    is_article_header_name,
+    is_bool_header,
+    is_date_header,
+    is_integer_header,
+    is_money_header,
+    is_numeric_header,
+    is_text_header,
+    normalize_rule_header,
+    number_format_for_header,
+    rgb_to_excel,
+    standard_header_fill_for_header,
+    standard_header_white_font,
+    standardize_output_header,
+    width_for_header,
+)
+from app.utils.excel_headers import article_text, is_article_header
+
+logger = logging.getLogger(__name__)
 
 XL_CENTER = -4108
 XL_LEFT = -4131
@@ -39,7 +54,7 @@ BLACK = (0, 0, 0)
 
 
 def rgb(r: int, g: int, b: int) -> int:
-    return r + g * 256 + b * 65536
+    return rgb_to_excel((r, g, b))
 
 
 def excel_column_letter(col_num: int) -> str:
@@ -74,91 +89,19 @@ def apply_base_table_style(ws, headers_count: int) -> None:
 
 
 def normalize_header(header: str) -> str:
-    text = " ".join(str(header or "").strip().lower().replace("\n", " ").split())
-    # Dynamic exports often add suffixes: Cost Novo_1, Full Cost Msk_2, etc.
-    if "_" in text:
-        base, suffix = text.rsplit("_", 1)
-        if suffix.isdigit():
-            text = base
-    return text
-
-
-def is_date_header(header: str) -> bool:
-    h = normalize_header(header)
-    return h in {"дата", "price date", "date"} or h.endswith(" date")
-
-
-def is_text_header(header: str) -> bool:
-    if is_article_header(header):
-        return True
-    h = normalize_header(header)
-    return h in {
-        "id", "менеджер", "клиент", "customer product name", "our product name",
-        "supplier", "supplier article", "supplier product name", "currency", "comments", "has customs", "via novo",
-        "excise duty", "final supplier", "product name", "manager name", "customer name",
-        "article", "brand", "family", "категория abc",
-    }
-
-
-INTEGER_HEADERS = {
-    "qty, pcs",
-    "volume, l",
-    "pack",
-    "stockqty",
-    "transitqty",
-    "markdownqty",
-    "reserveqty",
-    "reserveecommqty",
-    "orderqty",
-    "confirmedqty",
-    "remainsqty",
-    "lpc",
-    # Existing exported quantity-like headers kept as integer format.
-    "qty",
-    "quantity",
-    "importrowno",
-    "stock",
-    "transit",
-    "purchase order",
-    "order is",
-    "stock is",
-    "reserve cust",
-    "reserve e-comm",
-    "damaged",
-    "к быстрому заказу, шт",
-    "к заказу, шт",
-}
-
-
-def is_integer_header(header: str) -> bool:
-    return normalize_header(header) in INTEGER_HEADERS
-
-
-def is_money_header(header: str) -> bool:
-    h = normalize_header(header)
-    return h in {"final price", "price rub", "cost novo withvat", "cost novo with vat", "full cost msk"}
+    return normalize_rule_header(header).casefold()
 
 
 def is_decimal4_header(header: str) -> bool:
-    h = normalize_header(header)
-    return h in {
-        "supplier price, l", "supplier price", "price, l", "price, pack", "cost per l", "price per l",
-        "cost novo", "cost novo wvat", "fx rate",
+    base = normalize_rule_header(header)
+    return base in {
+        "Supplier Price, L", "Supplier Price, L (donor)", "Price, L",
+        "Price, pack", "Cost per L", "Price per L",
     }
 
 
 def is_decimal_header(header: str) -> bool:
-    h = normalize_header(header)
-    return (
-        is_decimal4_header(header)
-        or is_money_header(header)
-        or h in {
-            "fx markup %", "fx markup abs", "transport", "re-export", "agent fee", "bank fee", "customs fee",
-            "additional customs", "storage", "move novo", "move msk", "marking",
-            "ср.продажи мес", "safe stock (st), mnth", "safe stock (st+tr), mnth", "safe stock (+ord), mnth",
-            "дистр цена", "промо цена", "к быстрому заказу, л", "к заказу, л",
-        }
-    )
+    return is_numeric_header(header) and not is_integer_header(header)
 
 
 def parse_decimal(value: Any) -> Decimal | None:
@@ -176,7 +119,6 @@ def parse_decimal(value: Any) -> Decimal | None:
     text = text.replace("\u00a0", " ").replace("₽", "").replace("руб.", "").replace("руб", "")
     text = text.replace(" ", "")
     if "," in text and "." in text:
-        # 1,234.56 -> 1234.56, 1.234,56 -> 1234.56
         if text.rfind(",") > text.rfind("."):
             text = text.replace(".", "").replace(",", ".")
         else:
@@ -210,11 +152,27 @@ def excel_cell_value(header: str, value: Any) -> Any:
         return article_text(value)
     if is_date_header(header):
         return parse_date(value)
-    if is_decimal_header(header) or is_integer_header(header):
+    if is_bool_header(header):
+        if isinstance(value, bool):
+            return "Да" if value else "Нет"
+        return value
+    if is_numeric_header(header):
         number = parse_decimal(value)
         if number is None or number == 0:
             return ""
-        if is_integer_header(header):
+        # Display formatting can be integer while keeping the underlying
+        # decimal value (Safe Stock / uC3 etc.). Only inherently integer
+        # quantity values should be rounded here.
+        base = normalize_rule_header(header)
+        hard_integer_values = {
+            "Qty, pcs", "Volume, L", "Volume to take", "Stock", "Transit",
+            "Purchase Order", "Order IS", "Stock IS", "Reserve cust",
+            "Reserve E-Comm", "Damaged", "Количество", "Объем л",
+            "к Быстрому Заказу, шт", "к Быстрому Заказу, л",
+            "к Быстрому заказу, л", "к Заказу, шт", "к Заказу, л",
+            "Volume PY", "Volume 3 mnth",
+        }
+        if base in hard_integer_values:
             return int(number.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
         return float(number)
     if isinstance(value, Decimal):
@@ -225,31 +183,16 @@ def excel_cell_value(header: str, value: Any) -> Any:
 
 
 def column_format_local(header: str) -> str:
-    if is_date_header(header):
-        return DATE_FORMAT_LOCAL
-    if is_text_header(header):
-        return TEXT_FORMAT
-    if is_integer_header(header):
-        return INTEGER_FORMAT_LOCAL
-    if is_money_header(header):
-        return MONEY_FORMAT_LOCAL
-    if is_decimal4_header(header):
-        return DECIMAL4_FORMAT_LOCAL
-    if is_decimal_header(header):
-        return DECIMAL_FORMAT_LOCAL
-    return GENERAL_FORMAT
+    return number_format_for_header(header) or GENERAL_FORMAT
 
 
 def apply_column_formats(ws, headers: Sequence[str]) -> None:
+    from app.utils.excel_format_rules import set_number_format_safe
+
     for idx, header in enumerate(headers, start=1):
         letter = excel_column_letter(idx)
-        fmt = column_format_local(display_header(header))
-        if fmt == TEXT_FORMAT:
-            set_number_format_safe(ws.Columns(f"{letter}:{letter}"), TEXT_FORMAT, TEXT_FORMAT)
-        elif fmt == GENERAL_FORMAT:
-            set_number_format_safe(ws.Columns(f"{letter}:{letter}"), GENERAL_FORMAT, GENERAL_FORMAT)
-        else:
-            set_number_format_safe(ws.Columns(f"{letter}:{letter}"), GENERAL_FORMAT, fmt)
+        fmt = column_format_local(str(header))
+        set_number_format_safe(ws.Columns(f"{letter}:{letter}"), fmt)
 
 
 def write_table(ws, headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
@@ -257,7 +200,7 @@ def write_table(ws, headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> No
         ws,
         headers,
         rows,
-        header_getter=display_header,
+        header_getter=standardize_output_header,
         value_getter=lambda row, header, col_index: excel_cell_value(
             str(header),
             row[col_index] if col_index < len(row) else "",
@@ -265,34 +208,54 @@ def write_table(ws, headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> No
     )
 
 
-def set_widths_by_headers(ws, headers: Sequence[str], widths: Mapping[str, float], default_width: float = 10.0) -> None:
+def set_widths_by_headers(
+    ws,
+    headers: Sequence[str],
+    widths: Mapping[str, float] | None = None,
+    default_width: float = 10.0,
+) -> None:
     hm = header_map(headers)
+    overrides = widths or {}
     for header in headers:
         letter = col_letter(hm, header)
-        if letter:
-            ws.Columns(f"{letter}:{letter}").ColumnWidth = widths.get(header, default_width)
+        if not letter:
+            continue
+        central = width_for_header(header)
+        # Standard columns always take the central width. Explicit caller widths
+        # are only a fallback for report-specific/unregistered columns.
+        width = central if central is not None else overrides.get(header, default_width)
+        ws.Columns(f"{letter}:{letter}").ColumnWidth = width
 
 
-def color_headers(ws, headers: Sequence[str], color_map: Mapping[str, tuple[int, int, int]], default_color: tuple[int, int, int] = DEFAULT_HEADER_COLOR) -> None:
+def color_headers(
+    ws,
+    headers: Sequence[str],
+    color_map: Mapping[str, tuple[int, int, int]] | None = None,
+    default_color: tuple[int, int, int] = DEFAULT_HEADER_COLOR,
+) -> None:
     hm = header_map(headers)
     last_col = excel_column_letter(len(headers))
     ws.Range(f"A1:{last_col}1").Interior.Color = rgb(*default_color)
     ws.Range(f"A1:{last_col}1").Font.Color = rgb(*BLACK)
-    for header, color in color_map.items():
+    overrides = color_map or {}
+    for header in headers:
         letter = col_letter(hm, header)
-        if letter:
-            ws.Range(f"{letter}1").Interior.Color = rgb(*color)
+        if not letter:
+            continue
+        central = header_fill_for_header(header) or standard_header_fill_for_header(header)
+        color = central or overrides.get(header)
+        if color is not None:
+            ws.Range(f"{letter}1").Interior.Color = rgb_to_excel(color)
+        if standard_header_white_font(header):
+            ws.Range(f"{letter}1").Font.Color = rgb(*WHITE)
 
-
-# ---------- High-level Excel export helpers used by all project exporters ----------
 
 def write_dict_table(ws, headers: Sequence[str], rows: Sequence[Mapping[str, Any]]) -> None:
-    """Write headers and dict rows with column-name based value conversion."""
     write_excel_table(
         ws,
         headers,
         rows,
-        header_getter=display_header,
+        header_getter=standardize_output_header,
         value_getter=lambda row, header, _col_index: excel_cell_value(str(header), row.get(header, "")),
     )
 
@@ -306,18 +269,12 @@ def apply_standard_table_format(
     apply_filter: bool = True,
     default_width: float = 12.0,
 ) -> None:
-    """Apply one shared style/format policy to COM Excel worksheets."""
     if not headers:
         return
     apply_base_table_style(ws, len(headers))
     color_headers(ws, headers, color_map or {})
     apply_column_formats(ws, headers)
-    if widths:
-        set_widths_by_headers(ws, headers, widths, default_width=default_width)
-    else:
-        for idx in range(1, len(headers) + 1):
-            letter = excel_column_letter(idx)
-            ws.Columns(f"{letter}:{letter}").ColumnWidth = default_width
+    set_widths_by_headers(ws, headers, widths, default_width=default_width)
     if apply_filter:
         try:
             last_col = excel_column_letter(len(headers))
@@ -335,7 +292,6 @@ def write_and_format_table(
     color_map: Mapping[str, tuple[int, int, int]] | None = None,
     apply_filter: bool = True,
 ) -> None:
-    """Write a complete table and apply shared Excel formatting."""
     if rows and isinstance(rows[0], Mapping):
         write_dict_table(ws, headers, rows)  # type: ignore[arg-type]
     else:
@@ -344,62 +300,64 @@ def write_and_format_table(
 
 
 def openpyxl_cell_value(header: str, value: Any) -> Any:
-    """Same conversion policy for openpyxl-based exports."""
     return excel_cell_value(header, value)
 
 
 def openpyxl_number_format(header: str) -> str:
-    if is_date_header(header):
-        return FORMATS.DATE
-    if is_text_header(header):
-        return FORMATS.TEXT
-    if is_integer_header(header):
-        return FORMATS.INTEGER
-    if is_money_header(header):
-        return FORMATS.MONEY_RUB
-    if is_decimal4_header(header):
-        return FORMATS.DECIMAL_4
-    if is_decimal_header(header):
-        return FORMATS.DECIMAL_2
-    return FORMATS.GENERAL
+    return number_format_for_header(header) or FORMATS.GENERAL
 
 
-def write_openpyxl_dict_sheet(ws, rows: Sequence[Mapping[str, Any]], *, widths: Mapping[str, float] | None = None) -> None:
-    """Write an openpyxl sheet using the same project-wide column policy."""
+def write_openpyxl_dict_sheet(
+    ws,
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    widths: Mapping[str, float] | None = None,
+) -> None:
     if not rows:
         return
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
 
     headers = list(rows[0].keys())
-    ws.append([display_header(h) for h in headers])
+    ws.append([standardize_output_header(h) for h in headers])
     for row in rows:
         ws.append([openpyxl_cell_value(h, row.get(h, "")) for h in headers])
 
-    header_fill = PatternFill("solid", fgColor="CDCDCD")
-    for cell in ws[1]:
-        cell.font = Font(name=FONT_NAME, size=FONT_SIZE, bold=True)
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    ws.row_dimensions[1].height = HEADER_ROW_HEIGHT
-
     for col_index, header in enumerate(headers, start=1):
         col_letter = get_column_letter(col_index)
+        header_cell = ws.cell(row=1, column=col_index)
+        fill = header_fill_for_header(header) or standard_header_fill_for_header(header) or DEFAULT_HEADER_COLOR
+        header_cell.fill = PatternFill("solid", fgColor="%02X%02X%02X" % fill)
+        header_cell.font = Font(
+            name=FONT_NAME,
+            size=FONT_SIZE,
+            bold=True,
+            color="FFFFFF" if standard_header_white_font(header) else "000000",
+        )
+        header_cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
         fmt = openpyxl_number_format(header)
-        for cell in ws[col_letter]:
-            cell.font = Font(name=FONT_NAME, size=FONT_SIZE, bold=(cell.row == 1))
-            if cell.row > 1:
-                cell.number_format = fmt
-                if is_article_header(header):
-                    # openpyxl otherwise treats strings beginning with "=" as
-                    # formulas even when the display number format is text.
-                    cell.value = article_text(cell.value)
-                    cell.data_type = "s"
-        if widths and header in widths:
+        for cell in ws[col_letter][1:]:
+            cell.font = Font(name=FONT_NAME, size=FONT_SIZE)
+            cell.number_format = fmt
+            if is_article_header(header):
+                cell.value = article_text(cell.value)
+                cell.data_type = "s"
+            if normalize_rule_header(header) == "Категория ABC":
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+                fill_color = ABC_VALUE_FILLS.get(str(cell.value or "").strip().upper())
+                if fill_color:
+                    cell.fill = PatternFill("solid", fgColor="%02X%02X%02X" % fill_color)
+
+        central_width = width_for_header(header)
+        if central_width is not None:
+            ws.column_dimensions[col_letter].width = central_width
+        elif widths and header in widths:
             ws.column_dimensions[col_letter].width = widths[header]
         else:
             max_len = max(len(str(c.value or "")) for c in ws[col_letter])
             ws.column_dimensions[col_letter].width = min(max(max_len + 2, 12), 40)
 
+    ws.row_dimensions[1].height = HEADER_ROW_HEIGHT
     ws.auto_filter.ref = ws.dimensions
     ws.freeze_panes = "A2"

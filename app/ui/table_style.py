@@ -1,8 +1,8 @@
 from decimal import Decimal, InvalidOperation
-
 from datetime import date, datetime
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QHeaderView, QStyledItemDelegate, QTableWidget, QTableWidgetItem, QWidget
 
 from app.ui.table_headers import (
@@ -13,6 +13,7 @@ from app.ui.table_headers import (
     table_header_names,
 )
 from app.ui.table_scale import register_table_for_scaling
+from app.utils.excel_format_rules import ABC_VALUE_FILLS, normalize_rule_header
 from app.utils.table_sort import numeric_id_value
 
 
@@ -27,13 +28,6 @@ class NumericTableWidgetItem(QTableWidgetItem):
                 return left < right
         return super().__lt__(other)
 
-
-# ---------------------------------------------------------------------------
-# Global GUI table display rules
-# ---------------------------------------------------------------------------
-# These rules are intentionally centralized here.  Page modules should keep
-# business values as they are and must not invent their own decimal separator,
-# Qty-in-Box formatting or text/numeric alignment rules.
 
 _INTEGER_HEADER_NAMES = frozenset({
     "id",
@@ -80,21 +74,15 @@ _TEXT_HEADER_MARKERS = (
     "login",
 )
 
-_DATE_HEADER_MARKERS = (
-    "date",
-    "дата",
-)
+_DATE_HEADER_MARKERS = ("date", "дата")
 
 
 def _normalise_header_name(value: object) -> str:
-    text = " ".join(str(value or "").replace("_", " ").split()).strip().casefold()
-    return text
+    return " ".join(str(value or "").replace("_", " ").split()).strip().casefold()
 
 
 def _looks_textual_header(header_name: str) -> bool:
     normalized = _normalise_header_name(header_name)
-    # Date is handled separately; e.g. "Price date" must not be treated as a
-    # numeric Price column merely because it also contains the word Price.
     if any(marker in normalized for marker in _DATE_HEADER_MARKERS):
         return False
     return any(marker in normalized for marker in _TEXT_HEADER_MARKERS)
@@ -109,6 +97,10 @@ def _is_date_header(header_name: str) -> bool:
     return any(marker in normalized for marker in _DATE_HEADER_MARKERS)
 
 
+def _is_abc_header(header_name: str) -> bool:
+    return normalize_rule_header(header_name) == "Категория ABC"
+
+
 def _format_date_table_value(value) -> str | None:
     if isinstance(value, datetime):
         if value.hour or value.minute or value.second or value.microsecond:
@@ -120,14 +112,8 @@ def _format_date_table_value(value) -> str | None:
 
 
 def format_gui_table_value(header_name: str, value) -> str:
-    """One display formatter for every GUI table in Procurement App.
-
-    The function changes presentation only.  It does not change values stored
-    in QTableWidgetItem/UserRole or values sent back to the database.
-    """
     if value is None:
         return ""
-
     if isinstance(value, bool):
         return "Да" if value else "Нет"
 
@@ -138,34 +124,24 @@ def format_gui_table_value(header_name: str, value) -> str:
     text = str(value).strip()
     if text.casefold() in {"nan", "none", "nat"}:
         return ""
-
-    # Preserve already-formatted date strings.  Page-specific date parsing is
-    # deliberately not done here because formats may include time/timezone.
     if _is_date_header(header_name):
         return text
-
     if _is_integer_header(header_name):
         return format_integer_table_value(value)
-
-    # Codes, articles, document numbers and other identifiers can consist only
-    # of digits or contain dots.  Never reinterpret those as numbers.
     if _looks_textual_header(header_name):
         return text
 
     number = _table_decimal(value)
     if number is not None:
         return format_decimal_table_value(number)
-
-    # Percent strings are often already prepared by the page ("3.5%").  Keep
-    # their business scale and only apply the Russian decimal separator.
     if text.endswith("%"):
         return text.replace(".", ",")
-
     return text
 
 
 def gui_table_alignment(header_name: str, value=None) -> Qt.AlignmentFlag:
-    """Shared cell alignment: numeric/date/boolean centered, text left."""
+    if _is_abc_header(header_name):
+        return Qt.AlignCenter | Qt.AlignVCenter
     if _is_integer_header(header_name) or _is_date_header(header_name):
         return Qt.AlignCenter | Qt.AlignVCenter
     if isinstance(value, (bool, int, float, Decimal)):
@@ -192,15 +168,16 @@ class GlobalTableDisplayDelegate(QStyledItemDelegate):
         option.text = format_gui_table_value(header_name, raw_value)
         option.displayAlignment = gui_table_alignment(header_name, raw_value)
 
+        if _is_abc_header(header_name):
+            color = ABC_VALUE_FILLS.get(str(raw_value or "").strip().upper())
+            if color is not None:
+                option.backgroundBrush = QBrush(QColor(*color))
+
     def displayText(self, value, locale) -> str:
-        # initStyleOption() knows the column/header and performs the real
-        # formatting. Keep this method neutral for Qt code paths that call it
-        # without a model index.
         return "" if value is None else str(value)
 
 
 def install_global_table_display_rules(table: QTableWidget) -> None:
-    """Install the common display delegate once on a data table."""
     if not isinstance(table, QTableWidget):
         return
     if table.property("procurement_global_table_display_rules"):
@@ -212,7 +189,6 @@ def install_global_table_display_rules(table: QTableWidget) -> None:
 
 
 def apply_global_table_display_rules(root: QWidget) -> None:
-    """Apply common display rules to every QTableWidget in an opened page."""
     if isinstance(root, QTableWidget):
         install_global_table_display_rules(root)
     for table in root.findChildren(QTableWidget):
@@ -220,9 +196,6 @@ def apply_global_table_display_rules(root: QWidget) -> None:
 
 
 def setup_data_table(table: QTableWidget, *, sorting: bool = True) -> None:
-    # Install this before any page calls setHorizontalHeaderLabels(). Every
-    # active GUI table goes through setup_data_table(), so the behaviour is
-    # global rather than page-specific.
     install_gui_table_headers(table)
     install_global_table_display_rules(table)
 
@@ -250,12 +223,7 @@ def setup_data_table(table: QTableWidget, *, sorting: bool = True) -> None:
     register_table_for_scaling(table)
 
 
-GUI_DECIMAL_FIELDS = frozenset({
-    "pack",
-    "sales_pack",
-    "new_pack",
-})
-
+GUI_DECIMAL_FIELDS = frozenset({"pack", "sales_pack", "new_pack"})
 GUI_INTEGER_FIELDS = frozenset({
     "qty_in_box",
     "sales_qty_in_box",
@@ -265,7 +233,6 @@ GUI_INTEGER_FIELDS = frozenset({
 
 
 def _table_decimal(value) -> Decimal | None:
-    """Parse a GUI numeric value without changing its business meaning."""
     if value is None or isinstance(value, bool):
         return None
 
@@ -273,11 +240,7 @@ def _table_decimal(value) -> Decimal | None:
     if not text or text.casefold() in {"nan", "none"}:
         return None
 
-    normalized = (
-        text.replace("\xa0", "")
-        .replace(" ", "")
-        .replace(",", ".")
-    )
+    normalized = text.replace("\xa0", "").replace(" ", "").replace(",", ".")
     try:
         number = Decimal(normalized)
     except (InvalidOperation, ValueError, TypeError):
@@ -286,10 +249,6 @@ def _table_decimal(value) -> Decimal | None:
 
 
 def format_decimal_table_value(value, *, max_decimals: int = 4) -> str:
-    """Display a decimal GUI value with comma and without trailing zeroes.
-
-    Example: 1.5000 -> 1,5; 0.7500 -> 0,75; 209.0000 -> 209.
-    """
     if value is None:
         return ""
 
@@ -307,12 +266,6 @@ def format_decimal_table_value(value, *, max_decimals: int = 4) -> str:
 
 
 def format_integer_table_value(value) -> str:
-    """Display integer-only GUI fields without ',0' / '.0'.
-
-    Qty in Box is an integer business field.  A non-integral value is not
-    silently truncated: it is shown as a decimal so bad source data remains
-    visible instead of being disguised.
-    """
     if value is None:
         return ""
 
@@ -325,7 +278,6 @@ def format_integer_table_value(value) -> str:
 
 
 def format_table_field_value(field_name: str, value) -> str:
-    """Apply the shared GUI display rule for known table fields."""
     field = str(field_name or "").strip()
     if field in GUI_INTEGER_FIELDS:
         return format_integer_table_value(value)
@@ -337,15 +289,11 @@ def format_table_field_value(field_name: str, value) -> str:
 def format_table_value(value) -> str:
     if value is None:
         return ""
-
     if isinstance(value, Decimal):
         return str(value).replace(".", ",")
-
     text = str(value)
-
     if "." in text and any(ch.isdigit() for ch in text):
         return text.replace(".", ",")
-
     return text
 
 
@@ -365,9 +313,7 @@ def build_table_item(
         flags |= Qt.ItemIsEditable
     item.setFlags(flags)
 
-    item.setTextAlignment(
-        Qt.AlignLeft | Qt.AlignVCenter if align_left else Qt.AlignCenter
-    )
+    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter if align_left else Qt.AlignCenter)
 
     if user_data is not None:
         item.setData(Qt.UserRole, user_data)

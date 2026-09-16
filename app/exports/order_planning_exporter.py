@@ -1,29 +1,27 @@
 from __future__ import annotations
 
 import logging
-
-logger = logging.getLogger(__name__)
-
-
-from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import pythoncom
 import win32com.client as win32
 from sqlalchemy.orm import Session
 
-from app.db.models import CurrentSupplierPrice, PriceHistory, Product, ProductStock, Supplier
-from app.services.cost_calculation_service import CostCalculationService
-from app.services.supplier_service import SupplierService
-from app.services.supplier_currency_cost_service import SupplierCurrencyCostService
-from app.services.price_repository import PriceRepository
+from app.db.models import CurrentSupplierPrice, PriceHistory, ProductStock, Supplier
 from app.exports.excel_column_format import apply_standard_worksheet_format, excel_value_by_header
+from app.services.cost_calculation_service import CostCalculationService
+from app.services.price_repository import PriceRepository
+from app.services.product_uc3_service import ProductUc3Service
+from app.services.supplier_currency_cost_service import SupplierCurrencyCostService
+from app.services.supplier_service import SupplierService
 from app.utils.excel_fast_writer import write_excel_table
-from app.utils.excel_format_rules import set_number_format_safe, save_workbook_xlsx
+from app.utils.excel_format_rules import save_workbook_xlsx
+from app.utils.money import round4, to_decimal
 from app.utils.output_headers import standardize_output_header
-from app.utils.money import to_decimal
+
+logger = logging.getLogger(__name__)
 
 
 class OrderPlanningExporter:
@@ -36,20 +34,10 @@ class OrderPlanningExporter:
             cost_calculation=self.cost_calculation,
         )
         self.price_repository = PriceRepository(session)
-        self._xl_center = -4108
-        self._xl_vcenter = -4160
-
-    @staticmethod
-    def _rgb(r: int, g: int, b: int) -> int:
-        return r + g * 256 + b * 65536
-
-    @staticmethod
-    def _excel_column_letter(col_num: int) -> str:
-        result = ""
-        while col_num > 0:
-            col_num, rem = divmod(col_num - 1, 26)
-            result = chr(65 + rem) + result
-        return result
+        self.uc3_service = ProductUc3Service(session)
+        self._stocks_by_product: dict[int, ProductStock] = {}
+        self._current_uc3_by_product = {}
+        self._vat = Decimal("0")
 
     _to_decimal = staticmethod(to_decimal)
 
@@ -67,49 +55,18 @@ class OrderPlanningExporter:
         excel.DisplayAlerts = False
         return excel
 
-    def _apply_header_common(self, ws, headers_count: int) -> None:
-        ws.Cells.Font.Name = "Aptos Narrow"
-        ws.Cells.Font.Size = 11
-        last_col = self._excel_column_letter(headers_count)
-        rng = ws.Range(f"A1:{last_col}1")
-        rng.Font.Name = "Aptos Narrow"
-        rng.Font.Size = 11
-        rng.Font.Bold = True
-        rng.WrapText = True
-        rng.HorizontalAlignment = self._xl_center
-        rng.VerticalAlignment = self._xl_vcenter
-        ws.Rows(1).RowHeight = 60
-
-    def _set_format(self, target, fmt: str) -> None:
-        set_number_format_safe(target, fmt)
-
-    def _header_map(self, headers: Sequence[str]) -> dict[str, int]:
-        return {str(header): idx + 1 for idx, header in enumerate(headers)}
-
-    def _col(self, header_map: dict[str, int], header: str) -> str | None:
-        idx = header_map.get(header)
-        return self._excel_column_letter(idx) if idx else None
-
-    def _color_headers(self, ws, header_map: dict[str, int], first: str, last: str, color: int, font_color: int | None = None) -> None:
-        a = header_map.get(first)
-        b = header_map.get(last)
-        if not a or not b:
-            return
-        rng = ws.Range(f"{self._excel_column_letter(a)}1:{self._excel_column_letter(b)}1")
-        rng.Interior.Color = color
-        if font_color is not None:
-            rng.Font.Color = font_color
-
-    def _set_width(self, ws, header_map: dict[str, int], header: str, width: float) -> None:
-        letter = self._col(header_map, header)
-        if letter:
-            ws.Columns(f"{letter}:{letter}").ColumnWidth = width
-
-    def _format_cols(self, ws, header_map: dict[str, int], headers: Sequence[str], fmt: str) -> None:
-        for header in headers:
-            letter = self._col(header_map, header)
-            if letter:
-                self._set_format(ws.Columns(f"{letter}:{letter}"), fmt)
+    def _calc_uc3_from_full_cost(self, *, product_id: int, full_cost: object) -> Decimal | None:
+        stock = self._stocks_by_product.get(int(product_id))
+        sale_price = ProductUc3Service.sales_reference_price(stock)
+        if sale_price is None or full_cost is None:
+            return None
+        try:
+            denominator = Decimal("1") + self._to_decimal(self._vat)
+            if denominator == 0:
+                return None
+            return round4((sale_price - self._to_decimal(full_cost)) / denominator)
+        except Exception:
+            return None
 
     def _calc_supplier_option(
         self,
@@ -130,10 +87,20 @@ class OrderPlanningExporter:
                 "supplier": supplier.name or "",
                 "cost_novo": calc.cost_novo_wvat,
                 "full_cost": calc.full_cost_msk,
+                "uc3": self._calc_uc3_from_full_cost(
+                    product_id=product_id,
+                    full_cost=calc.full_cost_msk,
+                ),
                 "date": price_date,
+                "fx_rate": calc.fx_rate_used,
                 "currency": calc.currency_code,
             }
         except Exception:
+            logger.exception(
+                "Не удалось рассчитать вариант поставщика %s для product_id=%s",
+                getattr(supplier, "name", ""),
+                product_id,
+            )
             return None
 
     def _get_supplier_options(self, product_id: int, min_price_date=None) -> list[dict]:
@@ -196,7 +163,10 @@ class OrderPlanningExporter:
         options.sort(key=lambda x: (self._to_decimal(x["full_cost"]), str(x["supplier"]).lower()))
         return options
 
-    def _base_headers(self) -> list[str]:
+    @staticmethod
+    def _base_headers() -> list[str]:
+        # Quick-order columns remain in GUI/calculation, but are intentionally
+        # excluded from the Order Planning Excel export.
         return [
             "Brand",
             "Product Name",
@@ -206,12 +176,14 @@ class OrderPlanningExporter:
             "Safe Stock (st), mnth",
             "Safe Stock (st+tr), mnth",
             "Safe Stock (+ord), mnth",
-            "к Быстрому Заказу, шт",
-            "к Быстрому Заказу, л",
             "к Заказу, шт",
             "к Заказу, л",
             "Дистр цена",
             "Промо цена",
+            "curr LPC",
+            "curr Landed cost",
+            "Target uC3",
+            "Walk-Away uC3",
             "Stock",
             "Transit",
             "Purchase Order",
@@ -222,13 +194,32 @@ class OrderPlanningExporter:
             "Damaged",
         ]
 
-    def build_export_data(self, display_rows: list[dict], supplier_price_age_months: int = 3) -> tuple[list[str], list[list[object]]]:
+    def build_export_data(
+        self,
+        display_rows: list[dict],
+        supplier_price_age_months: int = 3,
+    ) -> tuple[list[str], list[list[object]]]:
         min_price_date = PriceRepository.supplier_price_cutoff_from_months(supplier_price_age_months)
         product_ids = {
             int(row["product_id"])
             for row in display_rows
             if row.get("product_id")
         }
+
+        self._stocks_by_product = {
+            int(stock.product_id): stock
+            for stock in (
+                self.session.query(ProductStock).filter(ProductStock.product_id.in_(product_ids)).all()
+                if product_ids else []
+            )
+        }
+        self._current_uc3_by_product = self.uc3_service.get_current_map(product_ids)
+        try:
+            fixed_costs = self.cost_calculation.get_fixed_costs()
+            self._vat = self._to_decimal(getattr(fixed_costs, "vat", None))
+        except Exception:
+            self._vat = Decimal("0")
+
         self._bulk_prices_by_product = self.price_repository.get_supplier_prices_for_products(
             product_ids,
             only_rating_calc=True,
@@ -244,6 +235,7 @@ class OrderPlanningExporter:
             product_ids=product_ids,
             supplier_ids=supplier_ids,
         )
+
         max_suppliers = 0
         prepared = []
         for row in display_rows:
@@ -255,15 +247,21 @@ class OrderPlanningExporter:
         headers = self._base_headers()
         for idx in range(1, max_suppliers + 1):
             headers.extend([
+                f"Supplier_{idx}",
                 f"Cost Novo with VAT_{idx}",
                 f"Full Cost Msk_{idx}",
-                f"Supplier_{idx}",
+                f"uC3_{idx}",
                 f"last update_{idx}",
+                f"FX rate_{idx}",
                 f"Currency_{idx}",
             ])
 
         rows: list[list[object]] = []
         for row, options in prepared:
+            product_id = int(row["product_id"]) if row.get("product_id") else None
+            stock = self._stocks_by_product.get(product_id) if product_id else None
+            current_uc3 = self._current_uc3_by_product.get(product_id) if product_id else None
+
             values = [
                 row.get("brand", ""),
                 row.get("product_name", ""),
@@ -273,12 +271,14 @@ class OrderPlanningExporter:
                 row.get("safe_stock_st_month"),
                 row.get("safe_stock_st_tr_month"),
                 row.get("safe_stock_ord_month"),
-                row.get("quick_order_pcs"),
-                row.get("quick_order_l"),
                 row.get("std_order_pcs"),
                 row.get("std_order_l"),
                 row.get("distr_price"),
                 row.get("promo_price"),
+                getattr(stock, "lpc", None) if stock else None,
+                getattr(stock, "landed_cost", None) if stock else None,
+                getattr(current_uc3, "target_uc3", None) if current_uc3 else None,
+                getattr(current_uc3, "walk_away_uc3", None) if current_uc3 else None,
                 row.get("stock"),
                 row.get("transit"),
                 row.get("purchase_order"),
@@ -289,7 +289,15 @@ class OrderPlanningExporter:
                 row.get("markdown"),
             ]
             for option in options:
-                values.extend([option["cost_novo"], option["full_cost"], option["supplier"], option["date"], option["currency"]])
+                values.extend([
+                    option["supplier"],
+                    option["cost_novo"],
+                    option["full_cost"],
+                    option["uc3"],
+                    option["date"],
+                    option["fx_rate"],
+                    option["currency"],
+                ])
             while len(values) < len(headers):
                 values.append("")
             rows.append(values)
@@ -311,9 +319,15 @@ class OrderPlanningExporter:
             try:
                 target_path.unlink()
             except PermissionError:
-                raise PermissionError(f"Не удается перезаписать файл:\n{target_path}\n\nСкорее всего, он открыт в Excel. Закрой файл и попробуй снова.")
+                raise PermissionError(
+                    f"Не удается перезаписать файл:\n{target_path}\n\n"
+                    "Скорее всего, он открыт в Excel. Закрой файл и попробуй снова."
+                )
 
-        headers, rows = self.build_export_data(display_rows, supplier_price_age_months=supplier_price_age_months)
+        headers, rows = self.build_export_data(
+            display_rows,
+            supplier_price_age_months=supplier_price_age_months,
+        )
         excel = None
         wb = None
         try:
@@ -333,7 +347,9 @@ class OrderPlanningExporter:
                 ),
             )
 
-            apply_standard_worksheet_format(ws, headers, freeze_cell="M2", zoom=85)
+            # Freeze through the standard order columns; current cost/target
+            # columns and supplier blocks remain scrollable to the right.
+            apply_standard_worksheet_format(ws, headers, freeze_cell="K2", zoom=85)
 
             save_workbook_xlsx(wb, target_path)
             return target_path

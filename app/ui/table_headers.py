@@ -8,11 +8,6 @@ from PySide6.QtWidgets import QTableView, QTableWidget, QTableWidgetItem
 from shiboken6 import isValid as is_qt_object_valid
 
 
-# Same approach as Daily-Report--new-:
-# - keep the standard QHeaderView from the .ui file;
-# - put real \n into the QTableWidget header item;
-# - keep the logical/original name in a separate role.
-# No custom QHeaderView, paintSection, QProxyStyle or live-method monkey patching.
 HEADER_SOURCE_ROLE = Qt.UserRole + 705
 
 
@@ -27,6 +22,7 @@ GUI_HEADER_LABELS: dict[str, str] = {
     "Product name (variant)": "Product name\n(variant)",
     "Base currency": "Base\ncurrency",
     "Mark for us": "Mark for\nus",
+    "Категория ABC": "кат. ABC",
 
     "Price, pack": "Price,\npack",
     "Price, box": "Price,\nbox",
@@ -83,7 +79,6 @@ GUI_COLUMN_MIN_WIDTH = 55
 
 
 def header_display_name(column_name: object) -> str:
-    """Return only the visible GUI header caption."""
     source = str(column_name or "").strip()
     if not source:
         return source
@@ -94,9 +89,6 @@ def header_display_name(column_name: object) -> str:
     if explicit is not None:
         return explicit
 
-    # Same general rule as Daily-Report--new-: a header of exactly two words
-    # is shown in two lines. Longer captions are wrapped only by the explicit
-    # map above, so the GUI remains predictable.
     parts = source.split()
     if len(parts) == 2:
         return "\n".join(parts)
@@ -104,7 +96,6 @@ def header_display_name(column_name: object) -> str:
 
 
 def set_table_header(table: QTableWidget, column: int, column_name: object) -> None:
-    """Set one visible multiline header and preserve its logical name."""
     source = str(column_name or "")
     item = QTableWidgetItem(header_display_name(source))
     item.setData(HEADER_SOURCE_ROLE, source)
@@ -113,13 +104,11 @@ def set_table_header(table: QTableWidget, column: int, column_name: object) -> N
 
 
 def set_table_headers(table: QTableWidget, columns) -> None:
-    """Set all table headers using the Daily-Report--new- scheme."""
     for column, column_name in enumerate(columns):
         set_table_header(table, column, column_name)
 
 
 def table_header_name(table: QTableWidget, column: int) -> str:
-    """Return the logical header name without GUI line breaks."""
     item = table.horizontalHeaderItem(column)
     if item is None:
         return ""
@@ -134,35 +123,17 @@ def table_header_names(table: QTableWidget) -> list[str]:
 
 
 class _HeaderItemSync(QObject):
-    """Convert ordinary setHorizontalHeaderLabels() calls to safe header items.
-
-    Existing Procurement pages already call setHorizontalHeaderLabels() in many
-    places. Replacing those live Qt methods caused the previous PySide crashes.
-    Instead we listen to the model's normal header-change signals and, after the
-    change completes, rewrite only the header items. The standard QHeaderView
-    itself is never replaced, so all .ui/QSS styling remains untouched.
-    """
-
     def __init__(self, table: QTableWidget):
         super().__init__(table)
         self._table = table
         self._scheduled = False
         self._applying = False
 
-        # Use an owned timer instead of QTimer.singleShot(0, self.apply). The
-        # static singleShot keeps a Python callable alive independently of the
-        # table and can fire after its QDialog/page has already been destroyed.
-        # This timer is a child of the synchronizer (which is itself a child of
-        # the table), so Qt cancels the pending callback automatically on close.
         self._apply_timer = QTimer(self)
         self._apply_timer.setSingleShot(True)
         self._apply_timer.timeout.connect(self.apply)
 
         model = table.model()
-        # Header synchronisation must react only to structure/header changes.
-        # Cell edits and row inserts/removals do not change column captions and
-        # previously caused a storm of zero-delay callbacks while tables were
-        # being populated or destroyed.
         model.headerDataChanged.connect(self.schedule)
         model.modelReset.connect(self.schedule)
         model.columnsInserted.connect(self.schedule)
@@ -207,11 +178,7 @@ class _HeaderItemSync(QObject):
                 for column in range(table.columnCount()):
                     item = table.horizontalHeaderItem(column)
                     if item is None:
-                        raw = model.headerData(
-                            column,
-                            Qt.Horizontal,
-                            Qt.DisplayRole,
-                        )
+                        raw = model.headerData(column, Qt.Horizontal, Qt.DisplayRole)
                         if raw is None:
                             continue
                         source = str(raw)
@@ -245,7 +212,6 @@ class _HeaderItemSync(QObject):
 
 
 def install_gui_table_headers(table: QTableView) -> None:
-    """Enable multiline header items while keeping the original QHeaderView."""
     if not isinstance(table, QTableWidget):
         return
     if table.property("procurement_multiline_header_items_installed"):
@@ -272,7 +238,6 @@ def calculate_gui_header_base_height(
     base_font_point_size: float,
     minimum_height: int = 24,
 ) -> int:
-    """Calculate height from the same visible text used by header items."""
     model = table.model()
     if model is None or model.columnCount() <= 0:
         return minimum_height
@@ -291,13 +256,6 @@ def calculate_gui_header_base_height(
 
 
 def resize_columns_for_multiline_headers(table: QTableView) -> None:
-    """Size every column to the larger of header text or cell contents.
-
-    Qt first calculates the natural width from the actual cells/widgets.  We
-    then enforce a minimum based on the longest visible line of the GUI header.
-    This keeps short-data columns wide enough to show their complete captions
-    while still allowing long cell values to determine a larger width.
-    """
     model = table.model()
     if model is None:
         return
@@ -309,9 +267,6 @@ def resize_columns_for_multiline_headers(table: QTableView) -> None:
         if table.isColumnHidden(column):
             continue
 
-        # Let Qt calculate the width required by the current cell contents,
-        # delegates and cell widgets.  Unlike the previous implementation this
-        # is done for ALL columns, not only those whose caption contains \n.
         table.resizeColumnToContents(column)
         content_width = header.sectionSize(column)
 
@@ -320,8 +275,6 @@ def resize_columns_for_multiline_headers(table: QTableView) -> None:
         header_width = max(header_metrics.horizontalAdvance(line) for line in lines)
         header_width += GUI_HEADER_HORIZONTAL_PADDING
 
-        # Sorting arrows occupy part of a header section. Reserve space so the
-        # final letters of the caption do not disappear under the indicator.
         if header.isSortIndicatorShown():
             header_width += GUI_HEADER_SORT_INDICATOR_EXTRA
 
