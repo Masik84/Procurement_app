@@ -83,6 +83,15 @@ class BackgroundTaskCenterDialog(QDialog):
         self.manager = manager
         self.setWindowTitle("Фоновые задачи")
         self.setModal(False)
+        flags = (
+            Qt.WindowType.Window
+            | Qt.WindowType.WindowTitleHint
+            | Qt.WindowType.WindowSystemMenuHint
+            | Qt.WindowType.WindowMinimizeButtonHint
+            | Qt.WindowType.WindowMaximizeButtonHint
+            | Qt.WindowType.WindowCloseButtonHint
+        )
+        self.setWindowFlags(flags)
         self.resize(760, 420)
 
         root = QVBoxLayout(self)

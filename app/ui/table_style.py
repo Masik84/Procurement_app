@@ -151,6 +151,17 @@ def gui_table_alignment(header_name: str, value=None) -> Qt.AlignmentFlag:
     return Qt.AlignLeft | Qt.AlignVCenter
 
 
+def set_table_alignment_overrides(table: QTableWidget, overrides: dict[str, object] | None = None) -> None:
+    """Set opt-in per-header alignment rules without changing other tables."""
+    normalized = {
+        _normalise_header_name(header_name): alignment
+        for header_name, alignment in (overrides or {}).items()
+        if str(header_name or "").strip()
+    }
+    table._procurement_alignment_overrides = normalized
+    table.viewport().update()
+
+
 class GlobalTableDisplayDelegate(QStyledItemDelegate):
     """Delegate that applies the same display rules to every QTableWidget."""
 
@@ -166,7 +177,12 @@ class GlobalTableDisplayDelegate(QStyledItemDelegate):
         header_name = table_header_name(table, index.column())
         raw_value = index.data(Qt.ItemDataRole.DisplayRole)
         option.text = format_gui_table_value(header_name, raw_value)
-        option.displayAlignment = gui_table_alignment(header_name, raw_value)
+
+        alignment_overrides = getattr(table, "_procurement_alignment_overrides", None) or {}
+        override = alignment_overrides.get(_normalise_header_name(header_name))
+        option.displayAlignment = (
+            override if override is not None else gui_table_alignment(header_name, raw_value)
+        )
 
         if _is_abc_header(header_name):
             color = ABC_VALUE_FILLS.get(str(raw_value or "").strip().upper())

@@ -105,6 +105,12 @@ class SuppliersPage(QWidget):
             "fx_rate_markup_abs",
             "agent_fee",
         }
+        self.centered_columns = {
+            "base_currency",
+            "reexport_percent",
+            "insurance_percent",
+            "fx_rate_markup",
+        }
         self.bool_columns = {
             "is_via_novo",
             "has_import_duty",
@@ -121,6 +127,15 @@ class SuppliersPage(QWidget):
     def setup_ui(self):
         self.table = self.ui.table
         setup_data_table(self.table, sorting=True)
+        set_table_alignment_overrides(
+            self.table,
+            {
+                "Base currency": Qt.AlignCenter | Qt.AlignVCenter,
+                "Re-export %": Qt.AlignCenter | Qt.AlignVCenter,
+                "Insurance %": Qt.AlignCenter | Qt.AlignVCenter,
+                "FX markup %": Qt.AlignCenter | Qt.AlignVCenter,
+            },
+        )
         from app.utils.gui_table_actions import install_standard_table_context_menu
         install_standard_table_context_menu(self, self.table)
 
@@ -388,13 +403,14 @@ class SuppliersPage(QWidget):
             supplier.country = value if value else None
 
     def _to_decimal(self, value, field_name):
-        # Only called from apply_pending_changes (final Save). Supports a
-        # trailing "%" shorthand (e.g. "3,5%" -> 0.035); base parsing and the
-        # NOT NULL empty check are delegated to the shared helper.
+        # Blank numeric GUI cells mean zero. The DB remains numeric/NOT NULL;
+        # only the supplier table suppresses zeroes visually.
         if isinstance(value, Decimal):
             return value
 
-        text = str(value).strip()
+        text = str(value or "").strip()
+        if not text:
+            return Decimal("0")
         if "%" in text:
             return parse_decimal_field(
                 text.replace("%", "").strip(), field_name, empty="raise"
@@ -403,6 +419,8 @@ class SuppliersPage(QWidget):
         return parse_decimal_field(value, field_name, empty="raise")
 
     def _to_percent_decimal(self, value, field_name):
+        if not str(value or "").strip():
+            return Decimal("0")
         decimal_value = parse_user_percent(value)
         if decimal_value is None:
             raise Exception(f"Поле '{field_name}' должно быть числом")
@@ -519,6 +537,25 @@ class SuppliersPage(QWidget):
         if not supplier_data:
             self.show_message("Нет данных по заданным фильтрам")
 
+    @staticmethod
+    def _is_zero_numeric_value(value) -> bool:
+        if value is None or isinstance(value, bool):
+            return False
+        try:
+            text = str(value).strip().replace("\xa0", "").replace(" ", "").replace(",", ".")
+            if text.endswith("%"):
+                text = text[:-1].strip()
+            return bool(text) and Decimal(text) == 0
+        except (InvalidOperation, ValueError, TypeError):
+            return False
+
+    def _display_numeric_value(self, col_name, value) -> str:
+        if value is None or self._is_zero_numeric_value(value):
+            return ""
+        if col_name in {"reexport_percent", "insurance_percent", "fx_rate_markup"}:
+            return self._format_percent(value)
+        return str(value).replace(".", ",")
+
     def _display_data(self, data):
         self.table.setSortingEnabled(False)
         self.table.clearContents()
@@ -556,8 +593,8 @@ class SuppliersPage(QWidget):
                     )
                     continue
 
-                if col_name in {"reexport_percent", "insurance_percent", "fx_rate_markup"}:
-                    text_value = self._format_percent(value)
+                if col_name in self.numeric_columns:
+                    text_value = self._display_numeric_value(col_name, value)
                 else:
                     text_value = "" if value is None else str(value).replace(".", ",")
 
@@ -605,12 +642,12 @@ class SuppliersPage(QWidget):
 
         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
 
-        if col_name in self.numeric_columns:
-            item.setTextAlignment(Qt.AlignCenter)
+        if col_name in self.numeric_columns or col_name in self.centered_columns:
+            item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
         elif col_name in self.text_columns:
             item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         else:
-            item.setTextAlignment(Qt.AlignCenter)
+            item.setTextAlignment(Qt.AlignCenter | Qt.AlignVCenter)
 
         return item
 
@@ -643,12 +680,12 @@ class SuppliersPage(QWidget):
             "id": str(row_id),
             "name": "",
             "base_currency": "",
-            "transport_cost_per_l": "0",
-            "reexport_percent": "0",
-            "insurance_percent": "0",
-            "fx_rate_markup": "0",
-            "fx_rate_markup_abs": "0",
-            "agent_fee": "0",
+            "transport_cost_per_l": "",
+            "reexport_percent": "",
+            "insurance_percent": "",
+            "fx_rate_markup": "",
+            "fx_rate_markup_abs": "",
+            "agent_fee": "",
             "is_via_novo": False,
             "has_import_duty": False,
             "rating_calc": True,
@@ -660,12 +697,12 @@ class SuppliersPage(QWidget):
         self._pending_changes[row_id] = {
             "name": "",
             "base_currency": "",
-            "transport_cost_per_l": "0",
-            "reexport_percent": "0",
-            "insurance_percent": "0",
-            "fx_rate_markup": "0",
-            "fx_rate_markup_abs": "0",
-            "agent_fee": "0",
+            "transport_cost_per_l": "",
+            "reexport_percent": "",
+            "insurance_percent": "",
+            "fx_rate_markup": "",
+            "fx_rate_markup_abs": "",
+            "agent_fee": "",
             "is_via_novo": False,
             "has_import_duty": False,
             "rating_calc": True,
