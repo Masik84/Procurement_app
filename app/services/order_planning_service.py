@@ -353,8 +353,7 @@ class OrderPlanningService:
             stock_qty = self._to_decimal(getattr(stock, "stock_qty", None))
             transit_qty = self._to_decimal(getattr(stock, "transit_qty", None))
             order_qty = self._to_decimal(getattr(stock, "order_qty", None))
-            is_order_qty = self._to_decimal(getattr(stock, "is_order_qty", None))
-            free_ord = stock_qty + transit_qty + order_qty + is_order_qty
+            free_ord = stock_qty + transit_qty + order_qty
             if free_ord == 0:
                 continue
             grouped[key] = {
@@ -399,7 +398,6 @@ class OrderPlanningService:
             stock_qty = self._to_decimal(getattr(stock, "stock_qty", None))
             transit_qty = self._to_decimal(getattr(stock, "transit_qty", None))
             order_qty = self._to_decimal(getattr(stock, "order_qty", None))
-            is_order_qty = self._to_decimal(getattr(stock, "is_order_qty", None))
             reserve_qty = self._to_decimal(getattr(stock, "reserve_qty", None))
             reserve_ecomm_qty = self._to_decimal(getattr(stock, "reserve_ecomm_qty", None))
             markdown_qty = self._to_decimal(getattr(stock, "markdown_qty", None))
@@ -408,9 +406,9 @@ class OrderPlanningService:
 
             free_st = free_base
             # Safe Stock (st+tr) = Stock + Transit
-            # Safe Stock (+ord) = Stock + Transit + Purchase Order + Order IS
+            # Safe Stock (+ord) = Stock + Transit + Purchase Order
             free_st_tr = free_base + transit_qty
-            free_ord = free_base + transit_qty + order_qty + is_order_qty
+            free_ord = free_base + transit_qty + order_qty
 
             safe_st_month = self._round4(free_st / avg_sales) if avg_sales > 0 else Decimal("0")
             safe_st_tr_month = self._round4(free_st_tr / avg_sales) if avg_sales > 0 else Decimal("0")
@@ -465,8 +463,6 @@ class OrderPlanningService:
                 "stock": total_stock,
                 "transit": transit_qty,
                 "purchase_order": order_qty,
-                "order_is": is_order_qty,
-                "stock_is": self._to_decimal(getattr(stock, "is_stock_qty", None)),
                 "reserve": self._to_decimal(getattr(stock, "reserve_qty", None)),
                 "reserve_ecomm": self._to_decimal(getattr(stock, "reserve_ecomm_qty", None)),
                 "markdown": markdown_qty,

@@ -79,8 +79,6 @@ class OrderPlanningPage(QWidget):
         "stock",
         "transit",
         "purchase_order",
-        "order_is",
-        "stock_is",
         "reserve",
         "reserve_ecomm",
         "markdown",
@@ -107,8 +105,6 @@ class OrderPlanningPage(QWidget):
         "Stock",
         "Transit",
         "Purchase Order",
-        "Order IS",
-        "Stock IS",
         "Резервы",
         "Reserve E-Comm",
         "УГ",
@@ -147,7 +143,7 @@ class OrderPlanningPage(QWidget):
         "pack", "avg_sales_month", "safe_stock_st_month", "safe_stock_st_tr_month", "safe_stock_ord_month",
         "quick_order_pcs", "quick_order_l", "std_order_pcs", "std_order_l", "distr_price", "promo_price",
         "free_stock_st", "free_stock_st_tr", "free_stock_ord", "stock", "transit",
-        "purchase_order", "order_is", "stock_is", "reserve", "reserve_ecomm", "markdown", "sales_pack",
+        "purchase_order", "reserve", "reserve_ecomm", "markdown", "sales_pack",
         "sales_qty_in_box", "product_qty_in_box", "new_pack", "new_qty_in_box",
     }
 
@@ -462,6 +458,16 @@ class OrderPlanningPage(QWidget):
     def _set_period_label(self):
         self.ui.lbl_CalcPeriod.setText(f"Текущий период расчета: {self._format_period(self._period_from, self._period_to)}")
 
+    def _calc_headers(self) -> list[str]:
+        quick_months = int(self.ui.spin_QuickOrd.value())
+        safe_months = int(self.ui.spin_SafeStock.value())
+        headers_by_key = dict(zip(self.CALC_COLUMNS, self.CALC_HEADERS))
+        headers_by_key["quick_order_pcs"] = f"к Заказу {quick_months} мес, шт"
+        headers_by_key["quick_order_l"] = f"к Заказу {quick_months} мес, л"
+        headers_by_key["std_order_pcs"] = f"к Заказу {safe_months} мес, шт"
+        headers_by_key["std_order_l"] = f"к Заказу {safe_months} мес, л"
+        return [headers_by_key[key] for key in self.CALC_COLUMNS]
+
     # ------------------------------------------------------------------
     # Display
     # ------------------------------------------------------------------
@@ -469,7 +475,7 @@ class OrderPlanningPage(QWidget):
         self._mode = mode
         self._rows = rows
         columns = self.CHECK_COLUMNS if mode == "check" else self.CALC_COLUMNS
-        headers = self.CHECK_HEADERS if mode == "check" else self.CALC_HEADERS
+        headers = self.CHECK_HEADERS if mode == "check" else self._calc_headers()
 
         self._updating_table = True
         self.table.setSortingEnabled(False)
@@ -866,6 +872,8 @@ class OrderPlanningPage(QWidget):
                 return
             rows = [dict(row) for row in self._rows]
             supplier_price_age_months = self.get_supplier_price_age_months()
+            quick_order_months = int(self.ui.spin_QuickOrd.value())
+            safe_stock_months = int(self.ui.spin_SafeStock.value())
 
             def do_export():
                 with self.get_session() as session:
@@ -874,6 +882,8 @@ class OrderPlanningPage(QWidget):
                         display_rows=rows,
                         output_path=file_path,
                         supplier_price_age_months=supplier_price_age_months,
+                        quick_order_months=quick_order_months,
+                        safe_stock_months=safe_stock_months,
                     )
 
             def done(output_path):

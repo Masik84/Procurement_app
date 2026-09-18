@@ -164,9 +164,12 @@ class OrderPlanningExporter:
         return options
 
     @staticmethod
-    def _base_headers() -> list[str]:
-        # Quick-order columns remain in GUI/calculation, but are intentionally
-        # excluded from the Order Planning Excel export.
+    def _base_headers(
+        quick_order_months: int = 3,
+        safe_stock_months: int = 5,
+    ) -> list[str]:
+        quick_order_months = int(quick_order_months)
+        safe_stock_months = int(safe_stock_months)
         return [
             "Brand",
             "Product Name",
@@ -176,8 +179,10 @@ class OrderPlanningExporter:
             "Safe Stock (st), mnth",
             "Safe Stock (st+tr), mnth",
             "Safe Stock (+ord), mnth",
-            "к Заказу, шт",
-            "к Заказу, л",
+            f"к Заказу {quick_order_months} мес, шт",
+            f"к Заказу {quick_order_months} мес, л",
+            f"к Заказу {safe_stock_months} мес, шт",
+            f"к Заказу {safe_stock_months} мес, л",
             "Дистр цена",
             "Промо цена",
             "curr LPC",
@@ -187,8 +192,6 @@ class OrderPlanningExporter:
             "Stock",
             "Transit",
             "Purchase Order",
-            "Order IS",
-            "Stock IS",
             "Reserve cust",
             "Reserve E-Comm",
             "Damaged",
@@ -198,6 +201,8 @@ class OrderPlanningExporter:
         self,
         display_rows: list[dict],
         supplier_price_age_months: int = 3,
+        quick_order_months: int = 3,
+        safe_stock_months: int = 5,
     ) -> tuple[list[str], list[list[object]]]:
         min_price_date = PriceRepository.supplier_price_cutoff_from_months(supplier_price_age_months)
         product_ids = {
@@ -244,7 +249,7 @@ class OrderPlanningExporter:
             max_suppliers = max(max_suppliers, len(options))
             prepared.append((row, options))
 
-        headers = self._base_headers()
+        headers = self._base_headers(quick_order_months, safe_stock_months)
         for idx in range(1, max_suppliers + 1):
             headers.extend([
                 f"Supplier_{idx}",
@@ -271,6 +276,8 @@ class OrderPlanningExporter:
                 row.get("safe_stock_st_month"),
                 row.get("safe_stock_st_tr_month"),
                 row.get("safe_stock_ord_month"),
+                row.get("quick_order_pcs"),
+                row.get("quick_order_l"),
                 row.get("std_order_pcs"),
                 row.get("std_order_l"),
                 row.get("distr_price"),
@@ -282,8 +289,6 @@ class OrderPlanningExporter:
                 row.get("stock"),
                 row.get("transit"),
                 row.get("purchase_order"),
-                row.get("order_is"),
-                row.get("stock_is"),
                 row.get("reserve"),
                 row.get("reserve_ecomm"),
                 row.get("markdown"),
@@ -309,6 +314,8 @@ class OrderPlanningExporter:
         display_rows: list[dict],
         output_path: str | Path,
         supplier_price_age_months: int = 3,
+        quick_order_months: int = 3,
+        safe_stock_months: int = 5,
     ) -> Path:
         output_path = Path(output_path)
         if output_path.suffix.lower() != ".xlsx":
@@ -327,6 +334,8 @@ class OrderPlanningExporter:
         headers, rows = self.build_export_data(
             display_rows,
             supplier_price_age_months=supplier_price_age_months,
+            quick_order_months=quick_order_months,
+            safe_stock_months=safe_stock_months,
         )
         excel = None
         wb = None
@@ -347,9 +356,9 @@ class OrderPlanningExporter:
                 ),
             )
 
-            # Freeze through the standard order columns; current cost/target
+            # Freeze through both order-horizon columns; current cost/target
             # columns and supplier blocks remain scrollable to the right.
-            apply_standard_worksheet_format(ws, headers, freeze_cell="K2", zoom=85)
+            apply_standard_worksheet_format(ws, headers, freeze_cell="M2", zoom=85)
 
             save_workbook_xlsx(wb, target_path)
             return target_path
