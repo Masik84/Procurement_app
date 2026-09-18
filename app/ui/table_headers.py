@@ -22,6 +22,7 @@ GUI_HEADER_LABELS: dict[str, str] = {
     "Product name (variant)": "Product name\n(variant)",
     "Base currency": "Base\ncurrency",
     "Mark for us": "Mark for\nus",
+    "Marks for us": "Marks\nfor us",
     "Категория ABC": "кат. ABC",
 
     "Price, pack": "Price,\npack",

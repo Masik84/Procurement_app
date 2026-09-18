@@ -186,6 +186,7 @@ def start_excel_export(
         "OrderPlanningPage": "Планирование закупок: Excel",
         "PriceReportsPage": "Отчет по ценам: Excel",
         "CustomerCostsReportsPage": "Отчет стоимости клиенту: Excel",
+        "SuppliersPage": "Поставщики: Excel",
     }.get(owner_class, "Формирование Excel")
 
     try:

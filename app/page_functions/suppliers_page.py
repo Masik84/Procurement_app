@@ -1,6 +1,9 @@
 from pathlib import Path
 from decimal import Decimal, InvalidOperation
 
+import logging
+import pythoncom
+import win32com.client as win32
 from sqlalchemy.exc import SQLAlchemyError
 from PySide6.QtWidgets import (
     QMenu,
@@ -9,8 +12,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QCheckBox,
     QHBoxLayout,
+    QFileDialog,
 )
 from PySide6.QtCore import Qt, QFile
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtUiTools import QUiLoader
 
 from app.db.models import Supplier
@@ -20,6 +25,13 @@ from app.utils.parsers import parse_user_percent
 from app.utils.checked_filter_dialog import CheckedFilterDialog, FilterOption
 from app.utils.money import parse_decimal_field
 from app.utils.message_dialogs import show_error
+from app.utils.gui_table_actions import commit_active_table_item_editors
+from app.utils.excel_fast_writer import write_excel_table
+from app.utils.excel_format_rules import FORMATS, save_workbook_xlsx, set_number_format_safe
+from app.workers.excel_export_worker import start_excel_export
+
+
+logger = logging.getLogger(__name__)
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -146,6 +158,7 @@ class SuppliersPage(QWidget):
         self.ui.btn_FilterCountry.clicked.connect(self.open_country_filter)
         self.ui.btn_Search.clicked.connect(self.find_supplier)
         self.ui.btn_AddLine.clicked.connect(self.add_line)
+        self.ui.btn_SaveExcel.clicked.connect(self.save_to_excel)
         self.ui.btn_Save.clicked.connect(self.apply_pending_changes)
 
     def get_session(self):
@@ -659,6 +672,172 @@ class SuppliersPage(QWidget):
             return f"{float(value) * 100:.1f}".replace(".", ",") + "%"
         except Exception:
             return str(value)
+
+    @staticmethod
+    def _excel_column_letter(col_num: int) -> str:
+        result = ""
+        while col_num > 0:
+            col_num, remainder = divmod(col_num - 1, 26)
+            result = chr(65 + remainder) + result
+        return result
+
+    def _excel_value_from_display(self, col_name: str, text: str):
+        value = str(text or "").strip()
+        if not value:
+            return ""
+
+        if col_name == "id":
+            try:
+                return int(value)
+            except ValueError:
+                return value
+
+        if col_name in {"reexport_percent", "insurance_percent", "fx_rate_markup"}:
+            parsed = parse_user_percent(value)
+            return parsed if parsed is not None else value
+
+        if col_name in self.numeric_columns:
+            try:
+                return parse_decimal_field(value, self.headers[self.columns.index(col_name)], empty="raise")
+            except Exception:
+                return value
+
+        return value
+
+    def _snapshot_displayed_table_for_excel(self) -> tuple[list[str], list[list[object]]]:
+        commit_active_table_item_editors(self.table)
+
+        if self.table.columnCount() <= 0 or self.table.rowCount() <= 0:
+            return [], []
+
+        headers = [
+            table_header_name(self.table, column) or self.headers[column]
+            for column in range(self.table.columnCount())
+        ]
+        rows: list[list[object]] = []
+        for row in range(self.table.rowCount()):
+            row_values: list[object] = []
+            for column, col_name in enumerate(self.columns):
+                display_text = self._get_cell_display_text(row, column)
+                if col_name in self.bool_columns:
+                    row_values.append(display_text)
+                else:
+                    row_values.append(self._excel_value_from_display(col_name, display_text))
+            rows.append(row_values)
+        return headers, rows
+
+    def save_to_excel(self):
+        headers, rows = self._snapshot_displayed_table_for_excel()
+        if not headers or not rows:
+            self.show_message("Нет данных для выгрузки")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить Excel",
+            str(BASE_DIR / "Suppliers.xlsx"),
+            "Excel Files (*.xlsx)",
+        )
+        if not file_path:
+            return
+        if not file_path.lower().endswith(".xlsx"):
+            file_path += ".xlsx"
+
+        def do_export():
+            self._export_displayed_table_to_excel(file_path, headers, rows)
+            return file_path
+
+        def done(output_path):
+            QDesktopServices.openUrl(Path(output_path).resolve().as_uri())
+            self.show_message("Данные сохранены в Excel")
+
+        def error(text):
+            if "Permission" in str(text):
+                self.show_error_message("Не удалось сохранить файл Excel. Возможно, файл уже открыт.")
+            else:
+                self.show_error_message(f"Ошибка при сохранении Excel: {text}")
+
+        if not start_excel_export(
+            self,
+            do_export,
+            on_finished=done,
+            on_error=error,
+            button=self.ui.btn_SaveExcel,
+        ):
+            self.show_message("Excel файл уже формируется. Можно продолжать работать в программе.")
+        else:
+            self.show_message("Excel файл формируется в фоновом режиме. Можно продолжать работать в программе.")
+
+    def _export_displayed_table_to_excel(
+        self,
+        file_path: str,
+        headers: list[str],
+        rows: list[list[object]],
+    ) -> None:
+        excel = None
+        wb = None
+        pythoncom.CoInitialize()
+        try:
+            excel = win32.DispatchEx("Excel.Application")
+            excel.Visible = False
+            excel.DisplayAlerts = False
+
+            wb = excel.Workbooks.Add()
+            ws = wb.Worksheets(1)
+            ws.Name = "Suppliers"
+
+            write_excel_table(ws, headers, rows)
+
+            ws.Cells.Font.Name = "Aptos Narrow"
+            ws.Cells.Font.Size = 11
+
+            last_col = self._excel_column_letter(len(headers))
+            header_range = ws.Range(f"A1:{last_col}1")
+            header_range.Font.Name = "Aptos Narrow"
+            header_range.Font.Size = 11
+            header_range.Font.Bold = True
+            header_range.Interior.Color = 0xCDCDCD
+            header_range.WrapText = True
+            header_range.HorizontalAlignment = -4108
+            header_range.VerticalAlignment = -4160
+            ws.Rows(1).EntireRow.AutoFit()
+
+            try:
+                header_range.AutoFilter(1)
+            except Exception:
+                logger.exception("Подавленная ошибка при установке автофильтра Excel")
+
+            percent_columns = {"reexport_percent", "insurance_percent", "fx_rate_markup"}
+            for column_index, col_name in enumerate(self.columns, start=1):
+                letter = self._excel_column_letter(column_index)
+                if col_name == "id":
+                    set_number_format_safe(ws.Columns(f"{letter}:{letter}"), FORMATS.INTEGER)
+                elif col_name in percent_columns:
+                    set_number_format_safe(ws.Columns(f"{letter}:{letter}"), FORMATS.PERCENT_FLEX)
+                elif col_name in self.numeric_columns:
+                    set_number_format_safe(ws.Columns(f"{letter}:{letter}"), FORMATS.DECIMAL_FLEX)
+
+            ws.Columns.AutoFit()
+            save_workbook_xlsx(wb, file_path)
+        except PermissionError:
+            raise
+        except Exception as exc:
+            raise Exception(f"Ошибка при сохранении Excel: {exc}") from exc
+        finally:
+            try:
+                if wb is not None:
+                    wb.Close(SaveChanges=False)
+            except Exception:
+                logger.exception("Подавленная ошибка при закрытии книги Excel")
+            try:
+                if excel is not None:
+                    excel.Quit()
+            except Exception:
+                logger.exception("Подавленная ошибка при закрытии Excel")
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                logger.exception("Подавленная ошибка при CoUninitialize")
 
     def add_line(self):
         self._updating_table = True
