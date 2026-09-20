@@ -12,6 +12,19 @@ from app.runtime_consistency_fixes import install_runtime_consistency_fixes
 
 install_runtime_consistency_fixes()
 
+# Keep background informational messages in the central task window and make
+# the no-IS Order Planning export wrapper compatible with restored 3/5-month
+# arguments.  This patch deliberately does not replace the task manager,
+# QThread lifecycle or Excel COM objects.
+try:
+    from app.background_task_fixes import install_background_task_fixes
+except ModuleNotFoundError as exc:
+    # DB/Alembic tooling may import app without desktop GUI dependencies.
+    if exc.name != "PySide6":
+        raise
+else:
+    install_background_task_fixes()
+
 # Excel rule: every uC3 column, regardless of its concrete caption variant,
 # must be exported as a numeric value with integer display format.
 from app.uc3_excel_format import install_uc3_integer_format

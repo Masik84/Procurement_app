@@ -72,6 +72,26 @@ GUI_HEADER_LABELS: dict[str, str] = {
     "FX markup %": "FX markup\n%",
     "FX markup abs": "FX markup\nabs",
     "Agent fee": "Agent\nfee",
+
+    # Order Planning / supplier order forecast.  Keep these explicit so the
+    # header width is based on the intended multi-line caption rather than on
+    # one very long line.
+    "Продукт_упаковка": "Продукт_\nупаковка",
+    "Ср.Продажи мес": "Ср.Продажи\nмес",
+    "Safe Stock (st), mnth": "Safe Stock\n(st), mnth",
+    "Safe Stock (st+tr), mnth": "Safe Stock\n(st+tr), mnth",
+    "Safe Stock (+ord), mnth": "Safe Stock\n(+ord), mnth",
+    "к Быстрому Заказу, шт": "к Быстрому\nЗаказу, шт",
+    "к Быстрому Заказу, л": "к Быстрому\nЗаказу, л",
+    "к Заказу, шт": "к Заказу,\nшт",
+    "к Заказу, л": "к Заказу,\nл",
+    "к Заказу 3 мес, шт": "к Заказу\n3 мес, шт",
+    "к Заказу 3 мес, л": "к Заказу\n3 мес, л",
+    "к Заказу 5 мес, шт": "к Заказу\n5 мес, шт",
+    "к Заказу 5 мес, л": "к Заказу\n5 мес, л",
+    "Free Stock (st)": "Free Stock\n(st)",
+    "Free Stock (st+tr)": "Free Stock\n(st+tr)",
+    "Free Stock (+ord)": "Free Stock\n(+ord)",
 }
 
 GUI_HEADER_HORIZONTAL_PADDING = 14
