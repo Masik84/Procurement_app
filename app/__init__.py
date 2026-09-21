@@ -25,6 +25,17 @@ except ModuleNotFoundError as exc:
 else:
     install_background_task_fixes()
 
+# Supplier Price: remove row-by-row DB round-trips and keep CostCalc Excel as a
+# separate background task after the DB save/calculation has completed.
+try:
+    from app.supplier_price_performance_fixes import install_supplier_price_performance_fixes
+except ModuleNotFoundError as exc:
+    # DB/Alembic tooling may import app without desktop GUI dependencies.
+    if exc.name != "PySide6":
+        raise
+else:
+    install_supplier_price_performance_fixes()
+
 # Excel rule: every uC3 column, regardless of its concrete caption variant,
 # must be exported as a numeric value with integer display format.
 from app.uc3_excel_format import install_uc3_integer_format

@@ -624,9 +624,8 @@ class ProductStockService:
         except Exception as exc:
             raise ValueError(f"Не удалось рассчитать LPC/Landed Cost/uC3 по БД продаж: {exc}") from exc
 
-        # ABC category is refreshed from the same stock file. Products absent from
-        # the current file must explicitly receive "-".
-        self.session.query(Product).update({Product.abc_category: "-"}, synchronize_session=False)
+        # ABC is updated only for products that are present in the current stock file.
+        # Missing/"-" ABC values must not erase a previously saved category.
 
         self.session.query(ProductStock).update({
             ProductStock.stock_qty: 0,
@@ -684,7 +683,7 @@ class ProductStockService:
 
             product = products.get(product_id)
             abc_category = self._abc_category_from_values(row.abc_category for row in rows)
-            if product is not None:
+            if product is not None and abc_category and abc_category != "-":
                 product.abc_category = abc_category
             p_name = product.name if product else ""
 
