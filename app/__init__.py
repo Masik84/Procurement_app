@@ -14,12 +14,10 @@ install_runtime_consistency_fixes()
 
 # Keep background informational messages in the central task window and make
 # the no-IS Order Planning export wrapper compatible with restored 3/5-month
-# arguments.  This patch deliberately does not replace the task manager,
-# QThread lifecycle or Excel COM objects.
+# arguments.
 try:
     from app.background_task_fixes import install_background_task_fixes
 except ModuleNotFoundError as exc:
-    # DB/Alembic tooling may import app without desktop GUI dependencies.
     if exc.name != "PySide6":
         raise
 else:
@@ -30,7 +28,6 @@ else:
 try:
     from app.supplier_price_performance_fixes import install_supplier_price_performance_fixes
 except ModuleNotFoundError as exc:
-    # DB/Alembic tooling may import app without desktop GUI dependencies.
     if exc.name != "PySide6":
         raise
 else:

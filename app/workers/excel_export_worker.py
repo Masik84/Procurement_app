@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import MethodType
 from typing import Any, Callable
 
 from PySide6.QtCore import QObject, Signal, Slot
@@ -11,7 +12,7 @@ from app.utils.background_tasks import TaskConflictError, get_background_task_ma
 def _set_owner_export_busy(owner: QObject, busy: bool) -> None:
     """Protect only the page that owns an Excel/calculation task.
 
-    Other tabs stay interactive.  The current page cannot start another save,
+    Other tabs stay interactive. The current page cannot start another save,
     import, reset or edit its table while the worker uses the same batch.
     """
     if not isinstance(owner, QWidget):
@@ -51,14 +52,70 @@ def _set_owner_export_busy(owner: QObject, busy: bool) -> None:
                 pass
 
 
+def _install_safe_product_articles_export(owner: QObject) -> None:
+    """Use openpyxl for Product Articles export instead of Excel COM.
+
+    The Product Articles file is a simple four-column workbook. Using COM here
+    added no functional value and was the place where a hidden Excel process
+    could remain inside Quit() after the workbook had already been saved.
+    """
+    if owner.__class__.__name__ != "ProductArticlesPage":
+        return
+    if getattr(owner, "_safe_product_articles_export_installed", False):
+        return
+
+    def export_without_com(self, file_path: str, rows: list[dict]) -> None:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Sheet1"
+        ws.sheet_view.zoomScale = 80
+
+        headers = ["ID", "Product name", "Article", "Product name (variant)"]
+        ws.append(headers)
+
+        for row in rows:
+            article = row.get("article", "")
+            ws.append([
+                row.get("id"),
+                row.get("product_name", "") or "",
+                "" if article is None else str(article),
+                row.get("variant_name", "") or "",
+            ])
+
+        body_font = Font(name="Aptos Narrow", size=11)
+        for row_cells in ws.iter_rows():
+            for cell in row_cells:
+                cell.font = body_font
+
+        header_fill = PatternFill(fill_type="solid", fgColor="CDCDCD")
+        header_alignment = Alignment(horizontal="center", vertical="top", wrap_text=True)
+        for cell in ws[1]:
+            cell.font = Font(name="Aptos Narrow", size=11, bold=True)
+            cell.fill = header_fill
+            cell.alignment = header_alignment
+
+        ws.column_dimensions["A"].width = 10
+        ws.column_dimensions["B"].width = 34
+        ws.column_dimensions["C"].width = 22
+        ws.column_dimensions["D"].width = 34
+
+        # Article must remain text so leading zeroes are not lost.
+        for cell in ws["C"]:
+            cell.number_format = "@"
+
+        ws.auto_filter.ref = ws.dimensions
+        wb.save(file_path)
+        wb.close()
+
+    owner._export_product_articles_to_excel = MethodType(export_without_com, owner)
+    owner._safe_product_articles_export_installed = True
+
 
 class ExcelExportWorker(QObject):
-    """Compatibility worker for legacy pages that still create their own QThread.
-
-    New code should use :func:`start_excel_export`; keeping this class prevents
-    older report pages from failing at import time while they are migrated to
-    the application-wide manager.
-    """
+    """Compatibility worker for legacy pages that still create their own QThread."""
 
     finished = Signal(object)
     error = Signal(str)
@@ -116,15 +173,13 @@ def start_excel_export(
     args: tuple[Any, ...] = (),
     kwargs: dict[str, Any] | None = None,
 ) -> bool:
-    """Run an Excel export through the application-wide background manager.
-
-    The public API stays compatible with the previous dedicated-QThread helper,
-    but all exports now participate in safe application shutdown and central
-    thread ownership.
-    """
+    """Run an Excel export through the application-wide background manager."""
 
     if getattr(owner, "_excel_export_task_handle", None) is not None:
         return False
+
+    # Product Articles no longer needs a native Excel process at all.
+    _install_safe_product_articles_export(owner)
 
     kwargs = kwargs or {}
     _set_owner_export_busy(owner, True)
@@ -140,8 +195,6 @@ def start_excel_export(
             button.setText(restore_text or "Export Excel")
         setattr(owner, "_excel_export_task_handle", None)
         setattr(owner, "_excel_export_callback_proxy", None)
-        # Old pages initialise/check these attributes. Keep them coherent even
-        # though the dedicated worker/thread implementation is no longer used.
         setattr(owner, "_excel_export_thread", None)
         setattr(owner, "_excel_export_worker", None)
         _set_owner_export_busy(owner, False)

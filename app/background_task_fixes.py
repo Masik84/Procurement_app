@@ -2,15 +2,16 @@ from __future__ import annotations
 
 """Small runtime compatibility fixes for background tasks.
 
-This module intentionally does *not* replace ``BackgroundTaskManager`` or its
-worker/thread lifecycle.  The central manager already owns the GUI thread and
-is kept untouched so its non-modal task window remains responsive.
+This module intentionally does not replace BackgroundTaskManager or its
+worker/thread lifecycle.
 
-The only responsibilities here are:
+Responsibilities:
 1) keep informational messages of an active background operation in the task
-   log instead of opening modal information dialogs over the application;
+   log instead of opening modal information dialogs;
 2) make the no-IS Order Planning exporter wrapper transparent to the restored
-   3/5-month export arguments.
+   3/5-month export arguments;
+3) keep Supplier Price save progress concise;
+4) prevent the same progress message from being added twice.
 """
 
 import logging
@@ -23,7 +24,6 @@ _installed = False
 
 
 def _install_order_planning_exporter_no_is_compat() -> None:
-    """Accept restored 3/5-month arguments in the no-IS exporter wrapper."""
     import sys
     from app import no_is_runtime as no_is
 
@@ -86,18 +86,31 @@ def _install_order_planning_exporter_no_is_compat() -> None:
         apply_compat(already_loaded)
 
 
+def _install_manager_progress_dedupe() -> None:
+    """Ignore only an exact consecutive duplicate in the central task log."""
+    from app.utils.background_tasks import BackgroundTaskManager
+
+    current = BackgroundTaskManager._on_progress
+    if getattr(current, "_procurement_progress_dedupe", False):
+        return
+
+    original = current
+
+    def on_progress_deduped(self, task_id: str, text: str) -> None:
+        record = self.record(task_id)
+        message = str(text or "").strip()
+        if record is not None and message:
+            log = getattr(record, "log", None)
+            if isinstance(log, list) and log and log[-1] == message:
+                return
+        original(self, task_id, text)
+
+    on_progress_deduped._procurement_progress_dedupe = True
+    on_progress_deduped._procurement_original = original
+    BackgroundTaskManager._on_progress = on_progress_deduped
+
+
 def _install_background_info_routing() -> None:
-    """Keep background informational messages inside the central task window.
-
-    ``page_background_integration._start_page_task`` historically mirrors
-    progress through ``page.show_message``.  Pages without an inline status
-    label implement that method with a QMessageBox, therefore every progress
-    step could create an application-modal dialog and make the task-center
-    window appear frozen.
-
-    We wrap only the page-level starter.  The background manager, QThread and
-    worker signal wiring remain exactly as in the project itself.
-    """
     from app.utils import page_background_integration as pbi
 
     original_start = pbi._start_page_task
@@ -131,7 +144,6 @@ def _install_background_info_routing() -> None:
             setattr(page, "_procurement_background_message_router_state", state)
 
             def latest_owner_record():
-                # dict preserves insertion order; newest task for this page wins.
                 tasks = getattr(manager, "_tasks", {})
                 for record in reversed(list(tasks.values())):
                     if getattr(record, "owner", None) is page and getattr(record, "status", "") in {
@@ -146,16 +158,17 @@ def _install_background_info_routing() -> None:
                     return
                 record = latest_owner_record()
                 if record is None:
-                    # This can happen only before a task record has been created.
-                    # Do not open a modal information box for a background action.
+                    return
+
+                # Progress from the worker is already stored by BackgroundTaskManager.
+                # Do not mirror it back into the same log while the task is running.
+                if getattr(record, "status", "") == "running":
                     return
 
                 log = getattr(record, "log", None)
                 if isinstance(log, list):
-                    if log and log[-1] == message:
+                    if message in log:
                         return
-                    # Manager appends "Готово." before emitting handle.finished.
-                    # Put the page's final summary immediately before that marker.
                     if getattr(record, "status", "") == "finished" and log and log[-1] == "Готово.":
                         log.insert(len(log) - 1, message)
                     else:
@@ -171,10 +184,8 @@ def _install_background_info_routing() -> None:
             if current is not state or state.get("restored"):
                 return
             if manager.has_active_tasks(page):
-                # A completion callback may have started the next task on the
-                # same page (for example after a pack-type prompt). Keep one
-                # router installed across that hand-off.
                 return
+
             state["restored"] = True
             original_show = state.get("original_show")
             try:
@@ -193,11 +204,25 @@ def _install_background_info_routing() -> None:
             except (AttributeError, RuntimeError):
                 pass
 
+        work_to_start = work
+        if use_progress and title == "Сохранение и расчёт прайса поставщика":
+            original_work = work
+
+            def concise_supplier_price_work(progress):
+                def concise_progress(text: Any = "") -> None:
+                    message = str(text or "").strip()
+                    if message.startswith("Сохранение прайса завершено"):
+                        progress(message)
+
+                return original_work(concise_progress)
+
+            work_to_start = concise_supplier_price_work
+
         try:
             started = original_start(
                 page,
                 title=title,
-                work=work,
+                work=work_to_start,
                 on_finished=on_finished,
                 read_resources=read_resources,
                 write_resources=write_resources,
@@ -217,9 +242,9 @@ def _install_background_info_routing() -> None:
             restore_show_message_if_idle()
             return True
 
-        # The page's own completion callback was connected by original_start
-        # before this wrapper receives the handle. Restore on the next event
-        # turn so final page.show_message(...) is still routed to the task log.
+        # Do not disconnect handle.progress here. Other code may legitimately
+        # subscribe to that signal. The router above simply ignores the duplicate
+        # page.show_message mirror while the task is active.
         handle.finished.connect(lambda _result: QTimer.singleShot(0, restore_show_message_if_idle))
         handle.failed.connect(lambda _message: QTimer.singleShot(0, restore_show_message_if_idle))
         return True
@@ -234,5 +259,6 @@ def install_background_task_fixes() -> None:
     if _installed:
         return
     _install_order_planning_exporter_no_is_compat()
+    _install_manager_progress_dedupe()
     _install_background_info_routing()
     _installed = True
