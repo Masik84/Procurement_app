@@ -776,6 +776,31 @@ def to_local_number_format(
     return format_code
 
 
+def _bounded_number_format_target(target: Any) -> Any | None:
+    """Return the used data area for a whole-column COM range.
+
+    Some Excel builds reject NumberFormat/NumberFormatLocal for an entire
+    worksheet column (for example when the header intersects a merged or
+    table-managed area). Falling back to rows 2..UsedRange preserves the
+    exported data formatting without touching the header.
+    """
+    try:
+        try:
+            ws = target.Worksheet
+        except Exception:
+            ws = target.Parent
+        first_col = int(target.Column)
+        column_count = max(int(target.Columns.Count), 1)
+        used_range = ws.UsedRange
+        last_row = max(int(used_range.Row) + int(used_range.Rows.Count) - 1, 2)
+        return ws.Range(
+            ws.Cells(2, first_col),
+            ws.Cells(last_row, first_col + column_count - 1),
+        )
+    except Exception:
+        return None
+
+
 def set_number_format_safe(
     target: Any,
     format_en: str = FORMATS.GENERAL,
@@ -783,53 +808,83 @@ def set_number_format_safe(
     *,
     verify: bool = True,
 ) -> str:
-    """Apply an Excel number format with quiet, ordered fallbacks.
+    """Apply a real Excel number format with quiet, ordered fallbacks.
 
-    This follows the proven CostCalc behaviour: try the Russian-local mask
-    first, then invariant NumberFormat, then General.  A rejected intermediate
-    candidate is normal on machines with a different Excel locale and must not
-    be logged as an application ERROR.  We log only when every candidate fails.
+    General means that no special presentation is required. Newly created
+    export workbooks already use General, and some localized Excel builds reject
+    explicitly assigning it to an entire column. In that case there is nothing
+    to apply, so General is a deliberate no-op.
+
+    For real formats we try the localized mask first and then its invariant
+    NumberFormat equivalent. If Excel rejects formatting the whole column, the
+    same candidates are retried on the used data area only (rows 2..UsedRange).
     """
     local_code = format_local or format_en or FORMATS.GENERAL
 
-    if format_local is not None and format_en and format_en != local_code:
+    if (
+        format_local is not None
+        and format_en
+        and str(format_en).strip().casefold() != FORMATS.GENERAL.casefold()
+        and format_en != local_code
+    ):
         invariant_code = format_en
     else:
         invariant_code = to_invariant_number_format(local_code) or FORMATS.GENERAL
 
+    general_key = FORMATS.GENERAL.casefold()
+    if (
+        str(local_code).strip().casefold() == general_key
+        and str(invariant_code).strip().casefold() == general_key
+    ):
+        return FORMATS.GENERAL
+
     candidates = [
         ("NumberFormatLocal", local_code),
         ("NumberFormat", invariant_code),
-        ("NumberFormat", FORMATS.GENERAL),
     ]
 
-    seen = set()
     failures: list[tuple[str, str, Exception]] = []
-    for attr, fmt in candidates:
-        key = (attr, fmt)
-        if not fmt or key in seen:
-            continue
-        seen.add(key)
-        try:
-            setattr(target, attr, fmt)
-            if verify and fmt != FORMATS.GENERAL:
-                try:
-                    actual = getattr(target, attr)
-                    if str(actual or "").strip().lower() == FORMATS.GENERAL.lower():
-                        continue
-                except Exception:
-                    # Some COM proxies do not allow a reliable read-back even
-                    # though the assignment itself succeeded.  Do not turn a
-                    # successful write into an error because verification failed.
-                    pass
-            return fmt
-        except Exception as exc:
-            failures.append((attr, fmt, exc))
+
+    def apply_candidates(current_target: Any) -> str | None:
+        seen: set[tuple[str, str]] = set()
+        for attr, fmt in candidates:
+            key = (attr, fmt)
+            if not fmt or key in seen:
+                continue
+            seen.add(key)
+            try:
+                setattr(current_target, attr, fmt)
+                if verify:
+                    try:
+                        actual = getattr(current_target, attr)
+                        if str(actual or "").strip().casefold() == general_key:
+                            continue
+                    except Exception:
+                        # Some COM proxies do not allow reliable read-back even
+                        # when the assignment itself succeeded.
+                        pass
+                return fmt
+            except Exception as exc:
+                failures.append((attr, fmt, exc))
+        return None
+
+    applied = apply_candidates(target)
+    if applied is not None:
+        return applied
+
+    bounded_target = _bounded_number_format_target(target)
+    if bounded_target is not None:
+        applied = apply_candidates(bounded_target)
+        if applied is not None:
+            return applied
 
     if failures:
         attr, fmt, exc = failures[-1]
         logger.error(
-            "Не удалось применить Excel NumberFormat после всех fallback: %s=%r: %s",
+            "Не удалось применить Excel NumberFormat: requested_local=%r, "
+            "requested_invariant=%r; last_attempt=%s=%r: %s",
+            local_code,
+            invariant_code,
             attr,
             fmt,
             exc,
