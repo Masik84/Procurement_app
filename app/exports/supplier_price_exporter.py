@@ -25,6 +25,7 @@ from app.utils.excel_fast_writer import write_excel_table
 from app.utils.excel_freeze import apply_freeze_panes
 from app.utils.excel_format_rules import FORMATS, cost_calc_headers, set_number_format_safe, to_invariant_number_format
 from app.utils.money import to_decimal, round4
+from app.utils.text import clean_multi_spaces
 
 
 class SupplierPriceExporter:
@@ -759,6 +760,161 @@ class SupplierPriceExporter:
         }
 
 
+    def _get_group_products_for_costcalc(self, source_product: Product, source_product_ids: set[int]) -> list[Product]:
+        prod_group = clean_multi_spaces(getattr(source_product, "prod_group", None) or source_product.family).upper()
+        if not prod_group or source_product.pack is None:
+            return []
+
+        source_pack_type = self.cost_calculation.get_pack_type_by_volume(source_product.pack)
+        if source_pack_type is None:
+            return []
+
+        source_pack = self._to_decimal(source_product.pack)
+        source_pack_type_name = clean_multi_spaces(source_pack_type.name).casefold()
+        candidates = (
+            self.session.query(Product)
+            .filter(
+                Product.prod_group == prod_group,
+                Product.id != int(source_product.id),
+            )
+            .order_by(Product.name.asc(), Product.id.asc())
+            .all()
+        )
+
+        result: list[Product] = []
+        for candidate in candidates:
+            if int(candidate.id) in source_product_ids:
+                continue
+            try:
+                if self._to_decimal(candidate.pack) != source_pack:
+                    continue
+            except Exception:
+                continue
+            candidate_pack_type = self.cost_calculation.get_pack_type_by_volume(candidate.pack)
+            if candidate_pack_type is None:
+                continue
+            if clean_multi_spaces(candidate_pack_type.name).casefold() != source_pack_type_name:
+                continue
+            result.append(candidate)
+        return result
+
+    def _get_best_two_from_price_rows(self, product_id: int, price_rows) -> tuple[dict, dict]:
+        best1 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": ""}
+        best2 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": ""}
+        for price_row in price_rows or []:
+            full_cost = self._calc_supplier_full_cost_from_db(
+                price_row.supplier_id,
+                product_id,
+                price_row.price,
+                price_row.currency_code,
+            )
+            currency, fx_rate = self._get_currency_rate(price_row.currency_code)
+            best1, best2 = self._consider_best_candidate(
+                price_row.supplier_name,
+                full_cost,
+                price_row.price_date,
+                best1,
+                best2,
+                fx_rate,
+                currency,
+            )
+        return best1, best2
+
+    def _build_group_costcalc_row(
+        self,
+        *,
+        product: Product,
+        stock,
+        uc3_target_row,
+        price_rows,
+        vat,
+        quick_months: int | None,
+        order_months: int | None,
+    ) -> dict:
+        product_id = int(product.id)
+        target_uc3 = getattr(uc3_target_row, "target_uc3", None) if uc3_target_row else None
+        walk_away_uc3 = getattr(uc3_target_row, "walk_away_uc3", None) if uc3_target_row else None
+        best1, best2 = self._get_best_two_from_price_rows(product_id, price_rows)
+
+        transit_total = None
+        if stock is not None:
+            transit_total = self._to_decimal(stock.transit_qty) + self._to_decimal(stock.is_confirmed_order_qty)
+
+        order_plan_values = self._calc_order_planning_export_values(
+            product_id=product_id,
+            stock=stock,
+            pack=product.pack,
+            quick_months=quick_months,
+            order_months=order_months,
+        )
+        min_uc3_stock = self._calc_uc3_from_full_cost(
+            stock=stock,
+            full_cost=getattr(stock, "landed_cost", None) if stock else None,
+            vat=vat,
+        )
+        best_uc3 = self._calc_uc3_from_full_cost(stock=stock, full_cost=best1.get("price"), vat=vat)
+        best2_uc3 = self._calc_uc3_from_full_cost(stock=stock, full_cost=best2.get("price"), vat=vat)
+
+        return {
+            "Supplier Article": "",
+            "Supplier Product Name": "",
+            "Our Product Name": product.name or "",
+            "Pack": self._excel_value(product.pack),
+            "Категория ABC": product.abc_category or "-",
+            "Qty, pcs": None,
+            "Volume, L": None,
+            "Target price (for suppl)": None,
+            "Price, L": None,
+            "Price, pack": None,
+            "Currency": "",
+            "FX rate": "",
+            "Cost Novo with VAT": None,
+            "Full Cost Msk": None,
+            "uC3": None,
+            "Target price, L": None,
+            "uC3 PY": self._excel_value(getattr(stock, "uc3_py", None) if stock else None),
+            "uC3 3 mnth": self._excel_value(getattr(stock, "uc3_3m", None) if stock else None),
+            "Target uC3": target_uc3,
+            "Walk-Away uC3": walk_away_uc3,
+            "Markup % (from suppl price)": None,
+            "last update (prev)": None,
+            "Price, L (prev)": None,
+            "abs Change": None,
+            "Cost Novo with VAT (prev)": None,
+            "Full Cost Msk (prev)": None,
+            "Дистр цена": self._excel_value(stock.distr_price if stock else None),
+            "Промо цена": self._excel_value(stock.promo_price if stock else None),
+            "curr LPC": self._excel_value(stock.lpc if stock else None),
+            "curr Landed cost": self._excel_value(stock.landed_cost if stock else None),
+            "min uC3 stock": self._excel_value(min_uc3_stock),
+            "Best Suppl": best1["supplier"],
+            "Best full Price, L": self._excel_value(best1["price"]),
+            "Best uC3": self._excel_value(best_uc3),
+            "last update Best1": best1["date"],
+            "FX rate Best1": self._round_fx_rate(best1.get("fx_rate")),
+            "Currency Best1": best1.get("currency", ""),
+            "Best Suppl 2": best2["supplier"],
+            "Best full Price, L 2": self._excel_value(best2["price"]),
+            "Best 2 uC3": self._excel_value(best2_uc3),
+            "last update Best2": best2["date"],
+            "FX rate Best2": self._round_fx_rate(best2.get("fx_rate")),
+            "Currency Best2": best2.get("currency", ""),
+            "Volume PY": self._excel_value(getattr(stock, "volume_py", None) if stock else None),
+            "Volume 3 mnth": self._excel_value(getattr(stock, "volume_3m", None) if stock else None),
+            "Stock": self._excel_value(stock.stock_qty if stock else None),
+            "Transit": self._excel_value(transit_total),
+            "Purchase Order": self._excel_value(stock.order_qty if stock else None),
+            "Order IS": self._excel_value(stock.is_order_qty if stock else None),
+            "Stock IS": self._excel_value(stock.is_stock_qty if stock else None),
+            "Reserve cust": self._excel_value(stock.reserve_qty if stock else None),
+            "Reserve E-Comm": self._excel_value(getattr(stock, "reserve_ecomm_qty", 0) if stock else None),
+            "Damaged": self._excel_value(stock.markdown_qty if stock else None),
+            "Ср.Продажи мес": self._excel_value(order_plan_values["Ср.Продажи мес"]),
+            "к Быстрому заказу, л": self._excel_value(order_plan_values["к Быстрому заказу, л"]),
+            "к Заказу, л": self._excel_value(order_plan_values["к Заказу, л"]),
+            "_group_generated": True,
+        }
+
     def build_export_rows(
         self,
         batch_id: str,
@@ -789,14 +945,40 @@ class SupplierPriceExporter:
 
         fixed = self.cost_calculation.get_fixed_costs()
         vat = self._to_decimal(getattr(fixed, "vat", 0))
-        product_ids = {
+        source_product_ids = {
             int(temp_row.selected_product_id)
             for temp_row, _calc, _product, _stock, _supplier in rows
             if temp_row.selected_product_id is not None
         }
-        uc3_targets = ProductUc3Service(self.session).get_current_map(product_ids)
+
+        group_candidates_by_source: dict[int, list[Product]] = {}
+        group_candidate_ids: set[int] = set()
+        for temp_row, _calc, product, _stock, _supplier in rows:
+            if product is None or self._positive_decimal_or_none(temp_row.price) is None:
+                continue
+            candidates = self._get_group_products_for_costcalc(product, source_product_ids)
+            if candidates:
+                group_candidates_by_source[int(product.id)] = candidates
+                group_candidate_ids.update(int(candidate.id) for candidate in candidates)
+
+        all_product_ids = source_product_ids | group_candidate_ids
+        uc3_targets = ProductUc3Service(self.session).get_current_map(all_product_ids)
+        stock_by_product_id = {
+            int(stock_row.product_id): stock_row
+            for stock_row in (
+                self.session.query(ProductStock).filter(ProductStock.product_id.in_(all_product_ids)).all()
+                if all_product_ids else []
+            )
+        }
+        group_price_rows = self.price_repository.get_supplier_prices_for_products(
+            group_candidate_ids,
+            only_rating_calc=True,
+            min_price_date=min_price_date,
+            exclude_manual=True,
+        )
 
         out_rows: list[dict] = []
+        emitted_group_product_ids: set[int] = set()
 
         for temp_row, calc_row, product, stock, supplier in rows:
             current_supplier_name = supplier.name if supplier else ""
@@ -958,8 +1140,28 @@ class SupplierPriceExporter:
                     "Ср.Продажи мес": self._excel_value(order_plan_values["Ср.Продажи мес"]),
                     "к Быстрому заказу, л": self._excel_value(order_plan_values["к Быстрому заказу, л"]),
                     "к Заказу, л": self._excel_value(order_plan_values["к Заказу, л"]),
+                    "_group_generated": False,
                 }
             )
+
+            for group_product in group_candidates_by_source.get(int(product_id_for_row), []):
+                group_product_id = int(group_product.id)
+                if group_product_id in emitted_group_product_ids:
+                    continue
+                group_stock = stock_by_product_id.get(group_product_id)
+                out_rows.append(
+                    self._build_group_costcalc_row(
+                        product=group_product,
+                        stock=group_stock,
+                        uc3_target_row=uc3_targets.get(group_product_id),
+                        price_rows=group_price_rows.get(group_product_id, []),
+                        min_price_date=min_price_date,
+                        vat=vat,
+                        quick_months=quick_months,
+                        order_months=order_months,
+                    )
+                )
+                emitted_group_product_ids.add(group_product_id)
 
         return out_rows
 
@@ -1202,6 +1404,14 @@ class SupplierPriceExporter:
             for _cur_header in ("Currency", "Currency Best1", "Currency Best2"):
                 if _cur_header in headers:
                     ws.Columns(f"{self._excel_column_letter(headers.index(_cur_header)+1)}:{self._excel_column_letter(headers.index(_cur_header)+1)}").ColumnWidth = 8.14
+
+            # Group-expanded comparison rows are not supplier-provided rows.
+            # Paint the whole row #E8E8E8 so they are visually separated.
+            if prepared_rows:
+                last_col_letter = self._excel_column_letter(len(headers))
+                for excel_row_no, prepared_row in enumerate(prepared_rows, start=2):
+                    if prepared_row.get("_group_generated"):
+                        ws.Range(f"A{excel_row_no}:{last_col_letter}{excel_row_no}").Interior.Color = self._rgb(232, 232, 232)
 
             # abs Change: preserve the draft's green-yellow-red 3-color scale.
             if prepared_rows and "abs Change" in headers:

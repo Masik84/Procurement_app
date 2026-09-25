@@ -72,6 +72,7 @@ class ProductMatchingService:
         self._exact_products_by_brand_cache: dict[tuple[str, str], Product] | None = None
         self._normalized_products_by_brand_cache: dict[tuple[str, str], Product] | None = None
         self._products_by_id_cache: dict[int, Product] | None = None
+        self._prod_group_by_family_cache: dict[str, str] | None = None
         self._product_article_keys_cache: set[tuple[int, str | None, str | None]] | None = None
         self._article_links_cache: dict[str, ProductArticle] | None = None
         self._article_links_by_brand_cache: dict[tuple[str, str], ProductArticle] | None = None
@@ -95,6 +96,7 @@ class ProductMatchingService:
         normalized_cache: dict[str, Product] = {}
         exact_by_brand: dict[tuple[str, str], Product] = {}
         normalized_by_brand: dict[tuple[str, str], Product] = {}
+        prod_group_by_family: dict[str, str] = {}
         products = (
             self.session.query(Product)
             .filter(Product.name.isnot(None))
@@ -104,6 +106,10 @@ class ProductMatchingService:
         for product in products:
             exact_key = clean_multi_spaces(product.name).upper()
             brand_key = self._brand_key(product.brand)
+            family_key = clean_multi_spaces(product.family).upper()
+            prod_group = clean_multi_spaces(getattr(product, "prod_group", None)).upper()
+            if family_key and prod_group:
+                prod_group_by_family.setdefault(family_key, prod_group)
             if exact_key and exact_key not in exact_cache:
                 exact_cache[exact_key] = product
             if exact_key and brand_key:
@@ -119,10 +125,23 @@ class ProductMatchingService:
         self._exact_products_by_brand_cache = exact_by_brand
         self._normalized_products_by_brand_cache = normalized_by_brand
         self._products_by_id_cache = {int(product.id): product for product in products}
+        self._prod_group_by_family_cache = prod_group_by_family
 
     def _build_normalized_products_cache(self) -> dict[str, Product]:
         self._ensure_product_caches()
         return self._normalized_products_cache or {}
+
+    def resolve_prod_group_for_family(self, family: object) -> str:
+        """Return the existing Prod Group for a family, or the family itself.
+
+        New products therefore inherit an already configured group. If the
+        Product Family is itself new, Prod Group starts as Product Family.
+        """
+        self._ensure_product_caches()
+        family_key = clean_multi_spaces(family).upper()
+        if not family_key:
+            return ""
+        return (self._prod_group_by_family_cache or {}).get(family_key, family_key)
 
     def _build_product_article_keys_cache(self) -> set[tuple[int, str | None, str | None]]:
         keys: set[tuple[int, str | None, str | None]] = set()
@@ -900,19 +919,24 @@ class ProductMatchingService:
             if product is None:
                 if qty_in_box is None:
                     qty_in_box = default_qty_in_box_for_pack(self.session, pack_num)
+                family = self.build_product_family_from_name(
+                    clean_name,
+                    pack_num,
+                    brand=clean_brand,
+                    pack_type=item.pack_type,
+                )
+                prod_group = self.resolve_prod_group_for_family(family)
                 product = Product(
                     name=clean_name,
                     brand=clean_brand,
                     pack=pack_num,
                     qty_in_box=qty_in_box,
                     is_excise=bool(item.is_excise),
-                    family=self.build_product_family_from_name(
-                        clean_name,
-                        pack_num,
-                        brand=clean_brand,
-                        pack_type=item.pack_type,
-                    ),
+                    family=family,
+                    prod_group=prod_group,
                 )
+                if family and prod_group and self._prod_group_by_family_cache is not None:
+                    self._prod_group_by_family_cache.setdefault(family, prod_group)
                 self.session.add(product)
                 created.append(product)
                 exact_cache[clean_name] = product

@@ -56,6 +56,7 @@ class ProductImporter:
             "quantityinbox": "qty_in_box",
             "isexcise": "is_excise",
             "exciseduty": "is_excise",
+            "prodgroup": "prod_group",
         }
         selected_columns: dict[str, object] = {}
         for column in df.columns:
@@ -68,12 +69,15 @@ class ProductImporter:
             normalized = pd.DataFrame({key: df[column] for key, column in selected_columns.items()})
             if "qty_in_box" not in normalized.columns:
                 normalized["qty_in_box"] = None
-            df = normalized[["id", "name", "brand", "pack", "qty_in_box", "is_excise"]]
+            if "prod_group" not in normalized.columns:
+                normalized["prod_group"] = None
+            df = normalized[["id", "name", "brand", "pack", "qty_in_box", "is_excise", "prod_group"]]
         else:
             # Backward compatibility for old positional templates.
             df = df.iloc[:, :5].copy()
             df.columns = ["id", "name", "brand", "pack", "is_excise"]
             df.insert(4, "qty_in_box", None)
+            df["prod_group"] = None
         df = df.where(pd.notna(df), None)
 
         rows: list[dict] = []
@@ -83,6 +87,7 @@ class ProductImporter:
             brand = clean_multi_spaces(item.get("brand")).upper()
             pack_raw = item.get("pack")
             qty_in_box_raw = item.get("qty_in_box")
+            prod_group_raw = item.get("prod_group")
             excise_raw = clean_multi_spaces(item.get("is_excise")).upper()
 
             if not any([product_id is not None, name, brand, pack_raw not in (None, ""), excise_raw]):
@@ -112,6 +117,7 @@ class ProductImporter:
                 pack,
                 brand=brand,
             )
+            prod_group = clean_multi_spaces(prod_group_raw).upper() or None
 
             if excise_raw in self.TRUE_VALUES:
                 is_excise = True
@@ -131,6 +137,7 @@ class ProductImporter:
                     "qty_in_box": qty_in_box,
                     "is_excise": is_excise,
                     "family": family,
+                    "prod_group": prod_group,
                 }
             )
 

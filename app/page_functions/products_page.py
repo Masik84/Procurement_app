@@ -89,10 +89,10 @@ class ProductsPage(QWidget):
         self._selected_family_values: set[str] | None = None
         self._selected_product_ids: set[int] | None = None
 
-        self.columns = ["id", "name", "brand", "pack", "qty_in_box", "abc_category", "is_excise", "family"]
-        self.headers = ["id", "Product name", "Brand", "Pack", "Qty in Box", "Категория ABC", "Excise duty", "Product Family"]
+        self.columns = ["id", "name", "brand", "pack", "qty_in_box", "abc_category", "is_excise", "family", "prod_group"]
+        self.headers = ["id", "Product name", "Brand", "Pack", "Qty in Box", "Категория ABC", "Excise duty", "Product Family", "Prod Group"]
         self.header_to_column = dict(zip(self.headers, self.columns))
-        self.text_columns = {"name", "brand", "family", "abc_category"}
+        self.text_columns = {"name", "brand", "family", "prod_group", "abc_category"}
 
         self.setup_ui()
         self.setup_connections()
@@ -365,6 +365,7 @@ class ProductsPage(QWidget):
         name = clean_multi_spaces(changes.get("name", "")).upper()
         brand = clean_multi_spaces(changes.get("brand", "")).upper()
         family = clean_multi_spaces(changes.get("family", "")).upper()
+        prod_group = clean_multi_spaces(changes.get("prod_group", "")).upper()
         pack = self._to_decimal(changes.get("pack", ""), "Pack")
         qty_in_box = normalize_qty_in_box(changes.get("qty_in_box"))
         is_excise = bool(changes.get("is_excise", False))
@@ -389,7 +390,14 @@ class ProductsPage(QWidget):
             "qty_in_box": qty_in_box,
             "is_excise": is_excise,
             "family": family_calc,
+            "prod_group": prod_group,
         }
+
+    def _resolve_prod_group_value(self, session, family: str, requested: object = None) -> str:
+        requested_group = clean_multi_spaces(requested).upper()
+        if requested_group:
+            return requested_group
+        return ProductMatchingService(session).resolve_prod_group_for_family(family)
 
     def _find_existing_product_for_import(self, session, *, name: str, brand: str, pack: Decimal):
         product = (
@@ -431,6 +439,7 @@ class ProductsPage(QWidget):
                 existing.qty_in_box = default_qty_in_box_for_pack(session, data["pack"])
             existing.is_excise = data["is_excise"]
             existing.family = data["family"]
+            existing.prod_group = self._resolve_prod_group_value(session, data["family"], data.get("prod_group"))
             return
 
         qty_in_box = data["qty_in_box"]
@@ -443,6 +452,7 @@ class ProductsPage(QWidget):
             qty_in_box=qty_in_box,
             is_excise=data["is_excise"],
             family=data["family"],
+            prod_group=self._resolve_prod_group_value(session, data["family"], data.get("prod_group")),
         )
         session.add(product)
 
@@ -458,6 +468,7 @@ class ProductsPage(QWidget):
             "qty_in_box": changes.get("qty_in_box", product.qty_in_box),
             "is_excise": changes.get("is_excise", bool(product.is_excise)),
             "family": changes.get("family", product.family or ""),
+            "prod_group": changes.get("prod_group", product.prod_group or ""),
         }
         # Existing legacy rows may contain an old Pack that is not in Pack types.
         # Do not block unrelated edits; validate only when Pack itself is changed.
@@ -485,6 +496,7 @@ class ProductsPage(QWidget):
         product.qty_in_box = data["qty_in_box"]
         product.is_excise = data["is_excise"]
         product.family = data["family"]
+        product.prod_group = self._resolve_prod_group_value(session, data["family"], data.get("prod_group"))
 
     def start_brand_edit(self, row: int):
         id_item = self.table.item(row, 0)
@@ -713,6 +725,7 @@ class ProductsPage(QWidget):
                     "abc_category": row.abc_category or "-",
                     "is_excise": bool(row.is_excise),
                     "family": row.family,
+                    "prod_group": row.prod_group,
                 })
 
         return data
@@ -851,6 +864,11 @@ class ProductsPage(QWidget):
                     "abc_category": (existing.abc_category or "-") if existing is not None else "-",
                     "is_excise": imported["is_excise"],
                     "family": imported["family"],
+                    "prod_group": (
+                        imported.get("prod_group")
+                        if imported.get("prod_group")
+                        else (existing.prod_group if existing is not None else None)
+                    ),
                 }
 
                 if existing is not None:
@@ -877,6 +895,11 @@ class ProductsPage(QWidget):
                     "abc_category": (existing.abc_category or "-") if existing is not None else "-",
                     "is_excise": imported["is_excise"],
                     "family": imported["family"],
+                    "prod_group": (
+                        imported.get("prod_group")
+                        if imported.get("prod_group")
+                        else (existing.prod_group if existing is not None else None)
+                    ),
                 }
                 self._original_values[row_id] = row_data.copy()
 
@@ -959,6 +982,7 @@ class ProductsPage(QWidget):
                 "Категория ABC",
                 "Excise duty",
                 "Product Family",
+                "Prod Group",
             ]
 
             def value_for_header(row, header, _col_index):
@@ -984,6 +1008,8 @@ class ProductsPage(QWidget):
                     return "Да" if bool(row.get("is_excise")) else "Нет"
                 if header == "Product Family":
                     return row.get("family", "") or ""
+                if header == "Prod Group":
+                    return row.get("prod_group", "") or ""
                 return ""
 
             write_excel_table(ws, headers, rows, header_getter=standardize_output_header, value_getter=value_for_header)
@@ -991,7 +1017,7 @@ class ProductsPage(QWidget):
             ws.Cells.Font.Name = "Aptos Narrow"
             ws.Cells.Font.Size = 11
 
-            header_range = ws.Range("A1:H1")
+            header_range = ws.Range("A1:I1")
             header_range.Font.Name = "Aptos Narrow"
             header_range.Font.Size = 11
             header_range.Font.Bold = True
@@ -1003,7 +1029,7 @@ class ProductsPage(QWidget):
             ws.Rows(1).EntireRow.AutoFit()
 
             try:
-                ws.Range("A1:H1").AutoFilter(1)
+                ws.Range("A1:I1").AutoFilter(1)
             except Exception:
                 logger.exception("Подавленная ошибка (см. traceback выше)")
 
@@ -1015,6 +1041,7 @@ class ProductsPage(QWidget):
             ws.Columns("F:F").ColumnWidth = 14
             ws.Columns("G:G").ColumnWidth = 14
             ws.Columns("H:H").ColumnWidth = 24
+            ws.Columns("I:I").ColumnWidth = 34
 
             # if rows:
             #     ws.Range(f"D2:D{len(rows) + 1}").NumberFormat = "General"
@@ -1194,6 +1221,7 @@ class ProductsPage(QWidget):
             "abc_category": "-",
             "is_excise": False,
             "family": family_value,
+            "prod_group": "",
         }
 
         self._pending_changes[row_id] = {
@@ -1204,6 +1232,7 @@ class ProductsPage(QWidget):
             "abc_category": "-",
             "is_excise": False,
             "family": family_value,
+            "prod_group": "",
         }
 
         self._original_values[row_id] = values.copy()

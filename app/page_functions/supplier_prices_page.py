@@ -1189,19 +1189,26 @@ class SupplierPricesPage(QWidget):
             self._pending_changes[row_id]["selected_product_id"] = None
 
     def refresh_current_product_combo(self):
-        row = self.table.currentRow()
-        if row < 0:
-            return
+        # Product editors are persistent cell widgets until a value is selected.
+        # Refresh every open product combo, not only table.currentRow(): otherwise
+        # a combo opened earlier can keep the result of an old Brand/Search filter.
+        product_column = self._column_index("selected_product_id")
+        for row in range(self.table.rowCount()):
+            combo = self.table.cellWidget(row, product_column)
+            if not isinstance(combo, QComboBox):
+                continue
+            if combo.property("combo_role") != "product_combo":
+                continue
 
-        combo = self.table.cellWidget(row, 0)
-        if isinstance(combo, QComboBox):
             row_id = combo.property("row_id")
-            if row_id is not None:
-                self.populate_product_combo(
-                    combo,
-                    row_id=int(row_id),
-                    keep_current=True,
-                )
+            if row_id is None:
+                continue
+
+            self.populate_product_combo(
+                combo,
+                row_id=int(row_id),
+                keep_current=True,
+            )
 
     def get_filtered_products(self) -> list[Product]:
         brand_filter = clean_multi_spaces(self.ui.cbo_FindBrand.currentText())

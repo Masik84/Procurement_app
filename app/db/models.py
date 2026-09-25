@@ -27,6 +27,7 @@ class Product(Base):
     brand = Column(String(255), nullable=False, index=True)
     name = Column(String(500), nullable=False, unique=True, index=True)
     family = Column(String(500), nullable=True, index=True)
+    prod_group = Column(String(500), nullable=True, index=True)
     pack = Column(Numeric, nullable=False)
     qty_in_box = Column(Integer, nullable=True)
     abc_category = Column(String(50), nullable=False, default="-")
