@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from PySide6.QtCore import QFile, Qt, QThread
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtUiTools import QUiLoader
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -84,6 +84,7 @@ def _export_price_report_file(
     report_mode: str,
     quick_order_months: int | None,
     safe_stock_months: int | None,
+    gray_row_indexes: Sequence[int] | None = None,
 ) -> Path:
     return PriceReportExporter().export_report(
         headers=headers,
@@ -92,6 +93,7 @@ def _export_price_report_file(
         report_mode=report_mode,
         quick_order_months=quick_order_months,
         safe_stock_months=safe_stock_months,
+        gray_row_indexes=gray_row_indexes,
     )
 
 
@@ -106,6 +108,8 @@ class PriceReportsPage(QWidget):
 
         self._product_name_combo = getattr(self.ui, "cbo_ProductName", None)
         self._name_search_widget = getattr(self.ui, "line_NameSearch", None) or getattr(self.ui, "lineEdit", None)
+        self._selected_supplier_ids: Optional[set[int]] = None
+        self._selected_country_values: Optional[set[str]] = None
         self._selected_brand_values: Optional[set[str]] = None
         self._selected_family_values: Optional[set[str]] = None
         self._selected_product_ids: Optional[set[int]] = None
@@ -113,6 +117,8 @@ class PriceReportsPage(QWidget):
         self._preview_rows: List[List[object]] = []
         self._export_headers: List[str] = []
         self._export_rows: List[List[object]] = []
+        self._preview_gray_rows: set[int] = set()
+        self._export_gray_rows: set[int] = set()
         self._updating_fx_table = False
         self._export_quick_order_months = None
         self._export_safe_stock_months = None
@@ -142,8 +148,14 @@ class PriceReportsPage(QWidget):
         self.fx_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.fx_table.setColumnCount(2)
         self.fx_table.setHorizontalHeaderLabels(["Currency", "Rate to RUB"])
+        # Блок курсов оставляем в .ui и всю его обработку сохраняем,
+        # но в текущем интерфейсе он не показывается.
+        if hasattr(self.ui, "frame_FXRates"):
+            self.ui.frame_FXRates.setVisible(False)
 
         self.ui.radio_ByProduct.setChecked(True)
+        self.ui.btn_FilterSupplier.setEnabled(False)
+        self.ui.btn_FilterCountry.setEnabled(False)
         self.ui.cbx_ShowPrevPrice.setChecked(False)
         self.ui.cbx_ShowPrevPrice.setEnabled(False)
         if hasattr(self.ui, "spb_SuppPriceAge"):
@@ -157,7 +169,8 @@ class PriceReportsPage(QWidget):
     def setup_connections(self):
         self.ui.radio_ByProduct.toggled.connect(self.on_mode_changed)
         self.ui.radio_BySupplier.toggled.connect(self.on_mode_changed)
-        self.ui.cbo_Supplier.currentIndexChanged.connect(self.on_supplier_changed)
+        self.ui.btn_FilterSupplier.clicked.connect(self.open_supplier_filter)
+        self.ui.btn_FilterCountry.clicked.connect(self.open_country_filter)
         self.ui.btn_BuildReport.clicked.connect(self.build_report)
         self.ui.btn_Reset.clicked.connect(self.reset_filters)
         self.ui.btn_ExportExcel.clicked.connect(self.export_excel)
@@ -172,13 +185,13 @@ class PriceReportsPage(QWidget):
             self._name_search_widget.textChanged.connect(self.on_name_search_changed)
 
     def load_initial_data(self):
-        self.fill_suppliers()
         self._refresh_filter_buttons(prune=True)
         self.load_fx_rates_table()
 
     def on_mode_changed(self):
         by_supplier = self.ui.radio_BySupplier.isChecked()
-        self.ui.cbo_Supplier.setEnabled(by_supplier)
+        self.ui.btn_FilterSupplier.setEnabled(by_supplier)
+        self.ui.btn_FilterCountry.setEnabled(by_supplier)
         self.ui.cbx_ShowPrevPrice.setEnabled(by_supplier)
         if not by_supplier:
             self.ui.cbx_ShowPrevPrice.setChecked(False)
@@ -186,12 +199,6 @@ class PriceReportsPage(QWidget):
         self._refresh_filter_buttons(prune=True)
         self.clear_preview_table()
         self.clear_message()
-
-    def on_supplier_changed(self):
-        if self.ui.radio_BySupplier.isChecked():
-            self._refresh_filter_buttons(prune=True)
-            self.clear_preview_table()
-            self.clear_message()
 
     def on_name_search_changed(self):
         self._refresh_filter_buttons()
@@ -203,19 +210,100 @@ class PriceReportsPage(QWidget):
             return 3
         return int(widget.value())
 
-    def fill_suppliers(self):
+    def _get_all_report_suppliers(self, session) -> List[Supplier]:
+        return (
+            session.query(Supplier)
+            .filter(Supplier.name != "Manual")
+            .order_by(Supplier.name.asc())
+            .all()
+        )
+
+    def _get_selected_suppliers(self, session) -> List[Supplier]:
+        suppliers = self._get_all_report_suppliers(session)
+        if self._selected_country_values is not None:
+            suppliers = [
+                supplier for supplier in suppliers
+                if self._clean_text(supplier.country) in self._selected_country_values
+            ]
+        if self._selected_supplier_ids is not None:
+            selected_ids = {int(value) for value in self._selected_supplier_ids}
+            suppliers = [
+                supplier for supplier in suppliers
+                if supplier.id is not None and int(supplier.id) in selected_ids
+            ]
+        return suppliers
+
+    def open_supplier_filter(self):
+        options = self._get_supplier_filter_options()
+        accepted, selected = self._open_checked_filter_dialog(
+            title="Фильтр по поставщикам",
+            options=options,
+            selected_keys=self._selected_supplier_ids,
+        )
+        if not accepted:
+            return
+
+        self._selected_supplier_ids = None if selected is None else {int(value) for value in selected}
+        self._refresh_filter_buttons(prune=True)
+        self.clear_preview_table()
+        self.clear_message()
+
+    def open_country_filter(self):
+        options = self._get_country_filter_options()
+        accepted, selected = self._open_checked_filter_dialog(
+            title="Фильтр по странам",
+            options=options,
+            selected_keys=self._selected_country_values,
+        )
+        if not accepted:
+            return
+
+        self._selected_country_values = None if selected is None else {str(value) for value in selected}
+        self._refresh_filter_buttons(prune=True)
+        self.clear_preview_table()
+        self.clear_message()
+
+    def _get_supplier_filter_options(self) -> List[FilterOption]:
         try:
             with self.get_session() as session:
-                suppliers = session.query(Supplier).filter(Supplier.name != "Manual").order_by(Supplier.name).all()
-
-            self.ui.cbo_Supplier.blockSignals(True)
-            self.ui.cbo_Supplier.clear()
-            self.ui.cbo_Supplier.addItem("-", None)
-            for supplier in suppliers:
-                self.ui.cbo_Supplier.addItem(supplier.name, supplier.id)
-            self.ui.cbo_Supplier.blockSignals(False)
+                suppliers = self._get_all_report_suppliers(session)
+            if self._selected_country_values is not None:
+                suppliers = [
+                    supplier for supplier in suppliers
+                    if self._clean_text(supplier.country) in self._selected_country_values
+                ]
+            return [
+                FilterOption(
+                    key=int(supplier.id),
+                    label=self._clean_text(supplier.name),
+                    search_text=" ".join(
+                        part for part in [
+                            self._clean_text(supplier.name),
+                            self._clean_text(supplier.country),
+                        ]
+                        if part
+                    ),
+                )
+                for supplier in suppliers
+                if supplier.id is not None and self._clean_text(supplier.name)
+            ]
         except Exception as e:
             self.show_error_message(f"Ошибка при получении поставщиков: {str(e)}")
+            return []
+
+    def _get_country_filter_options(self) -> List[FilterOption]:
+        try:
+            with self.get_session() as session:
+                suppliers = self._get_all_report_suppliers(session)
+            countries = sorted({
+                self._clean_text(supplier.country)
+                for supplier in suppliers
+                if self._clean_text(supplier.country)
+            })
+            return [FilterOption(key=country, label=country, search_text=country) for country in countries]
+        except Exception as e:
+            self.show_error_message(f"Ошибка при получении стран: {str(e)}")
+            return []
 
     def open_brand_filter(self):
         options = self._get_brand_filter_options()
@@ -338,6 +426,16 @@ class PriceReportsPage(QWidget):
             self._prune_filter_selections()
 
         self._set_filter_button_text(
+            self.ui.btn_FilterSupplier,
+            all_text="все Поставщики",
+            selected=self._selected_supplier_ids,
+        )
+        self._set_filter_button_text(
+            self.ui.btn_FilterCountry,
+            all_text="все Страны",
+            selected=self._selected_country_values,
+        )
+        self._set_filter_button_text(
             self.ui.btn_FilterBrand,
             all_text="все Бренды",
             selected=self._selected_brand_values,
@@ -363,6 +461,36 @@ class PriceReportsPage(QWidget):
     def _prune_filter_selections(self) -> None:
         try:
             with self.get_session() as session:
+                suppliers = self._get_all_report_suppliers(session)
+
+                available_countries = {
+                    self._clean_text(supplier.country)
+                    for supplier in suppliers
+                    if self._clean_text(supplier.country)
+                }
+                if self._selected_country_values is not None:
+                    self._selected_country_values = {
+                        value for value in self._selected_country_values
+                        if value in available_countries
+                    }
+
+                suppliers_for_filter = suppliers
+                if self._selected_country_values is not None:
+                    suppliers_for_filter = [
+                        supplier for supplier in suppliers
+                        if self._clean_text(supplier.country) in self._selected_country_values
+                    ]
+                available_supplier_ids = {
+                    int(supplier.id)
+                    for supplier in suppliers_for_filter
+                    if supplier.id is not None
+                }
+                if self._selected_supplier_ids is not None:
+                    self._selected_supplier_ids = {
+                        int(value) for value in self._selected_supplier_ids
+                        if int(value) in available_supplier_ids
+                    }
+
                 products = self._get_available_products(session)
 
             available_brands = {self._clean_text(product.brand) for product in products if self._clean_text(product.brand)}
@@ -425,7 +553,13 @@ class PriceReportsPage(QWidget):
         return " ".join(str(value or "").split())
 
     def _sort_products(self, products: Sequence[Product]) -> List[Product]:
-        return sorted(products, key=lambda p: ((p.brand or ""), (p.family or ""), (p.name or ""), self._pack_sort_key(p.pack)))
+        def sort_key(product: Product):
+            prod_group = self._clean_text(getattr(product, "prod_group", None) or product.family).casefold()
+            family = self._clean_text(product.family).casefold()
+            pack = self._pack_sort_key(product.pack)
+            return (prod_group, family, -pack, self._clean_text(product.name).casefold())
+
+        return sorted(products, key=sort_key)
 
     def _product_filter_label(self, product: Product) -> str:
         return self._clean_text(product.name)
@@ -445,35 +579,34 @@ class PriceReportsPage(QWidget):
 
     def _get_available_products(self, session) -> List[Product]:
         by_supplier = self.ui.radio_BySupplier.isChecked()
-        supplier_id = self.ui.cbo_Supplier.currentData()
+        products = session.query(Product).order_by(Product.brand, Product.family, Product.name).all()
 
-        query = session.query(Product).order_by(Product.brand, Product.family, Product.name)
-        products = query.all()
-
-        if not by_supplier or not supplier_id:
+        if not by_supplier:
             return products
+
+        suppliers = self._get_selected_suppliers(session)
+        supplier_ids = [int(supplier.id) for supplier in suppliers if supplier.id is not None]
+        if not supplier_ids:
+            return []
 
         min_price_date = PriceRepository.supplier_price_cutoff_from_months(self.get_supplier_price_age_months())
         valid_product_ids = set()
         current_query = session.query(CurrentSupplierPrice.product_id).filter(
-            CurrentSupplierPrice.supplier_id == supplier_id,
+            CurrentSupplierPrice.supplier_id.in_(supplier_ids),
             CurrentSupplierPrice.price.isnot(None),
         )
         history_query = session.query(PriceHistory.product_id).filter(
-            PriceHistory.supplier_id == supplier_id,
+            PriceHistory.supplier_id.in_(supplier_ids),
             PriceHistory.price.isnot(None),
         )
         if min_price_date is not None:
             current_query = current_query.filter(CurrentSupplierPrice.last_update >= min_price_date)
             history_query = history_query.filter(PriceHistory.price_date >= min_price_date)
-        current_ids = current_query.all()
-        history_ids = history_query.all()
-        valid_product_ids.update(row[0] for row in current_ids)
-        valid_product_ids.update(row[0] for row in history_ids)
+        valid_product_ids.update(row[0] for row in current_query.all())
+        valid_product_ids.update(row[0] for row in history_query.all())
 
         if not valid_product_ids:
             return []
-
         return [product for product in products if product.id in valid_product_ids]
 
     def load_fx_rates_table(self):
@@ -522,9 +655,8 @@ class PriceReportsPage(QWidget):
             fx_rates = self._get_fx_rate_map()
             min_price_date = PriceRepository.supplier_price_cutoff_from_months(self.get_supplier_price_age_months())
 
-            if self.ui.radio_BySupplier.isChecked() and not self.ui.cbo_Supplier.currentData():
-                self.show_error_message("Выбери поставщика")
-                return
+            self._preview_gray_rows.clear()
+            self._export_gray_rows.clear()
 
             if self.ui.radio_ByProduct.isChecked():
                 preview_headers, preview_rows, export_headers, export_rows = self._build_product_report(fx_rates, min_price_date)
@@ -571,17 +703,103 @@ class PriceReportsPage(QWidget):
         products = self._apply_selected_filters_to_products(products)
         return self._sort_products(products)
 
+    def _build_group_candidates_by_source(
+        self,
+        session,
+        source_products: Sequence[Product],
+    ) -> Dict[int, List[Product]]:
+        source_product_ids = {
+            int(product.id)
+            for product in source_products
+            if product.id is not None
+        }
+        if not source_product_ids:
+            return {}
+
+        cost_calculation = CostCalculationService(session)
+        result: Dict[int, List[Product]] = {}
+
+        for source_product in source_products:
+            if source_product.id is None:
+                continue
+            prod_group = self._clean_text(
+                getattr(source_product, "prod_group", None) or source_product.family
+            ).upper()
+            if not prod_group or source_product.pack is None:
+                continue
+
+            source_pack_type = cost_calculation.get_pack_type_by_volume(source_product.pack)
+            if source_pack_type is None:
+                continue
+
+            source_pack = self._to_decimal(source_product.pack)
+            source_pack_type_name = self._clean_text(source_pack_type.name).casefold()
+            candidates = (
+                session.query(Product)
+                .filter(
+                    Product.prod_group == prod_group,
+                    Product.id != int(source_product.id),
+                )
+                .order_by(Product.name.asc(), Product.id.asc())
+                .all()
+            )
+
+            group_products: List[Product] = []
+            for candidate in candidates:
+                if candidate.id is None or int(candidate.id) in source_product_ids:
+                    continue
+                try:
+                    if self._to_decimal(candidate.pack) != source_pack:
+                        continue
+                except Exception:
+                    continue
+                candidate_pack_type = cost_calculation.get_pack_type_by_volume(candidate.pack)
+                if candidate_pack_type is None:
+                    continue
+                if self._clean_text(candidate_pack_type.name).casefold() != source_pack_type_name:
+                    continue
+                group_products.append(candidate)
+
+            if group_products:
+                group_products = sorted(
+                    group_products,
+                    key=lambda product: (
+                        self._clean_text(product.family).casefold(),
+                        -self._pack_sort_key(product.pack),
+                        self._clean_text(product.name).casefold(),
+                    ),
+                )
+                result[int(source_product.id)] = group_products
+
+        return result
+
     def _build_product_report(self, fx_rates: Dict[str, Decimal], min_price_date: Optional[datetime] = None):
         with self.get_session() as session:
             products = self._get_filtered_products(session)
+            group_candidates_by_source = self._build_group_candidates_by_source(session, products)
+
+            expanded_products: List[tuple[Product, bool]] = []
+            emitted_group_product_ids: set[int] = set()
+            for product in products:
+                expanded_products.append((product, False))
+                for group_product in group_candidates_by_source.get(int(product.id), []):
+                    group_product_id = int(group_product.id)
+                    if group_product_id in emitted_group_product_ids:
+                        continue
+                    expanded_products.append((group_product, True))
+                    emitted_group_product_ids.add(group_product_id)
+
+            all_products = [product for product, _is_group in expanded_products]
             fixed_costs = session.query(FixedCosts).first()
-            stock_by_product = self._prepare_report_caches(session, products, min_price_date)
+            stock_by_product = self._prepare_report_caches(session, all_products, min_price_date)
             preview_rows: List[List[object]] = []
             export_rows: List[List[object]] = []
+            preview_gray_rows: set[int] = set()
+            export_gray_rows: set[int] = set()
             max_export_suppliers = 0
             product_export_data = []
 
-            for product in products:
+            for product, is_group_generated in expanded_products:
                 stock = stock_by_product.get(int(product.id))
                 options = self._get_all_supplier_options_for_product(
                     session=session,
@@ -591,87 +809,191 @@ class PriceReportsPage(QWidget):
                     include_supplier_without_rating=False,
                     min_price_date=min_price_date,
                 )
-                product_export_data.append((product, stock, options))
+                product_export_data.append((product, stock, options, is_group_generated))
                 if len(options) > max_export_suppliers:
                     max_export_suppliers = len(options)
 
             preview_headers = self._build_product_headers(supplier_count=4)
             export_headers = self._build_product_headers(supplier_count=max_export_suppliers)
 
-            for product, stock, options in product_export_data:
+            for product, stock, options, is_group_generated in product_export_data:
+                preview_index = len(preview_rows)
+                export_index = len(export_rows)
                 preview_rows.append(self._build_product_row(product, stock, options[:4], 4))
                 export_rows.append(self._build_product_row(product, stock, options, max_export_suppliers))
+                if is_group_generated:
+                    preview_gray_rows.add(preview_index)
+                    export_gray_rows.add(export_index)
 
+            self._preview_gray_rows = preview_gray_rows
+            self._export_gray_rows = export_gray_rows
             return preview_headers, preview_rows, export_headers, export_rows
 
     def _build_supplier_report(self, fx_rates: Dict[str, Decimal], min_price_date: Optional[datetime] = None):
         with self.get_session() as session:
-            supplier_id = self.ui.cbo_Supplier.currentData()
-            supplier = session.query(Supplier).filter(Supplier.id == supplier_id).first()
-            if not supplier:
-                raise Exception("Не найден выбранный поставщик")
+            suppliers = self._get_selected_suppliers(session)
+            if not suppliers:
+                raise Exception("Нет поставщиков по заданному фильтру")
 
             products = self._get_filtered_products(session)
             fixed_costs = session.query(FixedCosts).first()
-            stock_by_product = self._prepare_report_caches(session, products, min_price_date)
+
+            # Сначала кешируем только базовые строки, чтобы определить, какие
+            # продукты реально имеют цену у каждого выбранного поставщика.
+            self._prepare_report_caches(session, products, min_price_date)
+            latest_base_records = getattr(self, "_report_latest_price_records", {})
+
+            supplier_sources: Dict[int, List[Product]] = {}
+            supplier_groups: Dict[int, Dict[int, List[Product]]] = {}
+            all_products_by_id: Dict[int, Product] = {
+                int(product.id): product
+                for product in products
+                if product.id is not None
+            }
+
+            for supplier in suppliers:
+                source_products = [
+                    product for product in products
+                    if product.id is not None
+                    and (int(supplier.id), int(product.id)) in latest_base_records
+                ]
+                supplier_sources[int(supplier.id)] = source_products
+                group_map = self._build_group_candidates_by_source(session, source_products)
+                supplier_groups[int(supplier.id)] = group_map
+                for candidates in group_map.values():
+                    for candidate in candidates:
+                        if candidate.id is not None:
+                            all_products_by_id[int(candidate.id)] = candidate
+
+            # Второй пакетный кеш включает и автоматически добавленные аналоги.
+            all_products = list(all_products_by_id.values())
+            stock_by_product = self._prepare_report_caches(session, all_products, min_price_date)
             show_prev = self.ui.cbx_ShowPrevPrice.isChecked()
-            if show_prev:
-                self._prepare_previous_price_cache(
-                    session,
-                    int(supplier.id),
-                    (int(product.id) for product in products),
-                )
             preview_rows: List[List[object]] = []
             export_rows: List[List[object]] = []
+            preview_gray_rows: set[int] = set()
+            export_gray_rows: set[int] = set()
             max_other_suppliers = 0
             report_data = []
 
-            for product in products:
-                stock = stock_by_product.get(int(product.id))
-                chosen = self._build_supplier_option_for_specific_supplier(
-                    session=session,
-                    supplier=supplier,
-                    product=product,
-                    fx_rates=fx_rates,
-                    fixed_costs=fixed_costs,
-                    min_price_date=min_price_date,
-                )
-                if chosen is None or chosen.supplier_price is None:
-                    continue
+            for supplier in suppliers:
+                source_products = supplier_sources.get(int(supplier.id), [])
+                group_map = supplier_groups.get(int(supplier.id), {})
+                if show_prev:
+                    self._prepare_previous_price_cache(
+                        session,
+                        int(supplier.id),
+                        all_products_by_id.keys(),
+                    )
 
-                alternatives = self._get_all_supplier_options_for_product(
-                    session=session,
-                    product=product,
-                    fx_rates=fx_rates,
-                    fixed_costs=fixed_costs,
-                    exclude_supplier_id=supplier.id,
-                    include_supplier_without_rating=False,
-                    min_price_date=min_price_date,
-                )
-                prev = self._get_previous_supplier_option(
-                    session=session,
-                    supplier=supplier,
-                    product=product,
-                    current_price_date=chosen.price_date,
-                    fx_rates=fx_rates,
-                    fixed_costs=fixed_costs,
-                ) if show_prev else None
+                emitted_group_product_ids: set[int] = set()
+                for product in source_products:
+                    stock = stock_by_product.get(int(product.id))
+                    chosen = self._build_supplier_option_for_specific_supplier(
+                        session=session,
+                        supplier=supplier,
+                        product=product,
+                        fx_rates=fx_rates,
+                        fixed_costs=fixed_costs,
+                        min_price_date=min_price_date,
+                    )
+                    if chosen is None or chosen.supplier_price is None:
+                        continue
 
-                report_data.append((product, stock, chosen, prev, alternatives))
-                if len(alternatives) > max_other_suppliers:
-                    max_other_suppliers = len(alternatives)
+                    alternatives = self._get_all_supplier_options_for_product(
+                        session=session,
+                        product=product,
+                        fx_rates=fx_rates,
+                        fixed_costs=fixed_costs,
+                        exclude_supplier_id=supplier.id,
+                        include_supplier_without_rating=False,
+                        min_price_date=min_price_date,
+                    )
+                    prev = self._get_previous_supplier_option(
+                        session=session,
+                        supplier=supplier,
+                        product=product,
+                        current_price_date=chosen.price_date,
+                        fx_rates=fx_rates,
+                        fixed_costs=fixed_costs,
+                    ) if show_prev else None
+
+                    report_data.append((supplier, product, stock, chosen, prev, alternatives, False))
+                    if len(alternatives) > max_other_suppliers:
+                        max_other_suppliers = len(alternatives)
+
+                    for group_product in group_map.get(int(product.id), []):
+                        group_product_id = int(group_product.id)
+                        if group_product_id in emitted_group_product_ids:
+                            continue
+
+                        group_stock = stock_by_product.get(group_product_id)
+                        group_chosen = self._build_supplier_option_for_specific_supplier(
+                            session=session,
+                            supplier=supplier,
+                            product=group_product,
+                            fx_rates=fx_rates,
+                            fixed_costs=fixed_costs,
+                            min_price_date=min_price_date,
+                        )
+                        group_alternatives = self._get_all_supplier_options_for_product(
+                            session=session,
+                            product=group_product,
+                            fx_rates=fx_rates,
+                            fixed_costs=fixed_costs,
+                            exclude_supplier_id=supplier.id,
+                            include_supplier_without_rating=False,
+                            min_price_date=min_price_date,
+                        )
+                        group_prev = self._get_previous_supplier_option(
+                            session=session,
+                            supplier=supplier,
+                            product=group_product,
+                            current_price_date=group_chosen.price_date if group_chosen else None,
+                            fx_rates=fx_rates,
+                            fixed_costs=fixed_costs,
+                        ) if show_prev and group_chosen is not None else None
+
+                        report_data.append((
+                            supplier,
+                            group_product,
+                            group_stock,
+                            group_chosen,
+                            group_prev,
+                            group_alternatives,
+                            True,
+                        ))
+                        if len(group_alternatives) > max_other_suppliers:
+                            max_other_suppliers = len(group_alternatives)
+                        emitted_group_product_ids.add(group_product_id)
 
             preview_headers = self._build_supplier_headers(show_prev=show_prev, other_count=4)
             export_headers = self._build_supplier_headers(show_prev=show_prev, other_count=max_other_suppliers)
 
-            for product, stock, chosen, prev, alternatives in report_data:
-                preview_rows.append(self._build_supplier_row(product, stock, chosen, prev, alternatives[:4], show_prev, 4))
-                export_rows.append(self._build_supplier_row(product, stock, chosen, prev, alternatives, show_prev, max_other_suppliers))
+            for supplier, product, stock, chosen, prev, alternatives, is_group_generated in report_data:
+                preview_index = len(preview_rows)
+                export_index = len(export_rows)
+                preview_rows.append(
+                    self._build_supplier_row(
+                        supplier, product, stock, chosen, prev, alternatives[:4], show_prev, 4
+                    )
+                )
+                export_rows.append(
+                    self._build_supplier_row(
+                        supplier, product, stock, chosen, prev, alternatives, show_prev, max_other_suppliers
+                    )
+                )
+                if is_group_generated:
+                    preview_gray_rows.add(preview_index)
+                    export_gray_rows.add(export_index)
 
+            self._preview_gray_rows = preview_gray_rows
+            self._export_gray_rows = export_gray_rows
             return preview_headers, preview_rows, export_headers, export_rows
 
     def _build_product_headers(self, supplier_count: int) -> List[str]:
         headers = [
+            "Prod Group",
             "Brand",
             "Product Name",
             "Pack",
@@ -702,6 +1024,8 @@ class PriceReportsPage(QWidget):
 
     def _build_supplier_headers(self, show_prev: bool, other_count: int) -> List[str]:
         headers = [
+            "Supplier",
+            "Prod Group",
             "Our Product Name",
             "Pack",
             "Категория ABC",
@@ -757,6 +1081,7 @@ class PriceReportsPage(QWidget):
 
     def _build_product_row(self, product: Product, stock: Optional[ProductStock], options: Sequence[SupplierOption], supplier_count: int) -> List[object]:
         row: List[object] = [
+            getattr(product, "prod_group", None) or product.family or "",
             product.brand or "",
             product.name or "",
             self._display_pack(product.pack),
@@ -795,25 +1120,30 @@ class PriceReportsPage(QWidget):
 
     def _build_supplier_row(
         self,
+        report_supplier: Supplier,
         product: Product,
         stock: Optional[ProductStock],
-        chosen: SupplierOption,
+        chosen: Optional[SupplierOption],
         prev: Optional[SupplierOption],
         alternatives: Sequence[SupplierOption],
         show_prev: bool,
         other_count: int,
     ) -> List[object]:
         row: List[object] = [
+            report_supplier.name or "",
+            getattr(product, "prod_group", None) or product.family or "",
             product.name or "",
             self._display_pack(product.pack),
             product.abc_category or "-",
-            self._date_or_empty(chosen.price_date),
-            self._decimal_or_empty(chosen.supplier_price),
-            self._decimal_or_empty(self._pack_price(chosen.supplier_price, product.pack)),
-            chosen.currency,
-            self._round_fx_rate(chosen.fx_rate),
-            self._decimal_or_empty(chosen.cost_novo),
-            self._decimal_or_empty(chosen.full_cost),
+            self._date_or_empty(chosen.price_date if chosen else None),
+            self._decimal_or_empty(chosen.supplier_price if chosen else None),
+            self._decimal_or_empty(
+                self._pack_price(chosen.supplier_price, product.pack) if chosen else None
+            ),
+            chosen.currency if chosen else "",
+            self._round_fx_rate(chosen.fx_rate if chosen else None),
+            self._decimal_or_empty(chosen.cost_novo if chosen else None),
+            self._decimal_or_empty(chosen.full_cost if chosen else None),
         ]
         if show_prev:
             row.extend([
@@ -871,6 +1201,10 @@ class PriceReportsPage(QWidget):
         return row
 
     def _display_preview(self, headers: Sequence[str], rows: Sequence[Sequence[object]]):
+        # При построении отчета сохраняем рассчитанный порядок строк: основная
+        # позиция -> ее групповые аналоги. Сортировку пользователь сможет
+        # включить кликом по заголовку уже после заполнения таблицы.
+        self.preview_table.setSortingEnabled(False)
         self.preview_table.clear()
         self.preview_table.setColumnCount(len(headers))
         self.preview_table.setHorizontalHeaderLabels(list(headers))
@@ -884,15 +1218,21 @@ class PriceReportsPage(QWidget):
                     item.setTextAlignment(Qt.AlignCenter)
                 else:
                     item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                if row_index in self._preview_gray_rows:
+                    item.setBackground(QColor("#E8E8E8"))
                 self.preview_table.setItem(row_index, col_index, item)
 
         resize_columns_for_multiline_headers(self.preview_table)
+        self.preview_table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+        self.preview_table.setSortingEnabled(True)
 
     def clear_preview_table(self):
         self._preview_headers = []
         self._preview_rows = []
         self._export_headers = []
         self._export_rows = []
+        self._preview_gray_rows.clear()
+        self._export_gray_rows.clear()
         self.preview_table.clear()
         self.preview_table.setRowCount(0)
         self.preview_table.setColumnCount(0)
@@ -936,6 +1276,7 @@ class PriceReportsPage(QWidget):
                 report_mode=report_mode,
                 quick_order_months=self._export_quick_order_months,
                 safe_stock_months=self._export_safe_stock_months,
+                gray_row_indexes=sorted(self._export_gray_rows),
             )
         except Exception as e:
             self.show_error_message(f"Ошибка экспорта в Excel: {str(e)}")
@@ -949,6 +1290,7 @@ class PriceReportsPage(QWidget):
         report_mode: str,
         quick_order_months: int | None,
         safe_stock_months: int | None,
+        gray_row_indexes: list[int],
     ) -> None:
         self.ui.btn_ExportExcel.setEnabled(False)
         self.ui.btn_ExportExcel.setText("Формируется...")
@@ -963,6 +1305,7 @@ class PriceReportsPage(QWidget):
             report_mode=report_mode,
             quick_order_months=quick_order_months,
             safe_stock_months=safe_stock_months,
+            gray_row_indexes=gray_row_indexes,
         )
         self._excel_export_worker.moveToThread(self._excel_export_thread)
 
@@ -1189,17 +1532,26 @@ class PriceReportsPage(QWidget):
 
     def _build_export_file_name(self) -> str:
         now_text = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        if self.ui.radio_BySupplier.isChecked() and self.ui.cbo_Supplier.currentData():
-            supplier_name = self.ui.cbo_Supplier.currentText().strip().replace("/", "_")
-            return f"SupplierPrices_{supplier_name}_{now_text}.xlsx"
+        if self.ui.radio_BySupplier.isChecked():
+            with self.get_session() as session:
+                suppliers = self._get_selected_suppliers(session)
+            if len(suppliers) == 1:
+                supplier_name = self._clean_text(suppliers[0].name).replace("/", "_")
+                return f"SupplierPrices_{supplier_name}_{now_text}.xlsx"
+            if suppliers:
+                return f"SupplierPrices_{len(suppliers)}_suppliers_{now_text}.xlsx"
+            return f"SupplierPrices_{now_text}.xlsx"
         return f"ProductPrices_{now_text}.xlsx"
 
     def reset_filters(self):
+        self._selected_supplier_ids = None
+        self._selected_country_values = None
         self._selected_brand_values = None
         self._selected_family_values = None
         self._selected_product_ids = None
         self.ui.radio_ByProduct.setChecked(True)
-        self.ui.cbo_Supplier.setCurrentIndex(0)
+        self.ui.btn_FilterSupplier.setEnabled(False)
+        self.ui.btn_FilterCountry.setEnabled(False)
         self.ui.cbx_ShowPrevPrice.setChecked(False)
         if hasattr(self.ui, "spb_SuppPriceAge"):
             self.ui.spb_SuppPriceAge.setValue(3)

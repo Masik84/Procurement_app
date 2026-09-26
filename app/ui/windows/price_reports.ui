@@ -315,7 +315,7 @@ QScrollBar::handle:vertical {
                <item>
                 <widget class="QRadioButton" name="radio_BySupplier">
                  <property name="text">
-                  <string>Отчет по поставщику</string>
+                  <string>Отчет по поставщикам</string>
                  </property>
                 </widget>
                </item>
@@ -330,12 +330,35 @@ QScrollBar::handle:vertical {
              </widget>
             </item>
             <item>
-             <widget class="QComboBox" name="cbo_Supplier">
+             <widget class="QPushButton" name="btn_FilterSupplier">
               <property name="minimumSize">
                <size>
                 <width>0</width>
                 <height>25</height>
                </size>
+              </property>
+              <property name="text">
+               <string>все Поставщики</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QLabel" name="label_country">
+              <property name="text">
+               <string>Страна</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="btn_FilterCountry">
+              <property name="minimumSize">
+               <size>
+                <width>0</width>
+                <height>25</height>
+               </size>
+              </property>
+              <property name="text">
+               <string>все Страны</string>
               </property>
              </widget>
             </item>

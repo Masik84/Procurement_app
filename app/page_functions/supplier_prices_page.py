@@ -145,8 +145,7 @@ class SupplierPricesPage(QWidget):
             self.ui.spb_SuppPriceAge.setMinimum(0)
             self.ui.spb_SuppPriceAge.setMaximum(120)
             self.ui.spb_SuppPriceAge.setValue(3)
-        self.ui.line_NewSupplier.setEnabled(False)
-        self.ui.line_NewSupplier.setStyleSheet("background-color: #f2f2f2;")
+        self.toggle_new_supplier_field(False)
 
         self.ui.date_Price.setCalendarPopup(True)
         self.ui.date_Price.setDisplayFormat("dd.MM.yyyy")
@@ -256,6 +255,7 @@ class SupplierPricesPage(QWidget):
         self.ui.cbx_NewSupplier.blockSignals(False)
 
         self.ui.line_NewSupplier.clear()
+        self.ui.line_NewSupplierCountry.clear()
         self.set_combo_text(self.ui.cbo_SupplierRF, "нет")
         self.set_combo_text(self.ui.cbo_Currency, "-")
         self.ui.line_ExchangeRate.clear()
@@ -476,6 +476,7 @@ class SupplierPricesPage(QWidget):
         if checked:
             self.set_combo_text(self.ui.cbo_SupplName, "-")
             self.ui.line_NewSupplier.clear()
+            self.ui.line_NewSupplierCountry.clear()
             self.ui.line_ExchangeRate.clear()
             self.ui.line_Transport.clear()
             if hasattr(self.ui, "line_AgentFee"):
@@ -494,12 +495,19 @@ class SupplierPricesPage(QWidget):
         self.toggle_new_supplier_field(checked)
 
     def toggle_new_supplier_field(self, enabled: bool):
+        # Название и страна относятся только к созданию нового поставщика.
+        # Виджеты остаются в .ui, но в обычном режиме полностью скрыты.
+        for widget in (
+            self.ui.label_blank_new_supplier,
+            self.ui.line_NewSupplier,
+            self.ui.label_new_supplier_country,
+            self.ui.line_NewSupplierCountry,
+        ):
+            widget.setVisible(enabled)
         self.ui.line_NewSupplier.setEnabled(enabled)
+        self.ui.line_NewSupplierCountry.setEnabled(enabled)
         if enabled:
-            self.ui.line_NewSupplier.setStyleSheet("")
             self.ui.line_NewSupplier.setFocus()
-        else:
-            self.ui.line_NewSupplier.setStyleSheet("background-color: #f2f2f2;")
 
     def on_supplier_changed(self):
         supplier_id = self.ui.cbo_SupplName.currentData()
@@ -517,6 +525,7 @@ class SupplierPricesPage(QWidget):
         self.toggle_new_supplier_field(False)
 
         self.ui.line_NewSupplier.setText(supplier_data.name)
+        self.ui.line_NewSupplierCountry.setText(supplier_data.country or "")
         self.set_combo_text(self.ui.cbo_SupplierRF, "да" if supplier_data.is_rf else "нет")
         self.set_combo_text(self.ui.cbo_Currency, supplier_data.base_currency or "-")
         self.ui.line_ExchangeRate.setText(self.format_number(rate, 4) if rate is not None else "")
@@ -549,6 +558,10 @@ class SupplierPricesPage(QWidget):
         if not supplier_name and not self.ui.cbx_NewSupplier.isChecked():
             supplier_name = clean_multi_spaces(self.ui.cbo_SupplName.currentText())
 
+        country = clean_multi_spaces(self.ui.line_NewSupplierCountry.text())
+        if self.ui.cbx_NewSupplier.isChecked() and not country:
+            raise ValueError("Введите страну нового поставщика.")
+
         currency = clean_multi_spaces(self.ui.cbo_Currency.currentText()).upper()
         if currency == "-":
             currency = ""
@@ -556,6 +569,7 @@ class SupplierPricesPage(QWidget):
         return SupplierUpsertData(
             name=supplier_name,
             base_currency=currency,
+            country=country or None,
             transport_cost_per_l=self.parse_decimal_field(self.ui.line_Transport, "Транспорт"),
             agent_fee=self.parse_decimal_field(self.ui.line_AgentFee, "Agent fee") if hasattr(self.ui, "line_AgentFee") else Decimal("0"),
             reexport_percent=self.parse_percent_field(self.ui.line_Reexport, "Реэкспорт"),

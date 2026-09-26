@@ -9,7 +9,7 @@ import pythoncom
 import win32com.client as win32
 from sqlalchemy.orm import Session
 
-from app.db.models import CurrentSupplierPrice, PriceHistory, ProductStock, Supplier
+from app.db.models import CurrentSupplierPrice, PriceHistory, Product, ProductStock, Supplier
 from app.exports.excel_column_format import apply_standard_worksheet_format, excel_value_by_header
 from app.services.cost_calculation_service import CostCalculationService
 from app.services.price_repository import PriceRepository
@@ -171,6 +171,7 @@ class OrderPlanningExporter:
         quick_order_months = int(quick_order_months)
         safe_stock_months = int(safe_stock_months)
         return [
+            "Prod Group",
             "Brand",
             "Product Name",
             "Pack",
@@ -210,6 +211,28 @@ class OrderPlanningExporter:
             for row in display_rows
             if row.get("product_id")
         }
+        products_by_id = {
+            int(product.id): product
+            for product in (
+                self.session.query(Product).filter(Product.id.in_(product_ids)).all()
+                if product_ids else []
+            )
+        }
+
+        def row_sort_key(row: dict):
+            product_id = int(row["product_id"]) if row.get("product_id") else None
+            product = products_by_id.get(product_id) if product_id is not None else None
+            prod_group = (getattr(product, "prod_group", None) or getattr(product, "family", None) or row.get("prod_group") or "").strip()
+            family = (getattr(product, "family", None) or row.get("product_family") or "").strip()
+            pack = self._to_decimal(getattr(product, "pack", None) if product is not None else row.get("pack")) or Decimal("0")
+            return (
+                prod_group.casefold(),
+                family.casefold(),
+                -pack,
+                str(row.get("product_name") or "").casefold(),
+            )
+
+        display_rows = sorted((dict(row) for row in display_rows), key=row_sort_key)
 
         self._stocks_by_product = {
             int(stock.product_id): stock
@@ -267,7 +290,16 @@ class OrderPlanningExporter:
             stock = self._stocks_by_product.get(product_id) if product_id else None
             current_uc3 = self._current_uc3_by_product.get(product_id) if product_id else None
 
+            product = products_by_id.get(product_id) if product_id else None
+            prod_group = (
+                getattr(product, "prod_group", None)
+                or getattr(product, "family", None)
+                or row.get("prod_group")
+                or ""
+            )
+
             values = [
+                prod_group,
                 row.get("brand", ""),
                 row.get("product_name", ""),
                 row.get("pack"),
@@ -358,7 +390,8 @@ class OrderPlanningExporter:
 
             # Freeze through both order-horizon columns; current cost/target
             # columns and supplier blocks remain scrollable to the right.
-            apply_standard_worksheet_format(ws, headers, freeze_cell="M2", zoom=85)
+            apply_standard_worksheet_format(ws, headers, freeze_cell="N2", zoom=85)
+            ws.Columns("A:A").ColumnWidth = 7
 
             save_workbook_xlsx(wb, target_path)
             return target_path

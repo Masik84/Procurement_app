@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <ui version="4.0">
  <class>Form</class>
  <widget class="QWidget" name="Form">
@@ -25,11 +25,11 @@
 QWidget {
     background-color: #f8f8f2;
     color: #262626;
-    font: 10pt &quot;Tahoma&quot;;
+    font: 10pt "Tahoma";
 }
 
 #Title_label {
-    font: 16pt &quot;Tahoma&quot;;
+    font: 16pt "Tahoma";
     font-weight: 700;
     color: #2D2A26;
 }
@@ -38,7 +38,7 @@ QLabel#label_filter_title,
 QLabel#label_calc_title,
 QLabel#label_totals_title,
 QLabel#label_products_title {
-    font: 14pt &quot;Tahoma&quot;;
+    font: 14pt "Tahoma";
     font-weight: 700;
 }
 
@@ -463,7 +463,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="16" column="1">
+               <item row="17" column="1">
                 <widget class="QComboBox" name="cbo_Marking">
                  <property name="minimumSize">
                   <size>
@@ -489,7 +489,7 @@ QLabel#label_msg {
                  </item>
                 </widget>
                </item>
-               <item row="8" column="0">
+               <item row="9" column="0">
                 <widget class="QLabel" name="label_5">
                  <property name="minimumSize">
                   <size>
@@ -516,7 +516,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="9" column="1">
+               <item row="10" column="1">
                 <widget class="QComboBox" name="cbo_viaNovo">
                  <property name="minimumSize">
                   <size>
@@ -542,7 +542,7 @@ QLabel#label_msg {
                  </item>
                 </widget>
                </item>
-               <item row="7" column="0">
+               <item row="8" column="0">
                 <widget class="QLabel" name="label_2">
                  <property name="minimumSize">
                   <size>
@@ -563,7 +563,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="12" column="0">
+               <item row="13" column="0">
                 <widget class="QLabel" name="label_8">
                  <property name="minimumSize">
                   <size>
@@ -605,11 +605,34 @@ QLabel#label_msg {
                   </size>
                  </property>
                  <property name="text">
-                  <string/>
+                  <string />
+                 </property>
+                </widget>
+               </item>
+               <item row="5" column="0">
+                <widget class="QLabel" name="label_new_supplier_country">
+                 <property name="text">
+                  <string>Страна</string>
                  </property>
                 </widget>
                </item>
                <item row="5" column="1">
+                <widget class="QLineEdit" name="line_NewSupplierCountry">
+                 <property name="minimumSize">
+                  <size>
+                   <width>0</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                 <property name="maximumSize">
+                  <size>
+                   <width>16777215</width>
+                   <height>25</height>
+                  </size>
+                 </property>
+                </widget>
+               </item>
+               <item row="6" column="1">
                 <widget class="QComboBox" name="cbo_SupplierRF">
                  <property name="minimumSize">
                   <size>
@@ -647,11 +670,11 @@ QLabel#label_msg {
                   <string notr="true">color: rgb(0, 0, 0);</string>
                  </property>
                  <property name="text">
-                  <string/>
+                  <string />
                  </property>
                 </widget>
                </item>
-               <item row="18" column="1">
+               <item row="19" column="1">
                 <widget class="QDateEdit" name="date_Price">
                  <property name="minimumSize">
                   <size>
@@ -667,7 +690,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="6" column="0">
+               <item row="7" column="0">
                 <widget class="QLabel" name="label">
                  <property name="minimumSize">
                   <size>
@@ -703,7 +726,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="9" column="0">
+               <item row="10" column="0">
                 <widget class="QLabel" name="label_6">
                  <property name="minimumSize">
                   <size>
@@ -730,7 +753,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="7" column="1">
+               <item row="8" column="1">
                 <widget class="QLineEdit" name="line_ExchangeRate">
                  <property name="minimumSize">
                   <size>
@@ -746,7 +769,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="19" column="0">
+               <item row="20" column="0">
                 <widget class="QLabel" name="label_13">
                  <property name="minimumSize">
                   <size>
@@ -773,7 +796,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="5" column="0">
+               <item row="6" column="0">
                 <widget class="QLabel" name="label_10">
                  <property name="minimumSize">
                   <size>
@@ -800,7 +823,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="19" column="1">
+               <item row="20" column="1">
                 <widget class="QComboBox" name="cbo_Rating">
                  <property name="minimumSize">
                   <size>
@@ -826,7 +849,7 @@ QLabel#label_msg {
                  </item>
                 </widget>
                </item>
-               <item row="12" column="1">
+               <item row="13" column="1">
                 <widget class="QLineEdit" name="line_FXMarkup">
                  <property name="minimumSize">
                   <size>
@@ -859,14 +882,14 @@ QLabel#label_msg {
                   </font>
                  </property>
                  <property name="styleSheet">
-                  <string notr="true"/>
+                  <string notr="true" />
                  </property>
                  <property name="text">
                   <string>Назв. Поставщика</string>
                  </property>
                 </widget>
                </item>
-               <item row="16" column="0">
+               <item row="17" column="0">
                 <widget class="QLabel" name="label_3">
                  <property name="minimumSize">
                   <size>
@@ -893,7 +916,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="8" column="1">
+               <item row="9" column="1">
                 <widget class="QLineEdit" name="line_Transport">
                  <property name="minimumSize">
                   <size>
@@ -909,7 +932,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="6" column="1">
+               <item row="7" column="1">
                 <widget class="QComboBox" name="cbo_Currency">
                  <property name="minimumSize">
                   <size>
@@ -925,7 +948,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="17" column="1">
+               <item row="18" column="1">
                 <widget class="QComboBox" name="cbo_History">
                  <property name="minimumSize">
                   <size>
@@ -951,7 +974,7 @@ QLabel#label_msg {
                  </item>
                 </widget>
                </item>
-               <item row="10" column="1">
+               <item row="11" column="1">
                 <widget class="QLineEdit" name="line_Reexport">
                  <property name="minimumSize">
                   <size>
@@ -967,14 +990,14 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="11" column="0">
+               <item row="12" column="0">
                 <widget class="QLabel" name="label_Insurance">
                  <property name="text">
                   <string>Insurance %</string>
                  </property>
                 </widget>
                </item>
-               <item row="11" column="1">
+               <item row="12" column="1">
                 <widget class="QLineEdit" name="line_Insurance">
                  <property name="minimumSize">
                   <size>
@@ -990,7 +1013,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="18" column="0">
+               <item row="19" column="0">
                 <widget class="QLabel" name="label_12">
                  <property name="minimumSize">
                   <size>
@@ -1017,7 +1040,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="15" column="1">
+               <item row="16" column="1">
                 <widget class="QComboBox" name="cbo_Customs">
                  <property name="minimumSize">
                   <size>
@@ -1043,7 +1066,7 @@ QLabel#label_msg {
                  </item>
                 </widget>
                </item>
-               <item row="17" column="0">
+               <item row="18" column="0">
                 <widget class="QLabel" name="label_11">
                  <property name="minimumSize">
                   <size>
@@ -1070,7 +1093,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="10" column="0">
+               <item row="11" column="0">
                 <widget class="QLabel" name="label_7">
                  <property name="minimumSize">
                   <size>
@@ -1097,7 +1120,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="15" column="0">
+               <item row="16" column="0">
                 <widget class="QLabel" name="label_9">
                  <property name="minimumSize">
                   <size>
@@ -1140,7 +1163,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="14" column="1">
+               <item row="15" column="1">
                 <widget class="QLineEdit" name="line_AgentFee">
                  <property name="minimumSize">
                   <size>
@@ -1156,15 +1179,14 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="14" column="0">
+               <item row="15" column="0">
                 <widget class="QLabel" name="label_16">
                  <property name="text">
                   <string>Agent Fee</string>
                  </property>
                 </widget>
                </item>
-              
-               <item row="13" column="0">
+               <item row="14" column="0">
                 <widget class="QLabel" name="label_FXMarkupAbs">
                  <property name="minimumSize">
                   <size>
@@ -1191,7 +1213,7 @@ QLabel#label_msg {
                  </property>
                 </widget>
                </item>
-               <item row="13" column="1">
+               <item row="14" column="1">
                 <widget class="QLineEdit" name="line_FXMarkupAbs">
                  <property name="minimumSize">
                   <size>
@@ -1694,7 +1716,7 @@ QLabel#label_msg {
   </layout>
  </widget>
  <resources>
-  <include location="../resource.qrc"/>
+  <include location="../resource.qrc" />
  </resources>
- <connections/>
+ <connections />
 </ui>

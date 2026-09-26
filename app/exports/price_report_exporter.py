@@ -190,6 +190,25 @@ class PriceReportExporter:
         data_range = ws.Range(f"A2:{last_col}{rows_count + 1}")
         data_range.VerticalAlignment = self._xl_vcenter
 
+    def _paint_gray_rows(
+        self,
+        ws,
+        headers_count: int,
+        gray_row_indexes: Sequence[int] | None,
+    ) -> None:
+        if not gray_row_indexes or headers_count <= 0:
+            return
+        last_col = self._excel_column_letter(headers_count)
+        gray_color = self._rgb(232, 232, 232)
+        for row_index in gray_row_indexes:
+            try:
+                excel_row = int(row_index) + 2
+            except (TypeError, ValueError):
+                continue
+            if excel_row < 2:
+                continue
+            ws.Range(f"A{excel_row}:{last_col}{excel_row}").Interior.Color = gray_color
+
     def _apply_supplier_price_like_widths_until_damaged(self, ws, header_map: dict[str, int]) -> None:
         # Ширины взяты из SupplierPriceExporter.export_calculated для блока до Damaged.
         for header in ("Supplier Product Name", "Our Product Name", "Product Name"):
@@ -221,7 +240,7 @@ class PriceReportExporter:
         header_map = self._header_map(headers)
         ws.Rows(1).RowHeight = 45
 
-        self._color_header_range(ws, header_map, "Brand", "Категория ABC", self._rgb(205, 205, 205))
+        self._color_header_range(ws, header_map, "Prod Group", "Категория ABC", self._rgb(205, 205, 205))
         self._color_header_range(ws, header_map, "Дистр цена", "curr Landed cost", self._rgb(192, 0, 0), self._rgb(255, 255, 255))
         self._color_header_range(ws, header_map, "Stock", "Purchase Order", self._rgb(33, 92, 152), self._rgb(255, 255, 255))
         self._color_header_range(ws, header_map, "Order IS", "Stock IS", self._rgb(192, 0, 0), self._rgb(255, 255, 255))
@@ -239,6 +258,7 @@ class PriceReportExporter:
             self._format_columns_by_headers(ws, header_map, [f"FX rate_{idx}"], FORMATS.FX_INTEGER)
             idx += 1
 
+        self._set_width_by_header(ws, header_map, "Prod Group", 22.00)
         self._set_width_by_header(ws, header_map, "Brand", 13.00)
         self._set_width_by_header(ws, header_map, "Product Name", 31.14)
         self._set_width_by_header(ws, header_map, "Pack", 8.43)
@@ -254,14 +274,14 @@ class PriceReportExporter:
         self._format_fx_headers(ws, header_map)
 
         ws.Range(f"A1:{self._excel_column_letter(len(headers))}1").AutoFilter(1)
-        self._freeze(ws, split_column=8)
+        self._freeze(ws, split_column=9)
 
     def _format_supplier_report(self, ws, headers: Sequence[str], rows_count: int) -> None:
         header_map = self._header_map(headers)
         ws.Rows(1).RowHeight = 60
 
         first_gray_end = "Full Cost Msk (prev)" if "Full Cost Msk (prev)" in header_map else "Full Cost Msk"
-        self._color_header_range(ws, header_map, "Our Product Name", first_gray_end, self._rgb(205, 205, 205))
+        self._color_header_range(ws, header_map, "Supplier", first_gray_end, self._rgb(205, 205, 205))
         self._color_header_range(ws, header_map, "Дистр цена", "curr Landed cost", self._rgb(192, 0, 0), self._rgb(255, 255, 255))
         self._color_header_range(ws, header_map, "Best Suppl", "Currency Best1", self._rgb(0, 176, 240))
         self._color_header_range(ws, header_map, "Best Suppl 2", "Currency Best2", self._rgb(146, 208, 80))
@@ -285,6 +305,8 @@ class PriceReportExporter:
             self._format_columns_by_headers(ws, header_map, [f"FX rate_{idx}"], FORMATS.FX_INTEGER)
             idx += 1
 
+        self._set_width_by_header(ws, header_map, "Supplier", 18.00)
+        self._set_width_by_header(ws, header_map, "Prod Group", 22.00)
         self._set_width_by_header(ws, header_map, "Our Product Name", 31.14)
         self._set_width_by_header(ws, header_map, "Pack", 8.43)
         self._set_width_by_header(ws, header_map, "Категория ABC", 12.0)
@@ -335,6 +357,7 @@ class PriceReportExporter:
         report_mode: str,
         quick_order_months: int | None = None,
         safe_stock_months: int | None = None,
+        gray_row_indexes: Sequence[int] | None = None,
     ) -> Path:
         output_path = Path(output_path)
         if output_path.suffix.lower() != ".xlsx":
@@ -369,6 +392,7 @@ class PriceReportExporter:
             else:
                 self._format_product_report(ws, headers, len(rows))
 
+            self._paint_gray_rows(ws, len(headers), gray_row_indexes)
             save_workbook_xlsx(wb, target_path)
             return target_path
         finally:

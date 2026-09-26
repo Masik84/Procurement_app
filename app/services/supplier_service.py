@@ -30,6 +30,7 @@ class SupplierUpsertData:
     rating_calc: bool = True
     marks_for_us: bool = False
     is_rf: bool = False
+    country: Optional[str] = None
 
 
 class SupplierService:
@@ -107,6 +108,8 @@ class SupplierService:
     def validate_supplier_data(self, data: SupplierUpsertData) -> SupplierUpsertData:
         name = self.normalize_supplier_name(data.name)
         currency = self.normalize_currency_code(data.base_currency)
+        country = clean_multi_spaces(data.country) if data.country is not None else None
+        country = country or None
 
         if not name:
             raise ValueError("Введите название поставщика.")
@@ -117,6 +120,7 @@ class SupplierService:
         return SupplierUpsertData(
             name=name,
             base_currency=currency,
+            country=country,
             transport_cost_per_l=Decimal(str(data.transport_cost_per_l)),
             reexport_percent=Decimal(str(data.reexport_percent)),
             insurance_percent=Decimal(str(data.insurance_percent)),
@@ -157,6 +161,7 @@ class SupplierService:
         supplier = Supplier(
             name=validated.name,
             base_currency=validated.base_currency,
+            country=validated.country,
             transport_cost_per_l=validated.transport_cost_per_l,
             reexport_percent=validated.reexport_percent,
             insurance_percent=validated.insurance_percent,
@@ -183,6 +188,8 @@ class SupplierService:
 
         supplier.name = validated.name
         supplier.base_currency = validated.base_currency
+        if data.country is not None:
+            supplier.country = validated.country
         supplier.transport_cost_per_l = validated.transport_cost_per_l
         supplier.reexport_percent = validated.reexport_percent
         supplier.insurance_percent = validated.insurance_percent
@@ -234,6 +241,7 @@ class SupplierService:
         return SupplierUpsertData(
             name=supplier.name,
             base_currency=supplier.base_currency,
+            country=supplier.country,
             transport_cost_per_l=supplier.transport_cost_per_l,
             reexport_percent=supplier.reexport_percent,
             insurance_percent=supplier.insurance_percent,
