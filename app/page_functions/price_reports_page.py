@@ -703,10 +703,50 @@ class PriceReportsPage(QWidget):
         products = self._apply_selected_filters_to_products(products)
         return self._sort_products(products)
 
+    def _prepare_group_candidate_pool(
+        self,
+        session,
+        source_products: Sequence[Product],
+    ) -> tuple[Dict[str, List[Product]], Dict[Decimal, str]]:
+        """Load all products for required Prod Groups and Pack types once."""
+        prod_groups = {
+            self._clean_text(getattr(product, "prod_group", None) or product.family).upper()
+            for product in source_products
+            if product.id is not None and product.pack is not None
+        }
+        prod_groups.discard("")
+
+        candidates = (
+            session.query(Product)
+            .filter(Product.prod_group.in_(sorted(prod_groups)))
+            .order_by(Product.prod_group.asc(), Product.name.asc(), Product.id.asc())
+            .all()
+            if prod_groups else []
+        )
+        candidate_pool: Dict[str, List[Product]] = {}
+        for candidate in candidates:
+            prod_group = self._clean_text(getattr(candidate, "prod_group", None)).upper()
+            if prod_group:
+                candidate_pool.setdefault(prod_group, []).append(candidate)
+
+        pack_type_by_volume: Dict[Decimal, str] = {}
+        for pack_type in session.query(PackType).all():
+            if pack_type.volume is None:
+                continue
+            try:
+                pack_type_by_volume[self._to_decimal(pack_type.volume)] = self._clean_text(pack_type.name).casefold()
+            except Exception:
+                continue
+
+        return candidate_pool, pack_type_by_volume
+
     def _build_group_candidates_by_source(
         self,
         session,
         source_products: Sequence[Product],
+        *,
+        candidate_pool: Optional[Dict[str, List[Product]]] = None,
+        pack_type_by_volume: Optional[Dict[Decimal, str]] = None,
     ) -> Dict[int, List[Product]]:
         source_product_ids = {
             int(product.id)
@@ -716,47 +756,40 @@ class PriceReportsPage(QWidget):
         if not source_product_ids:
             return {}
 
-        cost_calculation = CostCalculationService(session)
-        result: Dict[int, List[Product]] = {}
+        if candidate_pool is None or pack_type_by_volume is None:
+            candidate_pool, pack_type_by_volume = self._prepare_group_candidate_pool(
+                session, source_products
+            )
 
+        result: Dict[int, List[Product]] = {}
         for source_product in source_products:
-            if source_product.id is None:
+            if source_product.id is None or source_product.pack is None:
                 continue
             prod_group = self._clean_text(
                 getattr(source_product, "prod_group", None) or source_product.family
             ).upper()
-            if not prod_group or source_product.pack is None:
+            if not prod_group:
                 continue
 
-            source_pack_type = cost_calculation.get_pack_type_by_volume(source_product.pack)
-            if source_pack_type is None:
+            try:
+                source_pack = self._to_decimal(source_product.pack)
+            except Exception:
                 continue
-
-            source_pack = self._to_decimal(source_product.pack)
-            source_pack_type_name = self._clean_text(source_pack_type.name).casefold()
-            candidates = (
-                session.query(Product)
-                .filter(
-                    Product.prod_group == prod_group,
-                    Product.id != int(source_product.id),
-                )
-                .order_by(Product.name.asc(), Product.id.asc())
-                .all()
-            )
+            source_pack_type_name = pack_type_by_volume.get(source_pack)
+            if not source_pack_type_name:
+                continue
 
             group_products: List[Product] = []
-            for candidate in candidates:
+            for candidate in candidate_pool.get(prod_group, []):
                 if candidate.id is None or int(candidate.id) in source_product_ids:
                     continue
                 try:
-                    if self._to_decimal(candidate.pack) != source_pack:
-                        continue
+                    candidate_pack = self._to_decimal(candidate.pack)
                 except Exception:
                     continue
-                candidate_pack_type = cost_calculation.get_pack_type_by_volume(candidate.pack)
-                if candidate_pack_type is None:
+                if candidate_pack != source_pack:
                     continue
-                if self._clean_text(candidate_pack_type.name).casefold() != source_pack_type_name:
+                if pack_type_by_volume.get(candidate_pack) != source_pack_type_name:
                     continue
                 group_products.append(candidate)
 
@@ -851,6 +884,7 @@ class PriceReportsPage(QWidget):
                 if product.id is not None
             }
 
+            all_group_sources_by_id: Dict[int, Product] = {}
             for supplier in suppliers:
                 source_products = [
                     product for product in products
@@ -858,7 +892,22 @@ class PriceReportsPage(QWidget):
                     and (int(supplier.id), int(product.id)) in latest_base_records
                 ]
                 supplier_sources[int(supplier.id)] = source_products
-                group_map = self._build_group_candidates_by_source(session, source_products)
+                for product in source_products:
+                    all_group_sources_by_id[int(product.id)] = product
+
+            # One group-product query and one PackType query for all selected
+            # suppliers.  Supplier-specific maps below are built in memory.
+            candidate_pool, pack_type_by_volume = self._prepare_group_candidate_pool(
+                session, list(all_group_sources_by_id.values())
+            )
+            for supplier in suppliers:
+                source_products = supplier_sources.get(int(supplier.id), [])
+                group_map = self._build_group_candidates_by_source(
+                    session,
+                    source_products,
+                    candidate_pool=candidate_pool,
+                    pack_type_by_volume=pack_type_by_volume,
+                )
                 supplier_groups[int(supplier.id)] = group_map
                 for candidates in group_map.values():
                     for candidate in candidates:

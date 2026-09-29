@@ -33,6 +33,17 @@ except ModuleNotFoundError as exc:
 else:
     install_supplier_price_performance_fixes()
 
+# Supplier Price follow-up:
+# - bulk import/matching into staging;
+# - compatibility between optimized group CostCalc and the no-IS adapter.
+try:
+    from app.supplier_price_runtime_fixes import install_supplier_price_runtime_fixes
+except ModuleNotFoundError as exc:
+    if exc.name != "PySide6":
+        raise
+else:
+    install_supplier_price_runtime_fixes()
+
 # Excel rule: every uC3 column, regardless of its concrete caption variant,
 # must be exported as a numeric value with integer display format.
 from app.uc3_excel_format import install_uc3_integer_format

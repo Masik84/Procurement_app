@@ -34,6 +34,7 @@ class SupplierPriceExporter:
         self.cost_calculation = CostCalculationService(session)
         self.price_repository = PriceRepository(session)
         self.currency_cost_service = SupplierCurrencyCostService(session)
+        self._target_price_service = None
 
         self._xl_center = -4108
         self._xl_vcenter = -4160
@@ -511,9 +512,11 @@ class SupplierPriceExporter:
             agent_fee = getattr(supplier, "agent_fee", None)
 
         try:
-            from app.services.target_price_service import TargetPriceService
+            if self._target_price_service is None:
+                from app.services.target_price_service import TargetPriceService
+                self._target_price_service = TargetPriceService(self.session)
 
-            _cost_novo_wvat, target_price_l = TargetPriceService(self.session).reverse_calculate_target_price(
+            _cost_novo_wvat, target_price_l = self._target_price_service.reverse_calculate_target_price(
                 target_supplier_id=int(supplier.id),
                 product_id=int(product_id),
                 full_cost_msk=full_cost_source,
@@ -689,6 +692,7 @@ class SupplierPriceExporter:
         return prev_snapshot.price, prev_cost_novo, prev_full_cost, prev_snapshot.price_date
 
 
+
     def _get_latest_avg_sales_month(self, product_id: int):
         if not product_id:
             return None
@@ -731,8 +735,11 @@ class SupplierPriceExporter:
         pack: object,
         quick_months: int | None,
         order_months: int | None,
+        avg_sales_month=None,
+        use_preloaded_avg: bool = False,
     ) -> dict:
-        avg_sales_month = self._get_latest_avg_sales_month(product_id)
+        if not use_preloaded_avg:
+            avg_sales_month = self._get_latest_avg_sales_month(product_id)
 
         if avg_sales_month is None:
             return {
@@ -760,42 +767,72 @@ class SupplierPriceExporter:
         }
 
 
-    def _get_group_products_for_costcalc(self, source_product: Product, source_product_ids: set[int]) -> list[Product]:
-        prod_group = clean_multi_spaces(getattr(source_product, "prod_group", None) or source_product.family).upper()
-        if not prod_group or source_product.pack is None:
-            return []
+    def _build_group_candidates_for_costcalc(
+        self,
+        source_products: list[Product],
+        source_product_ids: set[int],
+    ) -> dict[int, list[Product]]:
+        """Load all Prod Group candidates in one query and match them in memory."""
+        sources: dict[int, tuple[Product, str]] = {}
+        prod_groups: set[str] = set()
+        for source_product in source_products:
+            if source_product.id is None or source_product.pack is None:
+                continue
+            prod_group = clean_multi_spaces(
+                getattr(source_product, "prod_group", None) or source_product.family
+            ).upper()
+            if not prod_group:
+                continue
+            source_id = int(source_product.id)
+            sources[source_id] = (source_product, prod_group)
+            prod_groups.add(prod_group)
 
-        source_pack_type = self.cost_calculation.get_pack_type_by_volume(source_product.pack)
-        if source_pack_type is None:
-            return []
+        if not sources:
+            return {}
 
-        source_pack = self._to_decimal(source_product.pack)
-        source_pack_type_name = clean_multi_spaces(source_pack_type.name).casefold()
         candidates = (
             self.session.query(Product)
-            .filter(
-                Product.prod_group == prod_group,
-                Product.id != int(source_product.id),
-            )
-            .order_by(Product.name.asc(), Product.id.asc())
+            .filter(Product.prod_group.in_(sorted(prod_groups)))
+            .order_by(Product.prod_group.asc(), Product.name.asc(), Product.id.asc())
             .all()
         )
-
-        result: list[Product] = []
+        candidates_by_group: dict[str, list[Product]] = {}
         for candidate in candidates:
-            if int(candidate.id) in source_product_ids:
+            prod_group = clean_multi_spaces(getattr(candidate, "prod_group", None)).upper()
+            if prod_group:
+                candidates_by_group.setdefault(prod_group, []).append(candidate)
+
+        result: dict[int, list[Product]] = {}
+        for source_id, (source_product, prod_group) in sources.items():
+            source_pack_type = self.cost_calculation.get_pack_type_by_volume(source_product.pack)
+            if source_pack_type is None:
                 continue
             try:
-                if self._to_decimal(candidate.pack) != source_pack:
-                    continue
+                source_pack = self._to_decimal(source_product.pack)
             except Exception:
                 continue
-            candidate_pack_type = self.cost_calculation.get_pack_type_by_volume(candidate.pack)
-            if candidate_pack_type is None:
-                continue
-            if clean_multi_spaces(candidate_pack_type.name).casefold() != source_pack_type_name:
-                continue
-            result.append(candidate)
+            source_pack_type_name = clean_multi_spaces(source_pack_type.name).casefold()
+
+            group_products: list[Product] = []
+            for candidate in candidates_by_group.get(prod_group, []):
+                candidate_id = int(candidate.id)
+                if candidate_id == source_id or candidate_id in source_product_ids:
+                    continue
+                try:
+                    if self._to_decimal(candidate.pack) != source_pack:
+                        continue
+                except Exception:
+                    continue
+                candidate_pack_type = self.cost_calculation.get_pack_type_by_volume(candidate.pack)
+                if candidate_pack_type is None:
+                    continue
+                if clean_multi_spaces(candidate_pack_type.name).casefold() != source_pack_type_name:
+                    continue
+                group_products.append(candidate)
+
+            if group_products:
+                result[source_id] = group_products
+
         return result
 
     def _get_best_two_from_price_rows(self, product_id: int, price_rows) -> tuple[dict, dict]:
@@ -827,6 +864,10 @@ class SupplierPriceExporter:
         stock,
         uc3_target_row,
         price_rows,
+        current_supplier: Supplier | None,
+        current_price_row=None,
+        previous_price_row=None,
+        avg_sales_month=None,
         vat,
         quick_months: int | None,
         order_months: int | None,
@@ -835,6 +876,57 @@ class SupplierPriceExporter:
         target_uc3 = getattr(uc3_target_row, "target_uc3", None) if uc3_target_row else None
         walk_away_uc3 = getattr(uc3_target_row, "walk_away_uc3", None) if uc3_target_row else None
         best1, best2 = self._get_best_two_from_price_rows(product_id, price_rows)
+
+        current_calc = None
+        current_price = None
+        current_price_date = None
+        current_currency = ""
+        current_fx_rate = None
+        current_cost_novo = None
+        current_full_cost = None
+        current_price_pack = None
+
+        if current_supplier is not None and getattr(current_supplier, "id", None) and current_price_row is not None:
+            current_price = current_price_row.price
+            current_price_date = current_price_row.price_date
+            current_currency = current_price_row.currency_code or getattr(current_supplier, "base_currency", "") or ""
+            current_price_pack = self._calc_pack_price(current_price, product.pack)
+            current_calc = self._calc_supplier_costs_from_price_record(
+                supplier_id=int(current_supplier.id),
+                product_id=product_id,
+                supplier_price=current_price,
+                price_currency_code=current_currency,
+            )
+            if current_calc is not None:
+                current_fx_rate = current_calc.fx_rate_used
+                current_cost_novo = current_calc.cost_novo_wvat
+                current_full_cost = current_calc.full_cost_msk
+            else:
+                _currency, current_fx_rate = self._get_currency_rate(current_currency)
+
+        prev_price = None
+        prev_cost_novo = None
+        prev_full_cost = None
+        prev_price_date = None
+        if previous_price_row is not None and current_supplier is not None and getattr(current_supplier, "id", None):
+            prev_price = previous_price_row.price
+            prev_price_date = previous_price_row.price_date
+            prev_calc = self._calc_supplier_costs_from_price_record(
+                supplier_id=int(current_supplier.id),
+                product_id=product_id,
+                supplier_price=prev_price,
+                price_currency_code=previous_price_row.currency,
+            )
+            if prev_calc is not None:
+                prev_cost_novo = prev_calc.cost_novo_wvat
+                prev_full_cost = prev_calc.full_cost_msk
+
+        abs_change = None
+        if current_price is not None and prev_price is not None:
+            try:
+                abs_change = self._round_two(self._to_decimal(current_price) - self._to_decimal(prev_price))
+            except Exception:
+                abs_change = None
 
         transit_total = None
         if stock is not None:
@@ -846,14 +938,51 @@ class SupplierPriceExporter:
             pack=product.pack,
             quick_months=quick_months,
             order_months=order_months,
+            avg_sales_month=avg_sales_month,
+            use_preloaded_avg=True,
         )
         min_uc3_stock = self._calc_uc3_from_full_cost(
             stock=stock,
             full_cost=getattr(stock, "landed_cost", None) if stock else None,
             vat=vat,
         )
+        current_uc3 = self._calc_uc3_from_full_cost(stock=stock, full_cost=current_full_cost, vat=vat)
         best_uc3 = self._calc_uc3_from_full_cost(stock=stock, full_cost=best1.get("price"), vat=vat)
         best2_uc3 = self._calc_uc3_from_full_cost(stock=stock, full_cost=best2.get("price"), vat=vat)
+
+        target_price_l = None
+        if current_supplier is not None and getattr(current_supplier, "id", None):
+            target_price_l = self._calc_target_price_l_for_export(
+                supplier=current_supplier,
+                product_id=product_id,
+                stock=stock,
+                calc_row=current_calc,
+                target_uc3=target_uc3,
+                vat=vat,
+            )
+            if target_price_l is not None and current_price is not None:
+                supplier_price_l = self._to_decimal(current_price)
+                target_price_l = self._to_decimal(target_price_l)
+                if (
+                    supplier_price_l.is_finite()
+                    and target_price_l.is_finite()
+                    and supplier_price_l > 0
+                    and target_price_l > supplier_price_l
+                ):
+                    target_price_l = (supplier_price_l * Decimal("0.97")).quantize(
+                        Decimal("0.0001"), rounding=ROUND_HALF_UP
+                    )
+                elif not target_price_l.is_finite():
+                    target_price_l = None
+
+        markup_from_supplier = None
+        if current_uc3 is not None and current_full_cost is not None:
+            try:
+                d_full_cost = self._to_decimal(current_full_cost)
+                if d_full_cost != 0:
+                    markup_from_supplier = (current_uc3 * (Decimal("1") + vat)) / d_full_cost
+            except Exception:
+                markup_from_supplier = None
 
         return {
             "Supplier Article": "",
@@ -864,24 +993,25 @@ class SupplierPriceExporter:
             "Qty, pcs": None,
             "Volume, L": None,
             "Target price (for suppl)": None,
-            "Price, L": None,
-            "Price, pack": None,
-            "Currency": "",
-            "FX rate": "",
-            "Cost Novo with VAT": None,
-            "Full Cost Msk": None,
-            "uC3": None,
-            "Target price, L": None,
+            "Price, L": self._excel_value(current_price),
+            "Price, pack": self._excel_value(current_price_pack),
+            "Currency": current_currency,
+            "FX rate": self._round_fx_rate(current_fx_rate),
+            "Cost Novo with VAT": self._excel_value(current_cost_novo),
+            "Full Cost Msk": self._excel_value(current_full_cost),
+            "uC3": self._excel_value(current_uc3),
+            "Target price, L": self._excel_value(target_price_l),
             "uC3 PY": self._excel_value(getattr(stock, "uc3_py", None) if stock else None),
             "uC3 3 mnth": self._excel_value(getattr(stock, "uc3_3m", None) if stock else None),
             "Target uC3": target_uc3,
             "Walk-Away uC3": walk_away_uc3,
-            "Markup % (from suppl price)": None,
-            "last update (prev)": None,
-            "Price, L (prev)": None,
-            "abs Change": None,
-            "Cost Novo with VAT (prev)": None,
-            "Full Cost Msk (prev)": None,
+            "Markup % (from suppl price)": self._excel_value(markup_from_supplier),
+            "last update": current_price_date,
+            "last update (prev)": prev_price_date,
+            "Price, L (prev)": self._excel_value(prev_price),
+            "abs Change": self._excel_value(abs_change),
+            "Cost Novo with VAT (prev)": self._excel_value(prev_cost_novo),
+            "Full Cost Msk (prev)": self._excel_value(prev_full_cost),
             "Дистр цена": self._excel_value(stock.distr_price if stock else None),
             "Промо цена": self._excel_value(stock.promo_price if stock else None),
             "curr LPC": self._excel_value(stock.lpc if stock else None),
@@ -951,15 +1081,25 @@ class SupplierPriceExporter:
             if temp_row.selected_product_id is not None
         }
 
-        group_candidates_by_source: dict[int, list[Product]] = {}
-        group_candidate_ids: set[int] = set()
+        # PackType/MarkingRate are used by group matching and later cost calculations.
+        # Warm them once before group expansion so no lookup inside the row loop hits DB.
+        self.cost_calculation.preload_reference_data(product_ids=source_product_ids)
+
+        group_source_products: dict[int, Product] = {}
         for temp_row, _calc, product, _stock, _supplier in rows:
             if product is None or self._positive_decimal_or_none(temp_row.price) is None:
                 continue
-            candidates = self._get_group_products_for_costcalc(product, source_product_ids)
-            if candidates:
-                group_candidates_by_source[int(product.id)] = candidates
-                group_candidate_ids.update(int(candidate.id) for candidate in candidates)
+            group_source_products[int(product.id)] = product
+
+        group_candidates_by_source = self._build_group_candidates_for_costcalc(
+            list(group_source_products.values()),
+            source_product_ids,
+        )
+        group_candidate_ids = {
+            int(candidate.id)
+            for candidates in group_candidates_by_source.values()
+            for candidate in candidates
+        }
 
         all_product_ids = source_product_ids | group_candidate_ids
         uc3_targets = ProductUc3Service(self.session).get_current_map(all_product_ids)
@@ -970,12 +1110,118 @@ class SupplierPriceExporter:
                 if all_product_ids else []
             )
         }
-        group_price_rows = self.price_repository.get_supplier_prices_for_products(
+        # Load all effective prices for group products in two bulk queries.
+        # This replaces the former per-group-row current-price lookups.
+        group_all_price_rows = self.price_repository.get_supplier_prices_for_products(
             group_candidate_ids,
-            only_rating_calc=True,
+            only_rating_calc=False,
             min_price_date=min_price_date,
-            exclude_manual=True,
+            exclude_manual=False,
         )
+        rating_supplier_ids = {
+            int(supplier_id)
+            for supplier_id, in self.session.query(Supplier.id).filter(
+                Supplier.rating_calc.is_(True),
+                Supplier.name != "Manual",
+            ).all()
+        }
+        group_price_rows = {
+            product_id: [
+                price_row for price_row in price_rows
+                if int(price_row.supplier_id) in rating_supplier_ids
+            ]
+            for product_id, price_rows in group_all_price_rows.items()
+        }
+
+        batch_supplier_ids = {
+            int(temp_row.supplier_id)
+            for temp_row, _calc, _product, _stock, _supplier in rows
+            if temp_row.supplier_id is not None
+        }
+        group_current_price_by_pair = {
+            (int(price_row.supplier_id), int(product_id)): price_row
+            for product_id, price_rows in group_all_price_rows.items()
+            for price_row in price_rows
+            if int(price_row.supplier_id) in batch_supplier_ids
+        }
+
+        # Previous price for the same supplier is also loaded once for all
+        # generated group products instead of one SQL query per output row.
+        history_by_pair: dict[tuple[int, int], list[PriceHistory]] = {}
+        if group_candidate_ids and batch_supplier_ids:
+            history_rows = (
+                self.session.query(PriceHistory)
+                .filter(
+                    PriceHistory.product_id.in_(group_candidate_ids),
+                    PriceHistory.supplier_id.in_(batch_supplier_ids),
+                    PriceHistory.price.isnot(None),
+                )
+                .order_by(
+                    PriceHistory.supplier_id.asc(),
+                    PriceHistory.product_id.asc(),
+                    PriceHistory.price_date.desc(),
+                    PriceHistory.id.desc(),
+                )
+                .all()
+            )
+            for history_row in history_rows:
+                history_by_pair.setdefault(
+                    (int(history_row.supplier_id), int(history_row.product_id)), []
+                ).append(history_row)
+
+        group_previous_price_by_pair: dict[tuple[int, int], PriceHistory] = {}
+        for pair, current_price_row in group_current_price_by_pair.items():
+            current_date = current_price_row.price_date
+            if current_date is None:
+                continue
+            for history_row in history_by_pair.get(pair, []):
+                if history_row.price_date is not None and history_row.price_date < current_date:
+                    group_previous_price_by_pair[pair] = history_row
+                    break
+
+        # One latest Order Planning snapshot for each generated group product.
+        avg_sales_by_product_id: dict[int, object] = {}
+        if group_candidate_ids:
+            planning_rows = (
+                self.session.query(OrderPlanningCalculation)
+                .filter(OrderPlanningCalculation.product_id.in_(group_candidate_ids))
+                .order_by(
+                    OrderPlanningCalculation.product_id.asc(),
+                    OrderPlanningCalculation.period_to.desc(),
+                    OrderPlanningCalculation.period_from.desc(),
+                    OrderPlanningCalculation.id.desc(),
+                )
+                .all()
+            )
+            for planning_row in planning_rows:
+                avg_sales_by_product_id.setdefault(
+                    int(planning_row.product_id), planning_row.avg_sales_month
+                )
+
+        # Cost calculations for generated rows are numerous. Warm their Product,
+        # Supplier, PackType, MarkingRate and FX caches once before the loop.
+        all_price_supplier_ids = {
+            int(price_row.supplier_id)
+            for price_rows in group_all_price_rows.values()
+            for price_row in price_rows
+        }
+        preload_supplier_ids = batch_supplier_ids | all_price_supplier_ids
+        self.currency_cost_service.preload_reference_data(
+            product_ids=all_product_ids,
+            supplier_ids=preload_supplier_ids,
+        )
+        self.cost_calculation.preload_reference_data(
+            product_ids=all_product_ids,
+            supplier_ids=preload_supplier_ids,
+        )
+        if group_candidate_ids and batch_supplier_ids:
+            if self._target_price_service is None:
+                from app.services.target_price_service import TargetPriceService
+                self._target_price_service = TargetPriceService(self.session)
+            self._target_price_service.cost_calculation.preload_reference_data(
+                product_ids=group_candidate_ids,
+                supplier_ids=batch_supplier_ids,
+            )
 
         out_rows: list[dict] = []
         emitted_group_product_ids: set[int] = set()
@@ -1155,7 +1401,16 @@ class SupplierPriceExporter:
                         stock=group_stock,
                         uc3_target_row=uc3_targets.get(group_product_id),
                         price_rows=group_price_rows.get(group_product_id, []),
-                        min_price_date=min_price_date,
+                        current_supplier=supplier,
+                        current_price_row=(
+                            group_current_price_by_pair.get((int(supplier.id), group_product_id))
+                            if supplier is not None and getattr(supplier, "id", None) else None
+                        ),
+                        previous_price_row=(
+                            group_previous_price_by_pair.get((int(supplier.id), group_product_id))
+                            if supplier is not None and getattr(supplier, "id", None) else None
+                        ),
+                        avg_sales_month=avg_sales_by_product_id.get(group_product_id),
                         vat=vat,
                         quick_months=quick_months,
                         order_months=order_months,
@@ -1406,12 +1661,12 @@ class SupplierPriceExporter:
                     ws.Columns(f"{self._excel_column_letter(headers.index(_cur_header)+1)}:{self._excel_column_letter(headers.index(_cur_header)+1)}").ColumnWidth = 8.14
 
             # Group-expanded comparison rows are not supplier-provided rows.
-            # Paint the whole row #E8E8E8 so they are visually separated.
+            # Paint the whole row #D9D9D9 so they are visually separated.
             if prepared_rows:
                 last_col_letter = self._excel_column_letter(len(headers))
                 for excel_row_no, prepared_row in enumerate(prepared_rows, start=2):
                     if prepared_row.get("_group_generated"):
-                        ws.Range(f"A{excel_row_no}:{last_col_letter}{excel_row_no}").Interior.Color = self._rgb(232, 232, 232)
+                        ws.Range(f"A{excel_row_no}:{last_col_letter}{excel_row_no}").Interior.Color = self._rgb(217, 217, 217)
 
             # abs Change: preserve the draft's green-yellow-red 3-color scale.
             if prepared_rows and "abs Change" in headers:
