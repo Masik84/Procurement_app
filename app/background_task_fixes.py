@@ -11,13 +11,15 @@ Responsibilities:
 2) make the no-IS Order Planning exporter wrapper transparent to the restored
    3/5-month export arguments;
 3) keep Supplier Price save progress concise;
-4) prevent the same progress message from being added twice.
+4) prevent the same progress message from being added twice;
+5) guarantee GUI delivery of worker failures/results even if the queued Qt callback is lost.
 """
 
 import logging
+import re
 from typing import Any
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Qt
 
 logger = logging.getLogger(__name__)
 _installed = False
@@ -63,7 +65,7 @@ def _install_order_planning_exporter_no_is_compat() -> None:
             headers, rows = original(
                 self,
                 display_rows,
-                supplier_price_age_months=supplier_price_age_months,
+                supplier_price_age_months=suppplier_price_age_months,
                 quick_order_months=quick_order_months,
                 safe_stock_months=safe_stock_months,
             )
@@ -110,13 +112,181 @@ def _install_manager_progress_dedupe() -> None:
     BackgroundTaskManager._on_progress = on_progress_deduped
 
 
+
+def _install_background_failure_delivery() -> None:
+    """Guarantee that a finished worker always releases the owning page.
+
+    On Windows/Qt a worker thread can stop before the Python queued callback
+    carrying ``finished``/``failed`` is delivered.  The console then contains
+    the worker traceback, while the manager still thinks the task is running;
+    page controls stay disabled and no user-facing error is shown.
+
+    Store the terminal result synchronously in the worker thread and use it as
+    a fallback from QThread.finished.  Normal queued delivery remains the
+    primary path.
+    """
+    from app.utils import background_tasks as bg
+
+    worker_cls = bg._TaskWorker
+    manager_cls = bg.BackgroundTaskManager
+
+    current_run = worker_cls.run
+    if not getattr(current_run, "_procurement_terminal_delivery", False):
+        original_run = current_run
+
+        def run_with_terminal_state(self) -> None:
+            self._procurement_terminal_failure = None
+            self._procurement_terminal_result_ready = False
+            self._procurement_terminal_result = None
+
+            def remember_failure(message: str, details: str) -> None:
+                self._procurement_terminal_failure = (
+                    str(message or "").strip(),
+                    str(details or ""),
+                )
+
+            def remember_result(result) -> None:
+                self._procurement_terminal_result = result
+                self._procurement_terminal_result_ready = True
+
+            self.failed.connect(remember_failure, Qt.ConnectionType.DirectConnection)
+            self.finished.connect(remember_result, Qt.ConnectionType.DirectConnection)
+            try:
+                original_run(self)
+            finally:
+                try:
+                    self.failed.disconnect(remember_failure)
+                except (RuntimeError, TypeError):
+                    pass
+                try:
+                    self.finished.disconnect(remember_result)
+                except (RuntimeError, TypeError):
+                    pass
+
+        run_with_terminal_state._procurement_terminal_delivery = True
+        run_with_terminal_state._procurement_original = original_run
+        worker_cls.run = run_with_terminal_state
+
+    def user_message(message: str) -> str:
+        raw = str(message or "").strip()
+        if raw.startswith("[DEBUG validate_new_products_before_save]"):
+            row_match = re.search(r"import_row_no=(\d+)", raw)
+            marker = ". Ошибка: "
+            clean = raw.split(marker, 1)[1].strip() if marker in raw else raw
+            if row_match:
+                return f"Строка {row_match.group(1)}: {clean}"
+            return clean
+        return raw
+
+    current_finished = manager_cls._on_finished
+    if not getattr(current_finished, "_procurement_terminal_delivery", False):
+        original_finished = current_finished
+
+        def on_finished_once(self, task_id: str, result: object) -> None:
+            record = self.record(task_id)
+            if record is None or getattr(record, "status", "") != "running":
+                return
+            original_finished(self, task_id, result)
+
+        on_finished_once._procurement_terminal_delivery = True
+        on_finished_once._procurement_original = original_finished
+        manager_cls._on_finished = on_finished_once
+
+    current_failed = manager_cls._on_failed
+    if not getattr(current_failed, "_procurement_terminal_delivery", False):
+        original_failed = current_failed
+
+        def on_failed_once(
+            self,
+            task_id: str,
+            message: str,
+            details: str,
+        ) -> None:
+            record = self.record(task_id)
+            if record is None or getattr(record, "status", "") != "running":
+                return
+
+            # Keep the complete traceback in the central task log/console, but
+            # show a compact, actionable message to the page owner.
+            compact = user_message(message)
+            record.status = "failed"
+            if details:
+                bg.logger.error(
+                    "Background task %s failed:\n%s",
+                    record.title,
+                    details,
+                )
+            record.log.append(f"Ошибка: {compact}")
+            if details:
+                record.log.append(str(details).rstrip())
+            record.handle.failed.emit(compact)
+            self.task_done.emit(task_id, False)
+
+        on_failed_once._procurement_terminal_delivery = True
+        on_failed_once._procurement_original = original_failed
+        manager_cls._on_failed = on_failed_once
+
+    current_thread_finished = manager_cls._on_thread_finished
+    if not getattr(
+        current_thread_finished,
+        "_procurement_terminal_delivery",
+        False,
+    ):
+        original_thread_finished = current_thread_finished
+
+        def on_thread_finished_with_fallback(self, task_id: str) -> None:
+            record = self.record(task_id)
+            if record is not None and getattr(record, "status", "") == "running":
+                worker = getattr(record, "worker", None)
+                failure = (
+                    getattr(worker, "_procurement_terminal_failure", None)
+                    if worker is not None
+                    else None
+                )
+                result_ready = bool(
+                    getattr(
+                        worker,
+                        "_procurement_terminal_result_ready",
+                        False,
+                    )
+                    if worker is not None
+                    else False
+                )
+
+                if failure:
+                    self._on_failed(task_id, failure[0], failure[1])
+                elif result_ready:
+                    self._on_finished(
+                        task_id,
+                        getattr(
+                            worker,
+                            "_procurement_terminal_result",
+                            None,
+                        ),
+                    )
+                else:
+                    self._on_failed(
+                        task_id,
+                        "Фоновая операция завершилась без результата. "
+                        "Повторите операцию.",
+                        "",
+                    )
+
+            original_thread_finished(self, task_id)
+
+        on_thread_finished_with_fallback._procurement_terminal_delivery = True
+        on_thread_finished_with_fallback._procurement_original = (
+            original_thread_finished
+        )
+        manager_cls._on_thread_finished = on_thread_finished_with_fallback
+
 def _install_background_info_routing() -> None:
     from app.utils import page_background_integration as pbi
 
     original_start = pbi._start_page_task
     if getattr(original_start, "_background_info_routing", False):
         return
-
+ 
     def start_page_task_without_modal_info(
         page,
         *,
@@ -260,5 +430,6 @@ def install_background_task_fixes() -> None:
         return
     _install_order_planning_exporter_no_is_compat()
     _install_manager_progress_dedupe()
+    _install_background_failure_delivery()
     _install_background_info_routing()
     _installed = True
