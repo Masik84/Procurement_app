@@ -23,7 +23,7 @@ from app.services.product_uc3_service import ProductUc3Service
 from app.services.supplier_currency_cost_service import SupplierCurrencyCostService
 from app.utils.excel_fast_writer import write_excel_table
 from app.utils.excel_freeze import apply_freeze_panes
-from app.utils.excel_format_rules import FORMATS, cost_calc_headers, set_number_format_safe, to_invariant_number_format
+from app.utils.excel_format_rules import FORMATS, cost_calc_headers, save_workbook_xlsx, set_number_format_safe, to_invariant_number_format
 from app.utils.money import to_decimal, round4
 from app.utils.text import clean_multi_spaces
 
@@ -321,8 +321,16 @@ class SupplierPriceExporter:
             "Best full Price, L",
             "Best full Price, L 2",
         ]
-        uc3_headers = ["uC3", "min uC3 stock", "uC3 PY", "uC3 3 mnth", "Best uC3", "Best 2 uC3"]
-        uc3_integer_headers = ["Target uC3", "Walk-Away uC3"]
+        uc3_integer_headers = [
+            "uC3",
+            "min uC3 stock",
+            "uC3 PY",
+            "uC3 3 mnth",
+            "Best uC3",
+            "Best 2 uC3",
+            "Target uC3",
+            "Walk-Away uC3",
+        ]
         percent_integer_headers = ["Markup % (from suppl price)"]
         change_headers = ["abs Change"]
         date_headers = ["last update", "last update (prev)", "last update Best1", "last update Best2"]
@@ -351,8 +359,6 @@ class SupplierPriceExporter:
             self._set_format_by_header(ws, header_map, header, FORMATS.PRICE_DECIMAL)
         for header in rub_headers:
             self._set_format_by_header(ws, header_map, header, FORMATS.MONEY_RUB_SIMPLE)
-        for header in uc3_headers:
-            self._set_format_by_header(ws, header_map, header, FORMATS.DECIMAL_2)
         for header in uc3_integer_headers:
             self._set_format_by_header(ws, header_map, header, FORMATS.INTEGER)
         for header in percent_integer_headers:
@@ -1686,7 +1692,10 @@ class SupplierPriceExporter:
             # Category is inserted after Pack; keep the same semantic frozen block.
             apply_freeze_panes(ws, split_row=1, split_column=7, zoom=85)
 
-            wb.SaveAs(str(output_path.resolve()))
+            # Final authoritative Excel formatting pass. This re-applies the
+            # shared rules immediately before SaveAs so CostCalc cannot leave
+            # price/uC3/FX/date columns in General on localized Excel builds.
+            save_workbook_xlsx(wb, output_path.resolve())
             return output_path
         finally:
             try:
