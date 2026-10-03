@@ -276,7 +276,16 @@ class ProductMappingService:
         )
 
     @staticmethod
-    def _status_text(*, is_new: bool, auto_found: bool, source_changed: bool, qty_missing: bool, qty_mismatch: bool) -> str:
+    def _status_text(
+        *,
+        is_new: bool,
+        auto_found: bool,
+        source_changed: bool,
+        qty_missing: bool,
+        qty_mismatch: bool,
+        pack_missing: bool,
+        pack_mismatch: bool,
+    ) -> str:
         parts: list[str] = []
         if is_new:
             parts.append("Автоподбор" if auto_found else "Новый")
@@ -284,6 +293,10 @@ class ProductMappingService:
             parts.append("Изменён источник")
         elif auto_found:
             parts.append("Автоподбор")
+        if pack_missing:
+            parts.append("Pack пуст")
+        elif pack_mismatch:
+            parts.append("Pack отличается")
         if qty_missing:
             parts.append("Qty in Box пуст")
         elif qty_mismatch:
@@ -391,12 +404,24 @@ class ProductMappingService:
                     auto_found = True
                     auto_matched += 1
 
+            product_pack = None
             product_qty = None
             if product is not None:
+                product_pack = self._to_decimal(product.pack)
                 try:
                     product_qty = normalize_qty_in_box(product.qty_in_box)
                 except ValueError:
                     product_qty = None
+
+            source_pack = self._to_decimal(source.sales_pack)
+            pack_missing = product is not None and source_pack != 0 and product_pack == 0
+            pack_mismatch = (
+                product is not None
+                and source_pack != 0
+                and product_pack != 0
+                and product_pack != source_pack
+            )
+
             qty_missing = product is not None and source.sales_qty_in_box is not None and product_qty is None
             qty_mismatch = (
                 product is not None
@@ -409,7 +434,14 @@ class ProductMappingService:
             saved_qty = saved_sales_qty.get(sales_code)
             qty_snapshot_changed = link is not None and saved_qty != source.sales_qty_in_box
             source_changed = link is not None and (not link_matches or qty_snapshot_changed)
-            is_changed = source_changed or (linked_product is None and product is not None) or qty_missing or qty_mismatch
+            is_changed = (
+                source_changed
+                or (linked_product is None and product is not None)
+                or pack_missing
+                or pack_mismatch
+                or qty_missing
+                or qty_mismatch
+            )
             if is_new:
                 new_count += 1
             elif is_changed:
@@ -438,6 +470,8 @@ class ProductMappingService:
                     source_changed=source_changed,
                     qty_missing=qty_missing,
                     qty_mismatch=qty_mismatch,
+                    pack_missing=pack_missing,
+                    pack_mismatch=pack_mismatch,
                 ),
                 is_new=is_new,
                 auto_found=auto_found,
@@ -481,17 +515,15 @@ class ProductMappingService:
 
     def _ensure_product_for_row(self, row: dict) -> Product | None:
         product_id = row.get("product_id")
+        sales_pack = self._to_decimal(row.get("sales_pack"))
         sales_qty_in_box = self._qty_in_box_from_sales(row.get("sales_qty_in_box"))
         if product_id:
             product = self.session.query(Product).filter(Product.id == int(product_id)).first()
             if product:
-                # Saving a Portfolio comparison means the user accepts the
-                # source Qty in Box. Update an existing Product as well, not
-                # only products where qty_in_box was previously NULL.
-                #
-                # A blank/invalid source value must not erase a valid value in
-                # Products, therefore overwrite only when the source contains
-                # a valid Qty in Box.
+                # Saving a Portfolio comparison accepts source Pack and Qty in Box.
+                # Blank/invalid source values must not erase valid Product values.
+                if sales_pack != 0:
+                    product.pack = sales_pack
                 if sales_qty_in_box is not None:
                     product.qty_in_box = sales_qty_in_box
                 row["product_id"] = product.id
