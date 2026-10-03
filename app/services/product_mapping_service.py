@@ -167,12 +167,7 @@ class ProductMappingService:
         return result
 
     def ignored_sales_codes(self) -> set[str]:
-        """Return source product codes explicitly excluded by the user.
-
-        ``is_ignored`` is kept as a persisted flag in ``sales_product_links``.
-        The ORM model is intentionally not required for this small source-state
-        flag, so older project branches can still apply this patch cleanly.
-        """
+        """Return source product codes explicitly excluded by the user."""
         rows = self.session.execute(
             text(
                 """
@@ -189,12 +184,6 @@ class ProductMappingService:
         }
 
     def set_ignored(self, rows: list[dict], *, ignored: bool) -> int:
-        """Persist the user's decision to ignore/unignore source products.
-
-        Ignoring a new row never creates a Product in our catalogue.  It only
-        saves the source snapshot and the ignore flag, so future checks can
-        skip it.  Existing mapped Products are not deleted.
-        """
         changed = 0
         for row in rows:
             code = self._source_text(row.get("sales_code"))
@@ -210,8 +199,6 @@ class ProductMappingService:
                 link = SalesProductLink(sales_code=code)
                 self.session.add(link)
 
-            # Keep an existing mapping when the source row is ignored. For a
-            # brand-new ignored row product_id remains NULL: no Product is made.
             link.sales_article = self._source_text(row.get("sales_article")) or None
             link.sales_product_name = self._source_text(row.get("sales_product_name")) or None
             link.sales_pack = self._to_decimal(row.get("sales_pack"))
@@ -359,7 +346,6 @@ class ProductMappingService:
         }
 
     def check_products(self, source_df: pd.DataFrame) -> ProductMappingCheckResult:
-        """Run Portfolio-vs-local matching for the already imported source."""
         if source_df is None or source_df.empty:
             return ProductMappingCheckResult([], 0, 0, 0)
 
@@ -460,12 +446,6 @@ class ProductMappingService:
         return ProductMappingCheckResult(rows, auto_matched, new_count, changed_count)
 
     def search_links(self, *, include_ignored: bool = False) -> list[dict]:
-        """Show mappings already stored in the local Procurement DB only.
-
-        ``Search`` never reads the Portfolio file and never runs automatic
-        matching. Ignored rows are hidden by default, but can be shown from the
-        table context menu so the user can restore them.
-        """
         links = self.link_map(load_products=True)
         if not links:
             return []
@@ -505,7 +485,14 @@ class ProductMappingService:
         if product_id:
             product = self.session.query(Product).filter(Product.id == int(product_id)).first()
             if product:
-                if product.qty_in_box is None and sales_qty_in_box is not None:
+                # Saving a Portfolio comparison means the user accepts the
+                # source Qty in Box. Update an existing Product as well, not
+                # only products where qty_in_box was previously NULL.
+                #
+                # A blank/invalid source value must not erase a valid value in
+                # Products, therefore overwrite only when the source contains
+                # a valid Qty in Box.
+                if sales_qty_in_box is not None:
                     product.qty_in_box = sales_qty_in_box
                 row["product_id"] = product.id
                 row["product_name"] = product.name
@@ -585,8 +572,6 @@ class ProductMappingService:
                         (code, self._qty_in_box_from_sales(row.get("sales_qty_in_box")))
                     )
 
-        # New SalesProductLink ORM rows must exist before the local snapshot
-        # column can be updated by sales_code.
         self.session.flush()
         for code, qty_in_box in qty_snapshots:
             self.session.execute(

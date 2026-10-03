@@ -122,9 +122,6 @@ class ProductMappingPage(QWidget):
         self._selected_family_values: set[str] | None = None
         self._selected_product_ids: set[int] | None = None
 
-        # Left-side filter controls are only applied after Search, like on the
-        # other reference pages.  These values are a snapshot of the filters
-        # that were actually applied to the table.
         self._applied_brand_values: set[str] | None = None
         self._applied_family_values: set[str] | None = None
         self._applied_product_ids: set[int] | None = None
@@ -186,9 +183,6 @@ class ProductMappingPage(QWidget):
     def show_error_message(self, text: str):
         show_error(self, text)
 
-    # ------------------------------------------------------------------
-    # Product selector used only to change Our Product Name in a GUI row.
-    # ------------------------------------------------------------------
     def load_find_brands(self):
         current = clean_multi_spaces(self.ui.cbo_FindBrand.currentText())
         with self.get_session() as session:
@@ -328,7 +322,6 @@ class ProductMappingPage(QWidget):
             row["new_qty_in_box"] = row.get("sales_qty_in_box")
             row["new_is_excise"] = bool(row.get("sales_is_excise"))
         else:
-            # Typed text not present in Products means a proposed new product.
             row["product_id"] = None
             row["product_name"] = ""
             row["product_qty_in_box"] = None
@@ -348,9 +341,6 @@ class ProductMappingPage(QWidget):
                 self.finish_product_edit(table_row, combo)
                 return
 
-    # ------------------------------------------------------------------
-    # Left filters affect only displayed rows.
-    # ------------------------------------------------------------------
     def _load_product_meta(self):
         with self.get_session() as session:
             products = session.query(Product).all()
@@ -413,7 +403,6 @@ class ProductMappingPage(QWidget):
         self.ui.btn_FilterProduct.setText("все Продукты" if self._selected_product_ids is None else f"все Продукты ({len(self._selected_product_ids)})")
 
     def _capture_left_filter_state(self):
-        """Apply the current left-side controls only when Search is pressed."""
         self._applied_brand_values = (
             None if self._selected_brand_values is None else set(self._selected_brand_values)
         )
@@ -459,9 +448,6 @@ class ProductMappingPage(QWidget):
         self._rows = rows
         self._populate_table(rows)
 
-    # ------------------------------------------------------------------
-    # Shared context menu integration.
-    # ------------------------------------------------------------------
     def after_standard_table_rows_deleted(self, table, rows, snapshots):
         for snapshot in snapshots:
             code = clean_multi_spaces(snapshot.get("key"))
@@ -483,7 +469,6 @@ class ProductMappingPage(QWidget):
         return result
 
     def populate_standard_table_context_menu(self, menu, table, rows, index):
-        """Append mapping-specific actions to the common table menu."""
         menu.addSeparator()
         codes = self._selected_codes_from_rows(rows)
         selected_data = [self._row_by_code(code) for code in codes]
@@ -512,8 +497,6 @@ class ProductMappingPage(QWidget):
                 count = self.service(session).set_ignored(rows, ignored=ignored)
                 session.commit()
 
-            # Ignore is persistent immediately: it is not tied to the ordinary
-            # Save button, because its purpose is to stop future system checks.
             self._pending_deletes.difference_update(codes)
             self._visually_deleted_codes.difference_update(codes)
             self._deleted_row_snapshots.clear()
@@ -558,23 +541,16 @@ class ProductMappingPage(QWidget):
         self.apply_filters()
         self.show_message("Фильтры и поля сброшены")
 
-    # ------------------------------------------------------------------
-    # Search / Import / Save
-    # ------------------------------------------------------------------
     def search_saved(self):
         try:
             self._capture_left_filter_state()
 
-            # After Portfolio import Search is only the left-filter apply button.
-            # It must not replace the current Portfolio result with historical
-            # rows from sales_product_links.
-            if self._mode == "check" and self._portfolio_df is not None:
-                self.apply_filters()
-                self.show_message(f"Найдено: {len(self._rows)}")
-                return
-
+            # Search is always a DB-only view of saved mappings.
+            # It must leave Portfolio-check mode and load the full saved
+            # sales_product_links set before applying the selected filters.
             with self.get_session() as session:
                 rows = self.service(session).search_links(include_ignored=self._show_ignored)
+
             self._mode = "search"
             self._reset_visual_delete_state()
             self._all_rows = [dict(r) for r in rows]
@@ -624,9 +600,6 @@ class ProductMappingPage(QWidget):
             with self.get_session() as session:
                 service = self.service(session)
                 deleted = service.cleanup_stale_new_links(portfolio_df)
-                # The stale NEW links must disappear from the DB before the
-                # matching pass starts, exactly as the Portfolio refresh rule
-                # requires.
                 session.commit()
                 result = service.check_products(portfolio_df)
 
@@ -636,7 +609,6 @@ class ProductMappingPage(QWidget):
             self._apply_check_result(result, loaded_rows=len(portfolio_df))
         except Exception as exc:
             self.show_error_message(str(exc))
-
 
     def save(self):
         self._commit_open_product_editor()
@@ -655,12 +627,7 @@ class ProductMappingPage(QWidget):
                 deleted = self.service(session).delete_links(pending_deletes)
                 count = self.service(session).save_rows(rows) if rows else 0
                 session.commit()
-            # Do not jump to Search after Portfolio save: Search shows the full
-            # historical sales_product_links table and can contain legacy links
-            # that are not present in the current filtered Portfolio. Re-run the
-            # current Portfolio comparison instead, so the GUI stays tied to the
-            # imported source. Search remains available as a separate explicit
-            # action.
+
             if self._mode == "check" and self._portfolio_df is not None:
                 with self.get_session() as session:
                     result = self.service(session).check_products(self._portfolio_df)
@@ -707,18 +674,12 @@ class ProductMappingPage(QWidget):
         except Exception as exc:
             self.show_error_message(str(exc))
 
-    # ------------------------------------------------------------------
-    # Table rendering / editable new-product fields.
-    # ------------------------------------------------------------------
     @staticmethod
     def _display(field: str, value) -> str:
         if value is None:
             return ""
         if isinstance(value, bool):
             return "Да" if value else "Нет"
-
-        # Numeric display rules are shared application-wide in table_style.py:
-        # Pack is a decimal with comma; Qty in Box is an integer without ',0'.
         if field in ProductMappingPage.NUMERIC_FIELDS:
             return format_table_field_value(field, value)
         return str(value)
@@ -735,7 +696,6 @@ class ProductMappingPage(QWidget):
         return item
 
     def _build_checkbox_widget(self, code: str, checked: bool, enabled: bool) -> QWidget:
-        # Keep the checkbox visually identical to Supplier Price.
         checkbox = QCheckBox()
         checkbox.setChecked(checked)
         checkbox.setEnabled(enabled)
