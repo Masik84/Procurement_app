@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -276,6 +277,49 @@ class ProductMappingService:
         )
 
     @staticmethod
+    def _is_teboil_relaxed_pack_row(row: dict, product: Product | None) -> bool:
+        if product is None:
+            return False
+        brand = clean_multi_spaces(getattr(product, "brand", None) or row.get("sales_brand")).upper()
+        pack_type = clean_multi_spaces(row.get("source_pack_type")).upper()
+        return (
+            brand == "TEBOIL"
+            and pack_type in ProductMatchingService.TEBOIL_RELAXED_PACK_TYPES
+        )
+
+    @staticmethod
+    def _name_with_source_pack(product_name: object, source_name: object) -> str:
+        """Replace only the pack token in Our Product Name from the Portfolio pack token."""
+        current = str(product_name or "")
+        source = str(source_name or "")
+
+        source_matches = list(
+            re.finditer(
+                r"(?<!\d)([0-9]+(?:[.,][0-9]+)?)(\s*)(L|KG)\b",
+                source,
+                flags=re.IGNORECASE,
+            )
+        )
+        target_matches = list(
+            re.finditer(
+                r"(?<!\d)([0-9]+(?:[.,][0-9]+)?)(\s*)(L|KG)\b",
+                current,
+                flags=re.IGNORECASE,
+            )
+        )
+        if not source_matches or not target_matches:
+            return current
+
+        source_match = source_matches[-1]
+        replacement = (
+            f"{source_match.group(1)}"
+            f"{source_match.group(2)}"
+            f"{source_match.group(3).upper()}"
+        )
+        target_match = target_matches[-1]
+        return current[:target_match.start()] + replacement + current[target_match.end():]
+
+    @staticmethod
     def _status_text(
         *,
         is_new: bool,
@@ -414,9 +458,22 @@ class ProductMappingService:
                     product_qty = None
 
             source_pack = self._to_decimal(source.sales_pack)
-            pack_missing = product is not None and source_pack != 0 and product_pack == 0
+            teboil_relaxed_pack = self._is_teboil_relaxed_pack_row(
+                {
+                    "sales_brand": source.sales_brand,
+                    "source_pack_type": source.source_pack_type,
+                },
+                product,
+            )
+            pack_missing = (
+                not teboil_relaxed_pack
+                and product is not None
+                and source_pack != 0
+                and product_pack == 0
+            )
             pack_mismatch = (
-                product is not None
+                not teboil_relaxed_pack
+                and product is not None
                 and source_pack != 0
                 and product_pack != 0
                 and product_pack != source_pack
@@ -520,12 +577,20 @@ class ProductMappingService:
         if product_id:
             product = self.session.query(Product).filter(Product.id == int(product_id)).first()
             if product:
-                # Saving a Portfolio comparison accepts source Pack and Qty in Box.
-                # Blank/invalid source values must not erase valid Product values.
-                if sales_pack != 0:
-                    product.pack = sales_pack
+                teboil_relaxed_pack = self._is_teboil_relaxed_pack_row(row, product)
+
+                if sales_pack != 0 and not teboil_relaxed_pack:
+                    old_pack = self._to_decimal(product.pack)
+                    if old_pack != sales_pack:
+                        product.pack = sales_pack
+                        product.name = self._name_with_source_pack(
+                            product.name,
+                            row.get("sales_product_name"),
+                        )
+
                 if sales_qty_in_box is not None:
                     product.qty_in_box = sales_qty_in_box
+
                 row["product_id"] = product.id
                 row["product_name"] = product.name
                 row["product_qty_in_box"] = product.qty_in_box
