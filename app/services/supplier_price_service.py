@@ -763,6 +763,7 @@ class SupplierPriceService:
         imported_by: str,
         currency_code: str,
         rf_prices_include_vat: bool = False,
+        price_type: str = "Price List",
     ) -> int:
         rows = (
             self.session.query(TempPriceImport)
@@ -796,6 +797,7 @@ class SupplierPriceService:
                 "price": normalized_price,
                 "currency_code": currency_code,
                 "price_date": row.import_date,
+                "price_type": price_type,
             })
 
         return self.price_repository.save_supplier_prices_batch(prices_to_save)
@@ -807,6 +809,7 @@ class SupplierPriceService:
         fx_rate: Decimal,
         currency_code: str,
         rf_prices_include_vat: bool = False,
+        price_type: str = "Price List",
     ) -> int:
         self.delete_supplier_price_calculations(batch_id, imported_by)
 
@@ -853,6 +856,7 @@ class SupplierPriceService:
                 supplier_article=row.supplier_article,
                 supplier_product_name=row.product_name,
                 supplier_price=calc_result.supplier_price,
+                price_type=price_type,
                 cost_novo_wvat=calc_result.cost_novo_wvat,
                 full_cost_msk=calc_result.full_cost_msk,
                 currency_code=calc_result.currency_code,

@@ -283,8 +283,8 @@ class PriceReportExporter:
         first_gray_end = "Full Cost Msk (prev)" if "Full Cost Msk (prev)" in header_map else "Full Cost Msk"
         self._color_header_range(ws, header_map, "Supplier", first_gray_end, self._rgb(205, 205, 205))
         self._color_header_range(ws, header_map, "Дистр цена", "curr Landed cost", self._rgb(192, 0, 0), self._rgb(255, 255, 255))
-        self._color_header_range(ws, header_map, "Best Suppl", "Currency Best1", self._rgb(0, 176, 240))
-        self._color_header_range(ws, header_map, "Best Suppl 2", "Currency Best2", self._rgb(146, 208, 80))
+        self._color_header_range(ws, header_map, "Best Suppl", "FX rate Best1", self._rgb(0, 176, 240))
+        self._color_header_range(ws, header_map, "Best Suppl 2", "FX rate Best2", self._rgb(146, 208, 80))
         self._color_header_range(ws, header_map, "Stock", "Purchase Order", self._rgb(33, 92, 152), self._rgb(255, 255, 255))
         self._color_header_range(ws, header_map, "Order IS", "Stock IS", self._rgb(192, 0, 0), self._rgb(255, 255, 255))
         self._color_header_range(ws, header_map, "Reserve cust", "Damaged", self._rgb(33, 92, 152), self._rgb(255, 255, 255))
@@ -292,10 +292,10 @@ class PriceReportExporter:
 
         self._format_columns_by_headers(ws, header_map, ["last update", "last update (prev)", "last update Best1", "last update Best2"], FORMATS.DATE)
         self._format_columns_by_headers(ws, header_map, ["FX rate", "FX rate Best1", "FX rate Best2"], FORMATS.FX_INTEGER)
-        self._format_columns_by_headers(ws, header_map, ["Price, L", "Price, pack", "Price, L (prev)"], FORMATS.PRICE_DECIMAL)
+        self._format_columns_by_headers(ws, header_map, ["Price, L", "Price, pack", "Price, L (prev)", "Best Suppl Price, L", "Best Suppl Price, L 2"], FORMATS.PRICE_DECIMAL)
         self._format_columns_by_headers(ws, header_map, ["Дистр цена", "Промо цена", "Cost Novo with VAT", "Full Cost Msk", 
                                                                                             "Cost Novo with VAT (prev)", "Full Cost Msk (prev)", "curr LPC", 
-                                                                                            "curr Landed cost", "Best full Price, L", "Best full Price, L 2"], FORMATS.MONEY_RUB_SIMPLE)
+                                                                                            "curr Landed cost", "Best Full Cost, L", "Best Full Cost, L 2"], FORMATS.MONEY_RUB_SIMPLE)
         self._format_stock_and_order_plan_columns(ws, header_map)
 
         idx = 3
@@ -321,8 +321,8 @@ class PriceReportExporter:
         self._set_width_by_header(ws, header_map, "Промо цена", 8.43)
         self._set_width_by_header(ws, header_map, "curr LPC", 8.43)
         self._set_width_by_header(ws, header_map, "curr Landed cost", 8.43)
-        self._set_width_by_header(ws, header_map, "Best full Price, L", 8.43)
-        self._set_width_by_header(ws, header_map, "Best full Price, L 2", 8.43)
+        self._set_width_by_header(ws, header_map, "Best Full Cost, L", 8.43)
+        self._set_width_by_header(ws, header_map, "Best Full Cost, L 2", 8.43)
         self._apply_supplier_price_like_widths_until_damaged(ws, header_map)
         self._apply_repeating_supplier_widths(ws, header_map, 3)
         self._format_fx_headers(ws, header_map)

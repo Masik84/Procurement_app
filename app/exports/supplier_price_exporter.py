@@ -306,7 +306,7 @@ class SupplierPriceExporter:
 
         text_headers = ["Supplier Article", "Категория ABC"]
         price_decimal_headers = [
-            "Price, L", "Price, pack", "Target price (for suppl)", "Price, L (prev)",
+            "Price, L", "Price, pack", "Best Suppl Price, L", "Best Suppl Price, L 2", "Target price (for suppl)", "Price, L (prev)",
             "Target price, L",
         ]
         rub_headers = [
@@ -318,8 +318,10 @@ class SupplierPriceExporter:
             "Промо цена",
             "curr LPC",
             "curr Landed cost",
-            "Best full Price, L",
-            "Best full Price, L 2",
+            "Best Full Cost, L",
+            "Best Full Cost, L 2",
+            "Cost Novo (Purch order)",
+            "Full Cost Msk (Purch order)",
         ]
         uc3_integer_headers = [
             "uC3",
@@ -541,7 +543,7 @@ class SupplierPriceExporter:
         except Exception:
             return None
 
-    def _consider_best_candidate(self, cand_supplier_name, cand_full_cost, cand_date, best1, best2, cand_fx_rate=None, cand_currency=""):
+    def _consider_best_candidate(self, cand_supplier_name, cand_full_cost, cand_date, best1, best2, cand_fx_rate=None, cand_currency="", cand_price=None):
         if not cand_supplier_name or cand_full_cost is None:
             return best1, best2
 
@@ -551,6 +553,7 @@ class SupplierPriceExporter:
             "date": cand_date,
             "fx_rate": cand_fx_rate,
             "currency": cand_currency or "",
+            "supplier_price": cand_price,
         }
 
         if best1["price"] is None:
@@ -582,14 +585,18 @@ class SupplierPriceExporter:
         current_imported_fx_rate=None,
         current_imported_currency="",
     ):
-        best1 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": ""}
-        best2 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": ""}
+        best1 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": "", "supplier_price": None}
+        best2 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": "", "supplier_price": None}
         seen = set()
 
         current_supplier = self.session.query(Supplier).filter(Supplier.id == current_supplier_id).first()
         current_supplier_in_rating = bool(current_supplier.rating_calc) if current_supplier else False
 
         if current_supplier_in_rating:
+            from app.db.models import CurrentSupplierPrice
+            current_price_row = (self.session.query(CurrentSupplierPrice)
+                .filter(CurrentSupplierPrice.supplier_id == current_supplier_id,
+                        CurrentSupplierPrice.product_id == product_id).first())
             best1, best2 = self._consider_best_candidate(
                 current_supplier_name,
                 current_imported_full_cost,
@@ -598,6 +605,7 @@ class SupplierPriceExporter:
                 best2,
                 current_imported_fx_rate,
                 current_imported_currency,
+                current_price_row.price if current_price_row else None,
             )
 
         seen.add(current_supplier_id)
@@ -624,6 +632,7 @@ class SupplierPriceExporter:
                 best2,
                 self._get_currency_rate(current_row.currency_code)[1],
                 self._get_currency_rate(current_row.currency_code)[0],
+                current_row.price,
             )
             seen.add(current_row.supplier_id)
 
@@ -668,6 +677,7 @@ class SupplierPriceExporter:
                 best2,
                 self._get_currency_rate(history_row.currency)[1],
                 self._get_currency_rate(history_row.currency)[0],
+                history_row.price,
             )
             seen.add(supplier_key)
 
@@ -842,8 +852,8 @@ class SupplierPriceExporter:
         return result
 
     def _get_best_two_from_price_rows(self, product_id: int, price_rows) -> tuple[dict, dict]:
-        best1 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": ""}
-        best2 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": ""}
+        best1 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": "", "supplier_price": None}
+        best2 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": "", "supplier_price": None}
         for price_row in price_rows or []:
             full_cost = self._calc_supplier_full_cost_from_db(
                 price_row.supplier_id,
@@ -1022,15 +1032,19 @@ class SupplierPriceExporter:
             "Промо цена": self._excel_value(stock.promo_price if stock else None),
             "curr LPC": self._excel_value(stock.lpc if stock else None),
             "curr Landed cost": self._excel_value(stock.landed_cost if stock else None),
+            "Cost Novo (Purch order)": self._excel_value(stock.cost_novo_purch_order if stock else None),
+            "Full Cost Msk (Purch order)": self._excel_value(stock.full_cost_msk_purch_order if stock else None),
             "min uC3 stock": self._excel_value(min_uc3_stock),
             "Best Suppl": best1["supplier"],
-            "Best full Price, L": self._excel_value(best1["price"]),
+            "Best Suppl Price, L": self._excel_value(best1.get("supplier_price")),
+            "Best Full Cost, L": self._excel_value(best1["price"]),
             "Best uC3": self._excel_value(best_uc3),
             "last update Best1": best1["date"],
             "FX rate Best1": self._round_fx_rate(best1.get("fx_rate")),
             "Currency Best1": best1.get("currency", ""),
             "Best Suppl 2": best2["supplier"],
-            "Best full Price, L 2": self._excel_value(best2["price"]),
+            "Best Suppl Price, L 2": self._excel_value(best2.get("supplier_price")),
+            "Best Full Cost, L 2": self._excel_value(best2["price"]),
             "Best 2 uC3": self._excel_value(best2_uc3),
             "last update Best2": best2["date"],
             "FX rate Best2": self._round_fx_rate(best2.get("fx_rate")),
@@ -1240,8 +1254,8 @@ class SupplierPriceExporter:
             target_uc3 = getattr(uc3_target_row, "target_uc3", None) if uc3_target_row else None
             walk_away_uc3 = getattr(uc3_target_row, "walk_away_uc3", None) if uc3_target_row else None
 
-            best1 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": ""}
-            best2 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": ""}
+            best1 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": "", "supplier_price": None}
+            best2 = {"supplier": "", "price": None, "date": None, "fx_rate": None, "currency": "", "supplier_price": None}
 
             if product_id_for_row > 0:
                 best1, best2 = self._get_best_two_suppliers_for_export(
@@ -1366,15 +1380,19 @@ class SupplierPriceExporter:
                     "Промо цена": self._excel_value(stock.promo_price if stock else None),
                     "curr LPC": self._excel_value(stock.lpc if stock else None),
                     "curr Landed cost": self._excel_value(stock.landed_cost if stock else None),
+            "Cost Novo (Purch order)": self._excel_value(stock.cost_novo_purch_order if stock else None),
+            "Full Cost Msk (Purch order)": self._excel_value(stock.full_cost_msk_purch_order if stock else None),
                     "min uC3 stock": self._excel_value(min_uc3_stock),
                     "Best Suppl": best1["supplier"],
-                    "Best full Price, L": self._excel_value(best1["price"]),
+            "Best Suppl Price, L": self._excel_value(best1.get("supplier_price")),
+                    "Best Full Cost, L": self._excel_value(best1["price"]),
                     "Best uC3": self._excel_value(best_uc3),
                     "last update Best1": best1["date"],
                     "FX rate Best1": self._round_fx_rate(best1.get("fx_rate")),
                     "Currency Best1": best1.get("currency", ""),
                     "Best Suppl 2": best2["supplier"],
-                    "Best full Price, L 2": self._excel_value(best2["price"]),
+            "Best Suppl Price, L 2": self._excel_value(best2.get("supplier_price")),
+                    "Best Full Cost, L 2": self._excel_value(best2["price"]),
                     "Best 2 uC3": self._excel_value(best2_uc3),
                     "last update Best2": best2["date"],
                     "FX rate Best2": self._round_fx_rate(best2.get("fx_rate")),
@@ -1451,7 +1469,7 @@ class SupplierPriceExporter:
             excel = self._create_excel_app()
             wb = excel.Workbooks.Add()
             ws = wb.Worksheets(1)
-            ws.Name = "Sheet1"
+            ws.Name = "Анализ"
 
             headers = [
                 "Material number",
@@ -1542,12 +1560,13 @@ class SupplierPriceExporter:
         quick_order_months: int | None = None,
         safe_stock_months: int | None = None,
         supplier_price_age_months: int | None = None,
+        price_type: str = "Price List",
     ) -> Path:
         supplier = self.session.query(Supplier).filter(Supplier.id == supplier_id).first()
         supplier_name = self._safe_filename(supplier.name if supplier else "Supplier")
 
         if output_path is None:
-            filename = f"CostCalc_{supplier_name}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
+            filename = f"CostCalc_{supplier_name}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_{price_type}.xlsx"
             output_path = Path(filename)
         else:
             output_path = Path(output_path)
@@ -1570,7 +1589,7 @@ class SupplierPriceExporter:
             excel = self._create_excel_app()
             wb = excel.Workbooks.Add()
             ws = wb.Worksheets(1)
-            ws.Name = "Sheet1"
+            ws.Name = "Анализ"
 
             headers, standard_order_header = cost_calc_headers(
                 quick_order_months=quick_order_months,
@@ -1639,8 +1658,8 @@ class SupplierPriceExporter:
             _paint_header_block("Target uC3", "Markup % (from suppl price)", self._rgb(146, 208, 80))
             _paint_header_block("last update (prev)", "Full Cost Msk (prev)", self._rgb(166, 166, 166))
             _paint_header_block("Дистр цена", "min uC3 stock", self._rgb(192, 0, 0), self._rgb(255, 255, 255))
-            _paint_header_block("Best Suppl", "Currency Best1", self._rgb(0, 176, 240))
-            _paint_header_block("Best Suppl 2", "Currency Best2", self._rgb(146, 208, 80))
+            _paint_header_block("Best Suppl", "FX rate Best1", self._rgb(0, 176, 240))
+            _paint_header_block("Best Suppl 2", "FX rate Best2", self._rgb(146, 208, 80))
             _paint_header_block("Volume PY", "Volume 3 mnth", self._rgb(21, 61, 100), self._rgb(255, 255, 255))
             _paint_header_block("Stock", "Purchase Order", self._rgb(33, 92, 152), self._rgb(255, 255, 255))
             _paint_header_block("Order IS", "Stock IS", self._rgb(192, 0, 0), self._rgb(255, 255, 255))
@@ -1695,6 +1714,7 @@ class SupplierPriceExporter:
             # Final authoritative Excel formatting pass. This re-applies the
             # shared rules immediately before SaveAs so CostCalc cannot leave
             # price/uC3/FX/date columns in General on localized Excel builds.
+            self._add_costcalc_extra_sheets(wb, prepared_rows, supplier, price_type)
             save_workbook_xlsx(wb, output_path.resolve())
             return output_path
         finally:
@@ -1709,6 +1729,100 @@ class SupplierPriceExporter:
             except Exception:
                 logger.exception("Подавленная ошибка (см. traceback выше)")
             pythoncom.CoUninitialize()
+
+    @staticmethod
+    def _offer_region(country: str | None) -> str:
+        country = (country or "").strip()
+        european = {
+            "австрия", "албания", "андорра", "бельгия", "беларусь", "болгария",
+            "босния и герцеговина", "великобритания", "венгрия", "германия", "греция",
+            "дания", "ирландия", "исландия", "испания", "италия", "кипр", "латвия",
+            "литва", "лихтенштейн", "люксембург", "мальта", "молдова", "монако",
+            "нидерланды", "норвегия", "польша", "португалия", "румыния", "сан-марино",
+            "северная македония", "сербия", "словакия", "словения", "финляндия",
+            "франция", "хорватия", "черногория", "чехия", "швейцария", "швеция",
+            "эстония", "украина", "косово", "ватикан", "россия", "рф",
+            "austria", "albania", "andorra", "belgium", "belarus", "bulgaria",
+            "bosnia and herzegovina", "united kingdom", "uk", "hungary", "germany",
+            "greece", "denmark", "ireland", "iceland", "spain", "italy", "cyprus",
+            "latvia", "lithuania", "liechtenstein", "luxembourg", "malta", "moldova",
+            "monaco", "netherlands", "norway", "poland", "portugal", "romania",
+            "san marino", "north macedonia", "serbia", "slovakia", "slovenia",
+            "finland", "france", "croatia", "montenegro", "czech republic",
+            "czechia", "switzerland", "sweden", "estonia", "ukraine", "kosovo",
+            "vatican", "russia", "eu", "евросоюз", "европа",
+        }
+        return "Европа" if country.casefold() in european else (country or "неизвестной стране")
+
+    def _add_costcalc_extra_sheets(self, wb, rows, supplier, price_type):
+        from decimal import ROUND_CEILING
+        offer = wb.Worksheets.Add(After=wb.Worksheets(wb.Worksheets.Count))
+        offer.Name = "Предложение"
+        region = self._offer_region(supplier.country if supplier else "")
+        offer.Cells(2, 1).Value = (
+            f"Товар в наличии в {region}" if price_type == "Stock"
+            else f"Товар под заказ в {region}")
+        for no, value in [(3, "Срок поставки с учетом маркировки ЧЗ до ... недель"),
+                          (4, "Заказ объем от 5 тыс л"), (5, "Самовывоз г.Москва")]:
+            offer.Cells(no, 1).Value = value
+        offer.Cells(7, 6).Value = "Предоплата 100%"
+        offer.Cells(7, 8).Value = "Предоплата 50%"
+        heads = ["Артикул", "Наименование продукта", "Упаковка", "Кол-во, шт",
+                 "Кол-во, л", "Цена с НДС, р/л", "Цена с НДС, р/шт",
+                 "Цена с НДС, р/л", "Цена с НДС, р/шт"]
+        for j, h in enumerate(heads, 1):
+            cell = offer.Cells(8, j); cell.Value = h
+            cell.Font.Bold = True; cell.Interior.Color = self._rgb(205, 205, 205)
+            cell.WrapText = True
+        master = wb.Worksheets.Add(After=wb.Worksheets(wb.Worksheets.Count))
+        master.Name = "для Pricing Master"
+        master_headers = ["Артикул", "Продукт", "Pack", "Себ-ть, л (для Pricing Master)", "Полная себ-ть Мск"]
+        for j, h in enumerate(master_headers, 1):
+            cell = master.Cells(2, j); cell.Value = h
+            cell.Font.Bold = True; cell.Interior.Color = self._rgb(205,205,205)
+            cell.WrapText = True
+        for i, row in enumerate(rows):
+            r = 9 + i; m = 3 + i
+            article = row.get("Supplier Article") or ""
+            name = row.get("Our Product Name") or ""
+            pack = row.get("Pack")
+            qty = row.get("Qty, pcs")
+            vol = row.get("Volume, L")
+            cost = row.get("Full Cost Msk")
+            offer_values = [article, name, pack, qty, vol, None, None, None, None]
+            if cost is not None and cost != "":
+                base = Decimal(str(cost))
+                l100 = int((base * Decimal("1.15")).to_integral_value(rounding=ROUND_CEILING))
+                l50 = int((base * Decimal("1.20")).to_integral_value(rounding=ROUND_CEILING))
+                offer_values[5] = l100
+                offer_values[7] = l50
+                if pack not in (None, "", 0):
+                    offer_values[6] = float(Decimal(l100) * Decimal(str(pack)))
+                    offer_values[8] = float(Decimal(l50) * Decimal(str(pack)))
+            for j, value in enumerate(offer_values, 1):
+                if value is not None: offer.Cells(r, j).Value = value
+            master_values = [article, name, pack, row.get("Cost Novo with VAT"), cost]
+            for j, value in enumerate(master_values, 1):
+                if value is not None and value != "": master.Cells(m, j).Value = value
+        for sheet, start, count in ((offer, 8, 9), (master, 2, 5)):
+            last = start + len(rows)
+            if rows:
+                rng = sheet.Range(sheet.Cells(start,1), sheet.Cells(last,count))
+                for edge in (7,8,9,10,11,12):
+                    rng.Borders(edge).LineStyle = 1
+            sheet.Rows(start).RowHeight = 32
+            sheet.Columns(1).ColumnWidth = 19
+            sheet.Columns(2).ColumnWidth = 46
+            if sheet.Name == "Предложение":
+                sheet.Columns("C:I").ColumnWidth = 16
+                if rows:
+                    sheet.Range(f"F9:I{last}").NumberFormat = "# ##0"
+            else:
+                sheet.Columns("C:E").ColumnWidth = 20
+                if rows:
+                    sheet.Range(f"D3:E{last}").NumberFormat = "# ##0,00"
+            sheet.Cells.Font.Name = "Calibri"
+            sheet.Cells.Font.Size = 11
 
     @staticmethod
     def _rgb(r: int, g: int, b: int) -> int:

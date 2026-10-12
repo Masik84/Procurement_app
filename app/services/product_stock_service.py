@@ -149,6 +149,8 @@ class ProductStockService:
                 source_product_name=r.get("source_product_name"),
                 abc_category=clean_multi_spaces(r.get("abc_category")) or "-",
                 order_qty=r.get("order_qty") or 0,
+                order_cost_total=r.get("order_cost_total") or 0,
+                order_cost_volume=r.get("order_cost_volume") or 0,
                 is_order_qty=r.get("is_order_qty") or 0,
                 is_confirmed_order_qty=r.get("is_confirmed_order_qty") or 0,
                 selected_product_id=None,
@@ -748,6 +750,8 @@ class ProductStockService:
 
         self.session.query(ProductStock).update({
             ProductStock.order_qty: 0,
+            ProductStock.cost_novo_purch_order: None,
+            ProductStock.full_cost_msk_purch_order: None,
             ProductStock.is_order_qty: 0,
             ProductStock.is_confirmed_order_qty: 0,
             ProductStock.supplier_orders_update_date: now,
@@ -765,6 +769,8 @@ class ProductStockService:
 
         grouped = defaultdict(lambda: {
             "order_qty": Decimal("0"),
+            "order_cost_total": Decimal("0"),
+            "order_cost_volume": Decimal("0"),
             "is_order_qty": Decimal("0"),
             "is_confirmed_order_qty": Decimal("0"),
             "abc_category": "-",
@@ -772,6 +778,8 @@ class ProductStockService:
         for row in rows:
             totals = grouped[int(row.selected_product_id)]
             totals["order_qty"] += self._to_decimal(row.order_qty)
+            totals["order_cost_total"] += self._to_decimal(row.order_cost_total)
+            totals["order_cost_volume"] += self._to_decimal(row.order_cost_volume)
             totals["is_order_qty"] += self._to_decimal(row.is_order_qty)
             totals["is_confirmed_order_qty"] += self._to_decimal(row.is_confirmed_order_qty)
             row_abc = clean_multi_spaces(row.abc_category)
@@ -833,6 +841,22 @@ class ProductStockService:
                 stock.order_qty = totals["order_qty"]
                 stock.is_order_qty = totals["is_order_qty"]
                 stock.is_confirmed_order_qty = totals["is_confirmed_order_qty"]
+            volume = totals["order_cost_volume"]
+            cost_novo = totals["order_cost_total"] / volume if volume > 0 else None
+            stock.cost_novo_purch_order = cost_novo
+            if cost_novo is not None:
+                # Standard landed-cost uplift from the product's latest supplier
+                # calculation (preserves existing customs/transport logic).
+                from app.db.models import SupplierPriceCalculation
+                previous_calc = (self.session.query(SupplierPriceCalculation)
+                    .filter(SupplierPriceCalculation.product_id == product_id)
+                    .order_by(SupplierPriceCalculation.calc_date.desc(), SupplierPriceCalculation.id.desc()).first())
+                if previous_calc and self._to_decimal(previous_calc.cost_novo_wvat) > 0:
+                    stock.full_cost_msk_purch_order = cost_novo * (
+                        self._to_decimal(previous_calc.full_cost_msk) /
+                        self._to_decimal(previous_calc.cost_novo_wvat))
+                else:
+                    stock.full_cost_msk_purch_order = None
             saved += 1
 
         self.session.flush()

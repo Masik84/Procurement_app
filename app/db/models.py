@@ -215,6 +215,7 @@ class PriceHistory(Base):
     price_date = Column(DateTime, nullable=False, index=True)
     price = Column(Numeric, nullable=False)
     currency = Column(String(10), nullable=False)
+    price_type = Column(String(25), nullable=False, default="Price List")
 
     supplier = relationship("Supplier", back_populates="price_history")
     product = relationship("Product", back_populates="price_history")
@@ -313,6 +314,7 @@ class SupplierPriceCalculation(Base):
     supplier_product_name = Column(String(500), nullable=True)
 
     supplier_price = Column(Numeric, nullable=False)
+    price_type = Column(String(25), nullable=False, default="Price List")
     cost_novo_wvat = Column(Numeric, nullable=False)
     full_cost_msk = Column(Numeric, nullable=False)
 
@@ -364,6 +366,8 @@ class ProductStock(Base):
     reserve_ecomm_qty = Column(Numeric, nullable=False, default=0)
 
     lpc = Column(Numeric, nullable=False, default=0)
+    cost_novo_purch_order = Column(Numeric, nullable=True)
+    full_cost_msk_purch_order = Column(Numeric, nullable=True)
     landed_cost = Column(Numeric, nullable=False, default=0)
     distr_price = Column(Numeric, nullable=False, default=0)
     promo_price = Column(Numeric, nullable=False, default=0)
@@ -630,8 +634,12 @@ class TempSupplierOrdersImport(Base):
     abc_category = Column(String(50), nullable=False, default="-")
 
     order_qty = Column(Numeric, nullable=False, default=0)
+    order_cost_total = Column(Numeric, nullable=True)
+    order_cost_volume = Column(Numeric, nullable=True)
     is_order_qty = Column(Numeric, nullable=False, default=0)
     is_confirmed_order_qty = Column(Numeric, nullable=False, default=0)
+    order_cost_total = Column(Numeric, nullable=True)
+    order_cost_volume = Column(Numeric, nullable=True)
 
     selected_product_id = Column(
         Integer,

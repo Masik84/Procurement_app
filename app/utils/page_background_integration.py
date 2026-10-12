@@ -452,6 +452,7 @@ def _supplier_apply_changes_in_worker(
     supplier_id: int,
     currency_code: str,
     rf_prices_include_vat: bool,
+    price_type: str,
     save_history: bool,
     fx_rate,
     import_date,
@@ -550,6 +551,7 @@ def _supplier_apply_changes_in_worker(
                         imported_by=imported_by,
                         currency_code=currency_code,
                         rf_prices_include_vat=rf_prices_include_vat,
+                        price_type=price_type,
                     )
 
                 report("Прайс поставщика: рассчитываю себестоимость...")
@@ -559,6 +561,7 @@ def _supplier_apply_changes_in_worker(
                     fx_rate=fx_rate,
                     currency_code=currency_code,
                     rf_prices_include_vat=rf_prices_include_vat,
+                    price_type=price_type,
                 )
                 session.commit()
                 report("Прайс поставщика: данные сохранены в БД.")
@@ -598,6 +601,7 @@ def _supplier_apply_changes_in_worker(
                         quick_order_months=quick_order_months,
                         safe_stock_months=safe_stock_months,
                         supplier_price_age_months=supplier_price_age_months,
+                        price_type=price_type,
                     )
                     report("Прайс поставщика: CostCalc Excel сформирован.")
                 except Exception as exc:
@@ -710,7 +714,7 @@ def _attach_supplier_prices(page) -> None:
         safe_supplier_name = supplier_name
         for ch in ['\\', '/', ':', '*', '?', '"', '<', '>', '|']:
             safe_supplier_name = safe_supplier_name.replace(ch, '_')
-        default_name = f"CostCalc_{safe_supplier_name}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
+        default_name = f"CostCalc_{safe_supplier_name}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_{page.price_type}.xlsx"
         base_dir = Path(__file__).resolve().parents[2]
         file_path, _ = QFileDialog.getSaveFileName(
             page,
@@ -771,6 +775,7 @@ def _attach_supplier_prices(page) -> None:
                 "supplier_id": int(supplier_id),
                 "currency_code": currency_code,
                 "rf_prices_include_vat": bool(rf_prices_include_vat),
+                    "price_type": page.price_type,
                 "save_history": page.ui.cbo_History.currentText() == "да",
                 "fx_rate": fx_rate,
                 "import_date": page.get_price_date(),

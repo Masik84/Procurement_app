@@ -82,6 +82,7 @@ class SupplierPricesPage(QWidget):
         self.batch_id = ""
         self.selected_file_path = ""
         self.rf_prices_include_vat = False
+        self.price_type = "Price List"
         self._export_quick_order_months = None
         self._export_safe_stock_months = None
         self._excel_export_thread = None
@@ -356,7 +357,7 @@ class SupplierPricesPage(QWidget):
         for ch in ['\\', '/', ':', '*', '?', '"', '<', '>', '|']:
             safe_supplier_name = safe_supplier_name.replace(ch, '_')
 
-        default_name = f"CostCalc_{safe_supplier_name}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
+        default_name = f"CostCalc_{safe_supplier_name}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_{self.price_type}.xlsx"
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Сохранить Excel файл",
@@ -385,6 +386,7 @@ class SupplierPricesPage(QWidget):
                     quick_order_months=quick_order_months,
                     safe_stock_months=safe_stock_months,
                     supplier_price_age_months=supplier_price_age_months,
+                    price_type=self.price_type,
                 )
 
         started = start_excel_export(
@@ -734,6 +736,15 @@ class SupplierPricesPage(QWidget):
         )
         if not file_path:
             return
+
+        choice, accepted = QInputDialog.getItem(
+            self, "Тип цен поставщика", "Признак прайс-листа:",
+            ["Stock", "Price Request", "Price List"],
+            ["Stock", "Price Request", "Price List"].index(self.price_type), False,
+        )
+        if not accepted:
+            return
+        self.price_type = choice
 
         try:
             importer = SupplierPriceImporter()
@@ -1476,6 +1487,7 @@ class SupplierPricesPage(QWidget):
                         imported_by=self.imported_by,
                         currency_code=currency_code,
                         rf_prices_include_vat=rf_prices_include_vat,
+                        price_type=self.price_type,
                     )
 
                 fx_rate = self.parse_decimal_field(self.ui.line_ExchangeRate, "Курс")
@@ -1485,6 +1497,7 @@ class SupplierPricesPage(QWidget):
                     fx_rate=fx_rate,
                     currency_code=currency_code,
                     rf_prices_include_vat=rf_prices_include_vat,
+                    price_type=self.price_type,
                 )
                 session.commit()
 

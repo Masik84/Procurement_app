@@ -126,6 +126,7 @@ def _install_service_optimizations() -> None:
             fx_rate,
             currency_code: str,
             rf_prices_include_vat: bool = False,
+            price_type: str = "Price List",
         ) -> int:
             refs = (
                 self.session.query(
@@ -159,6 +160,7 @@ def _install_service_optimizations() -> None:
                 fx_rate=fx_rate,
                 currency_code=currency_code,
                 rf_prices_include_vat=rf_prices_include_vat,
+                price_type=price_type,
             )
 
         save_supplier_price_calculations_fast._supplier_price_preload_fast = True
@@ -276,6 +278,7 @@ def _supplier_apply_changes_in_worker_fast(
     supplier_id: int,
     currency_code: str,
     rf_prices_include_vat: bool,
+    price_type: str,
     save_history: bool,
     fx_rate,
     import_date,
@@ -348,6 +351,7 @@ def _supplier_apply_changes_in_worker_fast(
                         imported_by=imported_by,
                         currency_code=currency_code,
                         rf_prices_include_vat=rf_prices_include_vat,
+                        price_type=price_type,
                     )
                     stage_done("history", started, "История цен сохранена")
 
@@ -359,6 +363,7 @@ def _supplier_apply_changes_in_worker_fast(
                     fx_rate=fx_rate,
                     currency_code=currency_code,
                     rf_prices_include_vat=rf_prices_include_vat,
+                    price_type=price_type,
                 )
                 stage_done("calculation", started, "Себестоимость рассчитана")
 
@@ -479,7 +484,7 @@ def _install_page_flow() -> None:
             safe_supplier_name = supplier_name
             for ch in ['\\', '/', ':', '*', '?', '"', '<', '>', '|']:
                 safe_supplier_name = safe_supplier_name.replace(ch, '_')
-            default_name = f"CostCalc_{safe_supplier_name}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
+            default_name = f"CostCalc_{safe_supplier_name}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}_{page.price_type}.xlsx"
             base_dir = Path(__file__).resolve().parents[1]
             file_path, _ = QFileDialog.getSaveFileName(
                 page,
@@ -545,6 +550,7 @@ def _install_page_flow() -> None:
                     "supplier_id": int(supplier_id),
                     "currency_code": currency_code,
                     "rf_prices_include_vat": bool(rf_prices_include_vat),
+                    "price_type": page.price_type,
                     "save_history": page.ui.cbo_History.currentText() == "да",
                     "fx_rate": fx_rate,
                     "import_date": page.get_price_date(),
@@ -607,6 +613,7 @@ def _install_page_flow() -> None:
                                     quick_order_months=snapshot.get("quick_order_months"),
                                     safe_stock_months=snapshot.get("safe_stock_months"),
                                     supplier_price_age_months=snapshot.get("supplier_price_age_months"),
+                                    price_type=snapshot.get("price_type", "Price List"),
                                 )
                                 elapsed = time.perf_counter() - started
                                 progress(f"CostCalc Excel сформирован за {elapsed:.2f} с.")

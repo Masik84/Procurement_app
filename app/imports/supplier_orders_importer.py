@@ -61,6 +61,7 @@ class SupplierOrdersImporter:
         if col_prod < 0:
             col_prod = _find_header_index(headers, "Product name Назв на англ", "PRODUCT", "NAME")
         col_qty = _find_header_index(headers, "Кол-во, л", "КОЛ", "Л")
+        col_order_cost = _find_header_index(headers, "Себ-ть поставки с НДС партии", "СЕБ-ТЬ", "ПОСТАВКИ", "ПАРТИИ")
 
         required = [
             col_status, col_brand, col_supplier1, col_article, col_our_product, col_pack, col_excise,
@@ -81,6 +82,12 @@ class SupplierOrdersImporter:
             'product_name': data.iloc[:, col_prod].fillna('').map(_norm),
             'order_qty': pd.to_numeric(data.iloc[:, col_qty], errors='coerce').fillna(0).astype(float),
         })
+        # Only supplier orders contribute to weighted Novo cost. Treat missing
+        # amounts as absent, never as a zero cost that drags down the average.
+        df2['order_cost_total'] = (pd.to_numeric(data.iloc[:, col_order_cost], errors='coerce')
+            if col_order_cost >= 0 else pd.Series(float('nan'), index=data.index))
+        df2['order_cost_volume'] = df2['order_qty'].where(df2['order_cost_total'].notna() & (df2['order_qty'] > 0), 0)
+        df2['order_cost_total'] = df2['order_cost_total'].where(df2['order_cost_volume'] > 0, 0)
         df2['import_row_no'] = df2.index + 3
 
         non_empty_mask = (
@@ -133,6 +140,8 @@ class SupplierOrdersImporter:
                 source_our_product_name=('our_product_name', lambda s: next((x for x in s if x), '')),
                 abc_category=('abc_category', lambda s: next((x for x in s if x and x != '-'), '-')),
                 source_product_name=('product_name', lambda s: next((x for x in s if x), '')),
+                order_cost_total=('order_cost_total', 'sum'),
+                order_cost_volume=('order_cost_volume', 'sum'),
                 order_qty=('order_qty', 'sum'),
                 is_order_qty=('is_order_qty', 'sum'),
                 is_confirmed_order_qty=('is_confirmed_order_qty', 'sum'),
@@ -152,6 +161,8 @@ class SupplierOrdersImporter:
                 'new_brand': rec['source_brand'] or None,
                 'new_pack': rec['source_pack'],
                 'new_is_excise': rec['source_is_excise'],
+                'order_cost_total': float(rec['order_cost_total'] or 0),
+                'order_cost_volume': float(rec['order_cost_volume'] or 0),
                 'order_qty': float(rec['order_qty'] or 0),
                 'is_order_qty': float(rec['is_order_qty'] or 0),
                 'is_confirmed_order_qty': float(rec['is_confirmed_order_qty'] or 0),

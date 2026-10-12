@@ -439,6 +439,7 @@ class PriceRepository:
                 price_date=price_date,
                 price=price_value,
                 currency=currency_code,
+                price_type=str(record.get("price_type") or "Price List"),
             ))
 
             key = (supplier_id, product_id)
