@@ -32,6 +32,17 @@ logger = logging.getLogger(__name__)
 _installed = False
 
 
+def _costcalc_export_requested(output_path: str | None) -> bool:
+    """Excel export is a separate user choice, independent of price history.
+
+    In particular, a zero history count (when "Сохранять историю" = "нет")
+    must never suppress an explicitly requested CostCalc workbook.  The
+    calculated row count is not an export gate either: the workbook's
+    "Анализ" sheet also contains unmatched source rows for review.
+    """
+    return bool(str(output_path or "").strip())
+
+
 def _install_service_optimizations() -> None:
     from app.db.models import PackType, TempPriceImport
     from app.services import supplier_price_service as service_module
@@ -183,6 +194,11 @@ def _apply_pending_changes_bulk(
     from app.services.qty_in_box_service import normalize_qty_in_box
     from app.utils.parsers import parse_loose_number
     from app.utils.text import clean_multi_spaces
+    from app.utils.staging_row_ids import validated_staging_ids
+
+    # Validate all deletion IDs *before* issuing any UPDATE/SELECT so a
+    # corrupted GUI role cannot reach a PostgreSQL integer-ID predicate.
+    delete_ids = validated_staging_ids(pending_deletes)
 
     batch_filter = (
         TempPriceImport.batch_id == batch_id,
@@ -263,9 +279,9 @@ def _apply_pending_changes_bulk(
             if has_new_product_data and row.new_is_excise is None:
                 row.new_is_excise = False
 
-    if pending_deletes:
+    if delete_ids:
         session.query(TempPriceImport).filter(
-            TempPriceImport.id.in_(pending_deletes),
+            TempPriceImport.id.in_(delete_ids),
             *batch_filter,
         ).delete(synchronize_session=False)
 
@@ -275,7 +291,9 @@ def _apply_pending_changes_bulk(
 
 def _supplier_apply_changes_in_worker_fast(
     *,
-    supplier_id: int,
+    supplier_id: int | None,
+    supplier_form_data,
+    fx_rate_to_rub,
     currency_code: str,
     rf_prices_include_vat: bool,
     price_type: str,
@@ -295,10 +313,11 @@ def _supplier_apply_changes_in_worker_fast(
 ) -> dict:
     """Fast DB save worker.  CostCalc Excel is intentionally NOT generated here."""
     from app.db.db import SessionLocal
-    from app.db.models import TempPriceImport
+    from app.db.models import ExchangeRate, Product, TempPriceImport
     from app.exports.supplier_price_exporter import SupplierPriceExporter
     from app.services.product_matching_service import MissingPackTypeError
     from app.services.supplier_price_service import SupplierPriceService
+    from app.services.supplier_service import SupplierService
 
     report = progress or (lambda _text: None)
     base_dir = Path(__file__).resolve().parents[1]
@@ -314,6 +333,31 @@ def _supplier_apply_changes_in_worker_fast(
         with SessionLocal() as session:
             service = SupplierPriceService(session)
             try:
+                # The previous Save handler executed an UPSERT + COMMIT and
+                # three supplier-list queries *before* starting QThread.
+                # Keep every database operation on the worker connection.
+                started = time.perf_counter()
+                report("Прайс поставщика: проверяю временную партию...")
+                has_batch_rows = session.query(TempPriceImport.id).filter(
+                    TempPriceImport.batch_id == batch_id,
+                    TempPriceImport.imported_by == imported_by,
+                ).first() is not None
+                if not (has_batch_rows or pending_changes or pending_deletes):
+                    return {"status": "no_changes"}
+
+                supplier_service = SupplierService(session)
+                supplier = supplier_service.ensure_supplier(
+                    supplier_id=supplier_id,
+                    data=supplier_form_data,
+                )
+                actual_supplier_id = int(supplier.id)
+                if fx_rate_to_rub is not None and supplier.base_currency:
+                    supplier_service.save_exchange_rate(
+                        supplier.base_currency, float(fx_rate_to_rub)
+                    )
+                session.flush()
+                stage_done("supplier", started, "Поставщик и курс проверены")
+
                 started = time.perf_counter()
                 report("Прайс поставщика: сохраняю изменения строк...")
                 _apply_pending_changes_bulk(
@@ -321,7 +365,7 @@ def _supplier_apply_changes_in_worker_fast(
                     TempPriceImport=TempPriceImport,
                     pending_changes=pending_changes,
                     pending_deletes=pending_deletes,
-                    supplier_id=supplier_id,
+                    supplier_id=actual_supplier_id,
                     import_date=import_date,
                     batch_id=batch_id,
                     imported_by=imported_by,
@@ -392,16 +436,56 @@ def _supplier_apply_changes_in_worker_fast(
                 except Exception as exc:  # warning export must not roll back saved data
                     warning_error = str(exc)
 
+            # Keep the staging rows until the user-requested CostCalc export
+            # finishes. "Save history = no" does NOT disable calculations,
+            # export or the unmatched rows displayed on the Analysis sheet.
+            cleanup_error = ""
+            if not _costcalc_export_requested(export_output_path):
+                try:
+                    report("Прайс поставщика: очищаю временные данные...")
+                    service.delete_supplier_price_calculations(batch_id, imported_by)
+                    service.delete_temp_rows_for_user(imported_by)
+                    session.commit()
+                except Exception as exc:
+                    session.rollback()
+                    cleanup_error = str(exc)
+                    logger.exception("Ошибка очистки staging прайса после сохранения")
+
+            # Save-completion GUI must not issue PostgreSQL reads.  Cache the
+            # three small selector lists here (after commit / new products).
+            # Failure to read a list is non-fatal: keep existing selectors.
+            reference_data = None
+            try:
+                reference_data = {
+                    "suppliers": [
+                        (str(row.name), int(row.id))
+                        for row in SupplierService(session).get_all_suppliers()
+                    ],
+                    "currencies": [
+                        str(code) for (code,) in session.query(ExchangeRate.currency_code)
+                        .order_by(ExchangeRate.currency_code.asc()).all() if code
+                    ],
+                    "brands": [
+                        str(brand) for (brand,) in session.query(Product.brand)
+                        .filter(Product.brand.isnot(None), Product.brand != "")
+                        .distinct().order_by(Product.brand.asc()).all() if brand
+                    ],
+                }
+            except Exception:
+                logger.exception("Не удалось подготовить справочники для GUI")
+
             timings["total"] = time.perf_counter() - total_started
             report(f"Сохранение прайса завершено за {timings['total']:.2f} с.")
             return {
+                "reference_data": reference_data,
                 "status": "success",
+                "cleanup_error": cleanup_error,
                 "saved_prices_count": saved_prices_count,
                 "saved_calculations_count": saved_calculations_count,
                 "warning_path": str(warning_path) if warning_path else "",
                 "warning_error": warning_error or "",
                 "rf_prices_include_vat": rf_prices_include_vat,
-                "supplier_id": supplier_id,
+                "supplier_id": actual_supplier_id,
                 "timings": timings,
                 # Kept in the signature/snapshot for compatibility, but Excel
                 # runs in a second task after this worker has finished.
@@ -448,10 +532,10 @@ def _install_page_flow() -> None:
                 if not page._pending_changes:
                     return
                 pending_ids = set(page._pending_changes)
-                for row, row_id in enumerate(page._table_row_ids):
-                    if row >= page.table.rowCount():
-                        break
-                    if row_id not in pending_ids:
+                from app.utils.table_view_context import table_row_id
+                for row in range(page.table.rowCount()):
+                    row_id = table_row_id(page.table, row)
+                    if row_id is None or row_id not in pending_ids:
                         continue
                     changes = page._pending_changes[row_id]
                     for column, column_name in enumerate(page.columns):
@@ -498,18 +582,62 @@ def _install_page_flow() -> None:
                 file_path += ".xlsx"
             return file_path
 
+        def reset_form_from_worker_data(reference_data) -> None:
+            """Clear form without SELECT queries on the Qt event loop."""
+            if reference_data is None:
+                # This is a non-critical display list; next user-initiated
+                # refresh can reload it, without blocking the task monitor.
+                logger.warning("Supplier Prices: справочники не обновлены после сохранения")
+                page.apply_default_values()
+                return
+
+            for combo, entries, has_ids in (
+                (page.ui.cbo_SupplName, reference_data["suppliers"], True),
+                (page.ui.cbo_Currency, reference_data["currencies"], False),
+                (page.ui.cbo_FindBrand, reference_data["brands"], False),
+            ):
+                was_blocked = combo.blockSignals(True)
+                try:
+                    combo.clear()
+                    if has_ids:
+                        combo.addItem("-", None)
+                        for name, row_id in entries:
+                            combo.addItem(name, row_id)
+                    else:
+                        combo.addItem("-")
+                        combo.addItems(entries)
+                finally:
+                    combo.blockSignals(was_blocked)
+            page.apply_default_values()
+
         def save_background_fast() -> None:
             from app.db.models import TempPriceImport
             from app.utils.pack_type_prompt import resolve_missing_pack_for_temp_rows
 
-            page._commit_open_editors()
-            has_batch_rows = page._has_rows_in_current_batch()
-            if not page._pending_changes and not page._pending_deletes and not has_batch_rows:
-                page.show_message("Нет изменений")
+            # Saving an open product combo must not issue PostgreSQL reads /
+            # commits on the GUI thread. finish_product_edit() uses the
+            # already loaded combo metadata, and the background batch updater
+            # applies its pending fields inside the worker transaction.
+            page._defer_supplier_save_editor_commit = True
+            try:
+                page._commit_open_editors()
+            finally:
+                page._defer_supplier_save_editor_commit = False
+            # No DB session is opened on the GUI thread. The worker checks
+            # the existence of staged rows and does supplier/rate UPSERT.
+            # A search filter can hide all visible rows while the staging
+            # batch still exists; only the worker can authoritatively decide
+            # that there are no records to save.
+            if not page.choose_price_type_before_save():
                 return
 
             try:
-                supplier_id = page.ensure_supplier(save_existing_changes=True)
+                from app.utils.staging_row_ids import validated_staging_ids
+                validated_staging_ids(page._pending_deletes)
+                supplier_id = page.ui.cbo_SupplName.currentData()
+                if page.ui.cbx_NewSupplier.isChecked():
+                    supplier_id = None
+                supplier_form_data = page.get_supplier_form_data()
                 currency_code = clean_multi_spaces(page.ui.cbo_Currency.currentText()).upper()
                 if not currency_code or currency_code == "-":
                     raise ValueError("Выбери валюту")
@@ -539,6 +667,8 @@ def _install_page_flow() -> None:
                 return
 
             def build_snapshot() -> dict:
+                from app.utils.staging_row_ids import validated_staging_ids
+                delete_ids = validated_staging_ids(page._pending_deletes)
                 # Keep only real edits.  This is intentionally repeated here in
                 # case an older display path left empty placeholders behind.
                 pending_changes = {
@@ -547,7 +677,9 @@ def _install_page_flow() -> None:
                     if changes
                 }
                 return {
-                    "supplier_id": int(supplier_id),
+                    "supplier_id": int(supplier_id) if supplier_id is not None else None,
+                    "supplier_form_data": supplier_form_data,
+                    "fx_rate_to_rub": fx_rate,
                     "currency_code": currency_code,
                     "rf_prices_include_vat": bool(rf_prices_include_vat),
                     "price_type": page.price_type,
@@ -557,7 +689,7 @@ def _install_page_flow() -> None:
                     "batch_id": page.batch_id,
                     "imported_by": page.imported_by,
                     "pending_changes": pending_changes,
-                    "pending_deletes": set(page._pending_deletes),
+                    "pending_deletes": delete_ids,
                     "selected_file_path": page.selected_file_path,
                     **export_config,
                 }
@@ -569,9 +701,16 @@ def _install_page_flow() -> None:
                 warning_error: str = "",
                 export_path: str = "",
                 export_error: str = "",
+                cleanup_error: str = "",
+                save_payload_reference_data=None,
             ) -> None:
-                page.cleanup_current_batch(start_new_batch_after=True)
-                page.reset_form_fields_after_successful_save()
+                # SQL cleanup is finished in a worker, not on Qt's event loop.
+                page.cleanup_current_batch(
+                    start_new_batch_after=True,
+                    database_cleanup=False,
+                    reload_table=False,
+                )
+                reset_form_from_worker_data(save_payload_reference_data)
 
                 if export_path:
                     page.show_message("Данные сохранены, CostCalc Excel сохранён")
@@ -583,6 +722,11 @@ def _install_page_flow() -> None:
                     page.show_message("Данные сохранены")
 
                 errors: list[str] = []
+                if cleanup_error:
+                    errors.append(
+                        f"Не удалось очистить временные данные: {cleanup_error}. "
+                        "Сохранённые данные в БД не отменены."
+                    )
                 if warning_error:
                     errors.append(f"Warning-файл не удалось сохранить: {warning_error}")
                 if export_error:
@@ -598,12 +742,13 @@ def _install_page_flow() -> None:
                 def export_work(progress):
                     from app.db.db import SessionLocal
                     from app.exports.supplier_price_exporter import SupplierPriceExporter
+                    from app.services.supplier_price_service import SupplierPriceService
 
                     try:
-                        started = time.perf_counter()
-                        progress("CostCalc: формирую Excel...")
                         with SessionLocal() as session:
                             try:
+                                started = time.perf_counter()
+                                progress("CostCalc: формирую Excel...")
                                 result_path = SupplierPriceExporter(session).export_calculated(
                                     batch_id=snapshot["batch_id"],
                                     imported_by=snapshot["imported_by"],
@@ -617,10 +762,37 @@ def _install_page_flow() -> None:
                                 )
                                 elapsed = time.perf_counter() - started
                                 progress(f"CostCalc Excel сформирован за {elapsed:.2f} с.")
-                                return {"status": "success", "path": str(result_path)}
+                                result = {"status": "success", "path": str(result_path)}
+                                # ShellExecute may briefly block while Windows
+                                # starts Excel. Never do that on the GUI thread.
+                                # os.startfile is Windows-only and launches via
+                                # the registered file association.
+                                import os
+                                if os.name == "nt":
+                                    try:
+                                        os.startfile(str(result_path))
+                                        result["opened_in_worker"] = True
+                                    except OSError:
+                                        logger.exception("CostCalc сохранён, но Excel не открылся")
                             except Exception as exc:
                                 logger.exception("CostCalc Excel export failed after DB save")
-                                return {"status": "error", "error": str(exc)}
+                                result = {"status": "error", "error": str(exc)}
+
+                            # Always clean AFTER the export attempt, including on
+                            # an Excel error; export needs the staging rows.
+                            try:
+                                progress("Прайс поставщика: очищаю временные данные...")
+                                service = SupplierPriceService(session)
+                                service.delete_supplier_price_calculations(
+                                    snapshot["batch_id"], snapshot["imported_by"]
+                                )
+                                service.delete_temp_rows_for_user(snapshot["imported_by"])
+                                session.commit()
+                            except Exception as exc:
+                                session.rollback()
+                                result["cleanup_error"] = str(exc)
+                                logger.exception("Ошибка очистки staging после CostCalc Excel")
+                            return result
                     finally:
                         SessionLocal.remove()
 
@@ -629,7 +801,9 @@ def _install_page_flow() -> None:
                     export_error = ""
                     if export_payload.get("status") == "success":
                         export_path = export_payload.get("path") or ""
-                        if export_path:
+                        if export_path and not export_payload.get("opened_in_worker"):
+                            # Non-Windows fallback; Windows opens Excel from
+                            # the export worker so GUI navigation stays usable.
                             QDesktopServices.openUrl(QUrl.fromLocalFile(str(export_path)))
                     else:
                         export_error = export_payload.get("error") or "Неизвестная ошибка формирования CostCalc Excel"
@@ -640,6 +814,11 @@ def _install_page_flow() -> None:
                         warning_error=save_payload.get("warning_error") or "",
                         export_path=export_path,
                         export_error=export_error,
+                        cleanup_error=(
+                            export_payload.get("cleanup_error")
+                            or save_payload.get("cleanup_error") or ""
+                        ),
+                        save_payload_reference_data=save_payload.get("reference_data"),
                     )
 
                 started = pbi._start_page_task(
@@ -649,10 +828,12 @@ def _install_page_flow() -> None:
                     on_finished=export_done,
                     read_resources={
                         "products", "product_articles", "supplier_prices",
-                        "supplier_price_calculations", "product_stock", "product_uc3_history",
+                        "product_stock", "product_uc3_history",
+                    },
+                    write_resources={
+                        "supplier_price_calculations",
                         f"temp_price_import:{page.imported_by}",
                     },
-                    write_resources=set(),
                     intro="Данные в БД сохранены. CostCalc Excel формируется отдельной фоновой задачей.",
                     use_progress=True,
                 )
@@ -663,6 +844,9 @@ def _install_page_flow() -> None:
                     return _supplier_apply_changes_in_worker_fast(**snapshot, progress=progress)
 
                 def done(payload):
+                    if payload.get("status") == "no_changes":
+                        page.show_message("Нет изменений")
+                        return
                     if payload.get("status") == "missing_pack":
                         error = payload.get("error")
                         if resolve_missing_pack_for_temp_rows(
@@ -677,6 +861,9 @@ def _install_page_flow() -> None:
                             launch_save(retry_snapshot)
                         return
 
+                    # Supplier was created/updated in the background. Use
+                    # its committed primary key for the Excel export.
+                    snapshot["supplier_id"] = int(payload["supplier_id"])
                     page.rf_prices_include_vat = bool(payload.get("rf_prices_include_vat"))
                     page._pending_changes.clear()
                     page._pending_deletes.clear()
@@ -688,7 +875,11 @@ def _install_page_flow() -> None:
                     saved_prices_count = int(payload.get("saved_prices_count") or 0)
                     saved_calculations_count = int(payload.get("saved_calculations_count") or 0)
 
-                    if snapshot.get("export_output_path") and saved_calculations_count > 0:
+                    # Export is controlled solely by the explicit Excel
+                    # choice, NEVER by the history toggle or history count.
+                    # Even when no lines can be costed, Analysis should still
+                    # show unmatched source rows for the user's inspection.
+                    if _costcalc_export_requested(snapshot.get("export_output_path")):
                         if launch_costcalc_export(snapshot, payload):
                             return
                         finalize_saved(
@@ -696,6 +887,10 @@ def _install_page_flow() -> None:
                             saved_calculations_count=saved_calculations_count,
                             warning_error=payload.get("warning_error") or "",
                             export_error="Не удалось запустить фоновую задачу CostCalc Excel",
+                            cleanup_error=(
+                                "Фоновая очистка не запущена; временная партия сохранена в БД"
+                            ),
+                            save_payload_reference_data=payload.get("reference_data"),
                         )
                         return
 
@@ -703,6 +898,8 @@ def _install_page_flow() -> None:
                         saved_prices_count=saved_prices_count,
                         saved_calculations_count=saved_calculations_count,
                         warning_error=payload.get("warning_error") or "",
+                        cleanup_error=payload.get("cleanup_error") or "",
+                        save_payload_reference_data=payload.get("reference_data"),
                     )
 
                 pbi._start_page_task(

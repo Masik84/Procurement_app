@@ -41,6 +41,8 @@ from app.utils.parsers import parse_loose_number
 from app.utils.text import clean_multi_spaces
 from app.services.qty_in_box_service import normalize_qty_in_box
 from app.utils.gui_table_actions import commit_active_table_item_editors
+from app.utils.table_view_context import capture_table_context, restore_table_context, table_row_id, find_table_row_id
+from app.utils.staging_counters import aggregate_import_counters
 from app.ui.table_style import *
 from app.utils.output_headers import display_headers
 from app.utils.message_dialogs import ask_yes_no, show_error
@@ -209,14 +211,21 @@ class ProductStockPage(QWidget):
 
 
     def show_message(self, text: str):
+        self._message_generation = getattr(self, "_message_generation", 0) + 1
+        generation = self._message_generation
         self.ui.label_msg.setText(text)
         self.ui.label_msg.setProperty("active", True)
         self.ui.label_msg.style().unpolish(self.ui.label_msg)
         self.ui.label_msg.style().polish(self.ui.label_msg)
         self.ui.label_msg.setVisible(True)
-        QTimer.singleShot(10000, self.clear_message)
+        # A previous task's timer must not clear a newer 'completed' message.
+        QTimer.singleShot(10000, lambda: (
+            self.clear_message()
+            if self._message_generation == generation else None
+        ))
 
     def clear_message(self):
+        self._message_generation = getattr(self, "_message_generation", 0) + 1
         self.ui.label_msg.setText("")
         self.ui.label_msg.setProperty("active", False)
         self.ui.label_msg.style().unpolish(self.ui.label_msg)
@@ -317,7 +326,7 @@ class ProductStockPage(QWidget):
             self.clear_table()
         else:
             self.display_table(data)
-        self.refresh_counters()
+        self.refresh_counters(rows=rows)
 
     def _row_to_dict(self, row) -> dict[str, Any]:
         show_new_product_fields = row.selected_product_id is None
@@ -408,10 +417,14 @@ class ProductStockPage(QWidget):
         return "" if text.lower() == "nan" else text
 
     def display_table(self, data: list[dict[str, Any]]):
+        # Qt can reorder rows as soon as a sort-column item is inserted.
+        # Populate with sorting paused so widgets and IDs stay in one row.
+        view_context = capture_table_context(self.table)
         self._updating_table = True
+        signals_were_blocked = self.table.blockSignals(True)
+        self.table.setSortingEnabled(False)
         try:
             columns = COLUMN_DEFS[self._mode]
-            self.table.blockSignals(True)
             self.table.clear()
             self.table.setColumnCount(len(columns))
             self.table.setHorizontalHeaderLabels([c.header for c in columns])
@@ -449,7 +462,9 @@ class ProductStockPage(QWidget):
 
             resize_columns_for_multiline_headers(self.table)
         finally:
-            self.table.blockSignals(False)
+            self.table.setSortingEnabled(view_context.sorting_enabled)
+            restore_table_context(self.table, view_context)
+            self.table.blockSignals(signals_were_blocked)
             self._updating_table = False
 
     def start_cell_edit(self, row: int, column: int):
@@ -538,27 +553,44 @@ class ProductStockPage(QWidget):
             row = self._get_row_by_id(session, row_id)
             return row.new_brand or "" if row else ""
 
+    def _replace_active_combo(self, row_id: int, field_name: str, text: str) -> None:
+        """Replace a combo by DB row identity even if the visual order changed.
+
+        Updating the sorted column may move the row immediately in Qt. Pause
+        sorting for the single-row update and locate it again afterwards.
+        """
+        row = find_table_row_id(self.table, row_id)
+        column = self._column_index_by_key(field_name)
+        if row < 0 or column < 0:
+            return
+        sorting_enabled = self.table.isSortingEnabled()
+        self._updating_table = True
+        self.table.setSortingEnabled(False)
+        try:
+            self.table.removeCellWidget(row, column)
+            self.table.setItem(row, column, self._build_display_item(row_id, field_name, text))
+        finally:
+            self.table.setSortingEnabled(sorting_enabled)
+            self._updating_table = False
+        new_row = find_table_row_id(self.table, row_id)
+        if new_row >= 0:
+            self.table.setCurrentCell(new_row, column)
+
     def finish_product_edit(self, row: int, row_id: int, combo: QComboBox, field_name: str):
         value = combo.currentData()
+        label = combo.currentText().strip()
         try:
             value = int(value)
         except (TypeError, ValueError):
             value = None
 
-        current_col = self.table.currentColumn()
-        current_row = self.table.currentRow()
-        self.update_temp_field(row_id, field_name, value, reload=False)
-        self._updating_table = True
-        self.table.removeCellWidget(row, self._column_index_by_key(field_name))
-        self.table.setItem(
-            row,
-            self._column_index_by_key(field_name),
-            self._build_display_item(row_id, field_name, combo.currentText().strip()),
-        )
-        self._updating_table = False
+        # Never paint a DB change as saved if the transaction failed.
+        if not self.update_temp_field(row_id, field_name, value, reload=False):
+            self.load_table()
+            return
         if value is not None:
-            self._product_name_cache[int(value)] = combo.currentText().strip()
-        self.table.setCurrentCell(current_row if current_row >= 0 else row, current_col if current_col >= 0 else self._column_index_by_key(field_name))
+            self._product_name_cache[int(value)] = label
+        self._replace_active_combo(row_id, field_name, label)
 
     def finish_brand_edit(self, row: int, row_id: int, combo: QComboBox, field_name: str):
         if self._editing_table_cell:
@@ -568,31 +600,29 @@ class ProductStockPage(QWidget):
         try:
             text = clean_multi_spaces(combo.currentText())
             text = text.upper() if text else None
-
-            current_col = self.table.currentColumn()
-            current_row = self.table.currentRow()
-
-            self.update_temp_field(
-                row_id,
-                field_name,
-                text,
-                reload=False,
-                clear_selected=True,
-            )
-
-            self._updating_table = True
-            self.table.removeCellWidget(row, self._column_index_by_key(field_name))
-            self.table.setItem(
-                row,
-                self._column_index_by_key(field_name),
-                self._build_display_item(row_id, field_name, text or ""),
-            )
-            self._updating_table = False
-
-            self.table.setCurrentCell(
-                current_row if current_row >= 0 else row,
-                current_col if current_col >= 0 else self._column_index_by_key(field_name),
-            )
+            if not self.update_temp_field(
+                row_id, field_name, text, reload=False, clear_selected=True,
+            ):
+                self.load_table()
+                return
+            self._replace_active_combo(row_id, field_name, text or "")
+            # A non-empty new brand invalidates the existing product link in DB.
+            # Keep the displayed 'Our product' cell consistent with that change.
+            if text:
+                product_col = self._column_index_by_key("selected_product_id")
+                current_row = find_table_row_id(self.table, row_id)
+                if current_row >= 0 and product_col >= 0:
+                    sorting_enabled = self.table.isSortingEnabled()
+                    self._updating_table = True
+                    self.table.setSortingEnabled(False)
+                    try:
+                        self.table.setItem(
+                            current_row, product_col,
+                            self._build_display_item(row_id, "selected_product_id", ""),
+                        )
+                    finally:
+                        self.table.setSortingEnabled(sorting_enabled)
+                        self._updating_table = False
         finally:
             self._editing_table_cell = False
 
@@ -643,7 +673,18 @@ class ProductStockPage(QWidget):
     def _build_checkbox(self, row_id: int, field_name: str, checked: bool):
         checkbox = QCheckBox()
         checkbox.setChecked(checked)
-        checkbox.toggled.connect(lambda state, rid=row_id, fn=field_name: self.update_temp_field(rid, fn, bool(state), reload=False, clear_selected=True))
+
+        def on_toggled(state: bool):
+            if self.update_temp_field(row_id, field_name, bool(state), reload=False, clear_selected=True):
+                return
+            # A failed PostgreSQL commit must not leave the checkbox looking saved.
+            was_blocked = checkbox.blockSignals(True)
+            try:
+                checkbox.setChecked(not state)
+            finally:
+                checkbox.blockSignals(was_blocked)
+
+        checkbox.toggled.connect(on_toggled)
         container = QWidget()
         layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -746,12 +787,46 @@ class ProductStockPage(QWidget):
             value = None
 
         clear_selected = col.key in {"new_product_name", "new_pack", "new_qty_in_box"}
-        self.update_temp_field(row_id, col.key, value, reload=False, clear_selected=clear_selected)
-
-        if col.key in {"source_article", "source_product_name"}:
+        auto_match_field = col.key in {"source_article", "source_product_name"}
+        # Counters depend only on the product link and quantity fields.
+        # Matching handles its own counter update (or a full table refresh),
+        # so a source-name edit must not fetch the counters twice.
+        affects_counters = col.key in {
+            "stock_qty", "transit_qty", "markdown_qty", "reserve_qty",
+            "reserve_ecomm_qty", "order_qty", "is_order_qty",
+            "is_confirmed_order_qty", "confirmed_qty", "remains_qty",
+            "new_product_name", "new_pack", "new_qty_in_box",
+        }
+        saved = self.update_temp_field(
+            row_id, col.key, value,
+            reload=False,
+            clear_selected=clear_selected,
+            refresh_counters=affects_counters,
+        )
+        if not saved:
+            # The item already changed visually. A failed transaction must
+            # never leave this value looking persisted in the table.
+            self.load_table()
+            return
+        if auto_match_field:
             self.try_auto_match_row(row_id)
-        elif col.key in {"new_product_name", "new_brand", "new_pack", "new_qty_in_box", "new_is_excise"}:
-            self.refresh_counters()
+        elif clear_selected and value not in (None, ""):
+            # The database unlinks the old product when a new-product field
+            # is filled. Reflect that change without reloading all rows.
+            product_col = self._column_index_by_key("selected_product_id")
+            current_row = find_table_row_id(self.table, row_id)
+            if current_row >= 0 and product_col >= 0:
+                previous_sorting = self.table.isSortingEnabled()
+                self._updating_table = True
+                self.table.setSortingEnabled(False)
+                try:
+                    self.table.setItem(
+                        current_row, product_col,
+                        self._build_display_item(row_id, "selected_product_id", ""),
+                    )
+                finally:
+                    self.table.setSortingEnabled(previous_sorting)
+                    self._updating_table = False
 
     def _normalize_new_product_text(self, field_name: str, value: Any) -> Any:
         if field_name not in {"new_product_name", "new_brand"}:
@@ -764,15 +839,15 @@ class ProductStockPage(QWidget):
     def _get_row_by_id(self, session, row_id: int):
         return session.query(self._temp_model()).filter(self._temp_model().id == row_id).first()
 
-    def update_temp_field(self, row_id: int, field_name: str, value: Any, reload: bool = False, clear_selected: bool = False):
+    def update_temp_field(self, row_id: int, field_name: str, value: Any, reload: bool = False, clear_selected: bool = False, refresh_counters: bool = True):
         if self._updating_table:
-            return
+            return False
         value = self._normalize_new_product_text(field_name, value)
         try:
             with self.get_session() as session:
                 row = self._get_row_by_id(session, row_id)
                 if row is None:
-                    return
+                    return False
                 if field_name == "new_qty_in_box":
                     value = normalize_qty_in_box(value, field_name="Qty in Box (new)")
                 setattr(row, field_name, value)
@@ -790,12 +865,13 @@ class ProductStockPage(QWidget):
                 session.commit()
         except Exception as e:
             self.show_error_message(str(e))
-            return
+            return False
 
         if reload:
             self.load_table()
-        else:
+        elif refresh_counters:
             self.refresh_counters()
+        return True
 
     def try_auto_match_row(self, row_id: int):
         try:
@@ -838,24 +914,32 @@ class ProductStockPage(QWidget):
                     keep_current=True,
                 )
 
-    def refresh_counters(self):
-        with self.get_session() as session:
-            model = self._temp_model()
-            rows = self._query_mode_rows(session)
+    def refresh_counters(self, rows=None):
+        model = self._temp_model()
+        quantity_fields = {
+            TempStockImport: (
+                "stock_qty", "transit_qty", "markdown_qty", "reserve_qty", "reserve_ecomm_qty",
+            ),
+            TempSupplierOrdersImport: (
+                "order_qty", "is_order_qty", "is_confirmed_order_qty",
+            ),
+            TempIsImport: ("confirmed_qty", "remains_qty", "stock_qty"),
+        }[model]
+        if rows is None:
+            # A regular edit needs only three numbers, not the full staged
+            # import. Avoid rebuilding thousands of ORM instances per cell.
+            with self.get_session() as session:
+                row_count, error_count, total_qty = aggregate_import_counters(
+                    session, model, self._batch_id, self._imported_by, quantity_fields,
+                )
+        else:
+            # load_table already read these rows: do not execute another query.
             row_count = len(rows)
             error_count = sum(1 for row in rows if row.selected_product_id is None)
-            total_qty = 0
-            for row in rows:
-                if model is TempStockImport:
-                    total_qty += float(row.stock_qty or 0) + float(row.transit_qty or 0) + float(row.markdown_qty or 0) + float(row.reserve_qty or 0) + float(getattr(row, "reserve_ecomm_qty", 0) or 0)
-                elif model is TempSupplierOrdersImport:
-                    total_qty += (
-                        float(row.order_qty or 0)
-                        + float(row.is_order_qty or 0)
-                        + float(row.is_confirmed_order_qty or 0)
-                    )
-                else:
-                    total_qty += float(row.confirmed_qty or 0) + float(row.remains_qty or 0) + float(row.stock_qty or 0)
+            total_qty = sum(
+                sum(float(getattr(row, field, 0) or 0) for field in quantity_fields)
+                for row in rows
+            )
 
         self.ui.line_RowsLoaded.setText(self._format_int_like(row_count))
         self.ui.line_RowsError.setText(self._format_int_like(error_count))
@@ -1117,7 +1201,8 @@ class ProductStockPage(QWidget):
             self.ui.cbo_FindBrand.setCurrentIndex(0)
             self.start_new_batch()
             self.clear_table()
-            self.refresh_counters()
+            # A newly created batch is empty: avoid an unnecessary SQL aggregate.
+            self.refresh_counters(rows=[])
             self.show_message("Форма очищена")
         except Exception as e:
             self.show_error_message(str(e))

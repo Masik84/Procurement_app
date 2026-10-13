@@ -38,6 +38,8 @@ from app.workers.excel_export_worker import start_excel_export
 from app.exports.product_exporter import ProductExporter
 from app.services.qty_in_box_service import default_qty_in_box_for_pack, normalize_qty_in_box
 from app.utils.gui_table_actions import commit_active_table_item_editors
+from app.utils.table_view_context import capture_table_context, restore_table_context
+from app.utils.table_delta_update import reconcile_committed_rows
 from app.services.product_matching_service import ProductMatchingService, MissingPackTypeError
 from app.utils.pack_type_prompt import ask_pack_type
 from app.utils.output_headers import display_headers, standardize_output_header
@@ -215,6 +217,7 @@ class ProductsPage(QWidget):
             self.show_message("Нет изменений для применения")
             return
 
+        committed = False
         try:
             with self.get_session() as session:
                 if self._pending_deletes:
@@ -236,24 +239,37 @@ class ProductsPage(QWidget):
                         self._update_product(session, row_id, changes)
 
                 session.commit()
+                committed = True
 
+            changed_ids = {int(row_id) for row_id in self._pending_changes if row_id not in self._new_rows}
+            changed_ids.update(int(row_id) for row_id in self._pending_deletes)
+            had_new_rows = bool(self._new_rows)
             self._pending_changes.clear()
             self._pending_deletes.clear()
             self._new_rows.clear()
             self._import_update_rows.clear()
 
-            self.refresh_all_comboboxes()
-            self._reset_filter_controls_after_save()
-
-            self.table.clearContents()
-            self.table.setRowCount(0)
+            # The checked filter options are queried on demand. Avoid an
+            # unrelated SELECT over the entire products table on every save.
+            self._refresh_filter_buttons()
+            if had_new_rows or self.table.columnCount() != len(self.columns):
+                # Newly assigned IDs are not known until after commit.
+                self.find_Product()
+            else:
+                self._refresh_committed_products(changed_ids)
 
             self.show_message("Данные успешно сохранены")
 
         except SQLAlchemyError as e:
-            self.show_error_message(f"Ошибка сохранения в базу данных: {str(e)}")
+            if committed:
+                self.show_error_message(f"Изменения сохранены в БД, но не удалось обновить интерфейс: {e}")
+            else:
+                self.show_error_message(f"Ошибка сохранения в базу данных: {e}")
         except Exception as e:
-            self.show_error_message(f"Ошибка применения изменений: {str(e)}")
+            if committed:
+                self.show_error_message(f"Изменения сохранены в БД, но не удалось обновить интерфейс: {e}")
+            else:
+                self.show_error_message(f"Ошибка применения изменений: {e}")
 
     def _commit_open_editors(self):
         commit_active_table_item_editors(self.table)
@@ -739,6 +755,9 @@ class ProductsPage(QWidget):
     def get_filtered_products(self):
         prod_data = self.get_Products_from_db()
 
+        return self._apply_current_filters(prod_data)
+
+    def _apply_current_filters(self, prod_data):
         if not prod_data:
             return []
 
@@ -759,8 +778,6 @@ class ProductsPage(QWidget):
         return prod_data
 
     def find_Product(self):
-        self.table.clearContents()
-        self.table.setRowCount(0)
 
         prod_data = self.get_filtered_products()
 
@@ -1071,13 +1088,15 @@ class ProductsPage(QWidget):
                 logger.exception("Подавленная ошибка (см. traceback выше)")
 
     def _display_data(self, data):
+        view_context = capture_table_context(self.table)
         self.table.setSortingEnabled(False)
         self.table.clear()
         self.table.setColumnCount(0)
         self.table.setRowCount(0)
 
         if not data:
-            self.table.setSortingEnabled(True)
+            self._original_values.clear()
+            self.table.setSortingEnabled(view_context.sorting_enabled)
             self.show_message("Нет данных для отображения")
             return
 
@@ -1089,29 +1108,51 @@ class ProductsPage(QWidget):
         self.table.setHorizontalHeaderLabels(display_headers(self.headers))
 
         for row_index, row_data in enumerate(data):
-            row_id = int(row_data["id"])
-            self._original_values[row_id] = {}
-
-            for col_index, col_name in enumerate(self.columns):
-                if col_name == "is_excise":
-                    checked = bool(row_data[col_name])
-                    self._original_values[row_id][col_name] = checked
-                    self.table.setCellWidget(
-                        row_index,
-                        col_index,
-                        self._build_checkbox_widget(row_id, checked)
-                    )
-                    continue
-
-                value = "" if row_data[col_name] is None else str(row_data[col_name])
-                item = self._build_table_item(col_name, value)
-                self._original_values[row_id][col_name] = value
-                self.table.setItem(row_index, col_index, item)
+            self._paint_product_row(row_index, row_data)
 
         resize_columns_for_multiline_headers(self.table)
 
         self._updating_table = False
-        self.table.setSortingEnabled(True)
+        self.table.setSortingEnabled(view_context.sorting_enabled)
+        restore_table_context(self.table, view_context)
+
+    def _paint_product_row(self, row_index, row_data):
+        row_id = int(row_data["id"])
+        self._original_values[row_id] = {}
+        for col_index, col_name in enumerate(self.columns):
+            if col_name == "is_excise":
+                checked = bool(row_data[col_name])
+                self._original_values[row_id][col_name] = checked
+                self.table.setCellWidget(row_index, col_index, self._build_checkbox_widget(row_id, checked))
+                continue
+            value = "" if row_data[col_name] is None else str(row_data[col_name])
+            item = self._build_table_item(col_name, value)
+            if col_name == "id":
+                item.setData(Qt.ItemDataRole.UserRole, row_id)
+            self._original_values[row_id][col_name] = value
+            self.table.setItem(row_index, col_index, item)
+
+    def _refresh_committed_products(self, changed_ids: set[int]):
+        """A single SELECT for edited IDs, then an in-place Qt delta update."""
+        if not changed_ids:
+            return
+        with self.get_session() as session:
+            rows = session.query(Product).filter(Product.id.in_(changed_ids)).all()
+            updated = [
+                {"id": row.id, "name": row.name, "brand": row.brand,
+                 "pack": row.pack, "qty_in_box": row.qty_in_box,
+                 "abc_category": row.abc_category or "-", "is_excise": bool(row.is_excise),
+                 "family": row.family, "prod_group": row.prod_group}
+                for row in rows
+            ]
+        matches = {int(row["id"]): row for row in self._apply_current_filters(updated)}
+        self._updating_table = True
+        try:
+            reconcile_committed_rows(self.table, changed_ids, matches, self._paint_product_row)
+            for removed_id in changed_ids - set(matches):
+                self._original_values.pop(removed_id, None)
+        finally:
+            self._updating_table = False
 
     def _build_checkbox_widget(self, row_id, checked):
         checkbox = QCheckBox()

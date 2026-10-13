@@ -6,6 +6,7 @@ logger = logging.getLogger(__name__)
 
 
 import importlib
+import inspect
 import sys
 from decimal import Decimal
 from typing import Any, Iterable, Mapping, Sequence
@@ -488,8 +489,11 @@ def _patch_order_planning_service(service_module) -> None:
                 if avg_sales > 0 else Decimal("0")
             )
 
-            std_l_raw = (safe_m - safe_ord_month) * avg_sales
-            quick_l_raw = (quick_m - safe_st_tr_month) * avg_sales
+            # Use exact liters, not the 4-digit rounded month coverage: the
+            # rounding error (e.g. 8.0001 L) was ceiled into an extra pack and
+            # disagreed with CostCalc's "к Заказу, л" for the same product.
+            std_l_raw = safe_m * avg_sales - free_ord
+            quick_l_raw = quick_m * avg_sales - free_st_tr
             if std_l_raw < 0:
                 std_l_raw = Decimal("0")
             if quick_l_raw < 0:
@@ -731,9 +735,16 @@ def _patch_price_reports_page(module) -> None:
             if not _is_forbidden_header(header)
         ]
 
-    def product_row_no_is(self, product, stock, options, supplier_count):
-        original_headers = original_product_headers(self, supplier_count)
-        row = original_product_row(self, product, stock, options, supplier_count)
+    # Row wrappers pass arguments through unchanged and read only what the
+    # header builders need from the original signature. A hard-coded copy of
+    # the signature broke the supplier report when report_supplier was added.
+    product_row_signature = inspect.signature(original_product_row)
+    supplier_row_signature = inspect.signature(original_supplier_row)
+
+    def product_row_no_is(self, *args, **kwargs):
+        bound = product_row_signature.bind(self, *args, **kwargs)
+        original_headers = original_product_headers(self, bound.arguments["supplier_count"])
+        row = original_product_row(self, *args, **kwargs)
         _, keep = _filtered_headers_and_indexes(original_headers)
         return _filter_row_by_indexes(row, keep)
 
@@ -744,27 +755,12 @@ def _patch_price_reports_page(module) -> None:
             if not _is_forbidden_header(header)
         ]
 
-    def supplier_row_no_is(
-        self,
-        product,
-        stock,
-        chosen,
-        prev,
-        alternatives,
-        show_prev,
-        other_count,
-    ):
-        original_headers = original_supplier_headers(self, show_prev, other_count)
-        row = original_supplier_row(
-            self,
-            product,
-            stock,
-            chosen,
-            prev,
-            alternatives,
-            show_prev,
-            other_count,
+    def supplier_row_no_is(self, *args, **kwargs):
+        bound = supplier_row_signature.bind(self, *args, **kwargs)
+        original_headers = original_supplier_headers(
+            self, bound.arguments["show_prev"], bound.arguments["other_count"]
         )
+        row = original_supplier_row(self, *args, **kwargs)
         _, keep = _filtered_headers_and_indexes(original_headers)
         return _filter_row_by_indexes(row, keep)
 

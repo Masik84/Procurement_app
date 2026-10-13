@@ -5,8 +5,9 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Iterable, Mapping, Optional
 
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
-from sqlalchemy import func, tuple_
+from sqlalchemy import func, or_, tuple_
 
 from app.db.models import CurrentSupplierPrice, PriceHistory, Supplier
 from app.services.supplier_service import MANUAL_SUPPLIER_NAME
@@ -375,31 +376,66 @@ class PriceRepository:
             currency=currency_code,
         )
         self.session.add(history_row)
-
-        current_row = self.get_current_supplier_price(supplier_id=supplier_id, product_id=product_id)
-
-        if current_row is None:
-            current_row = CurrentSupplierPrice(
-                supplier_id=supplier_id,
-                product_id=product_id,
-                price=price_value,
-                currency=currency_code,
-                last_update=price_date,
-            )
-            self.session.add(current_row)
-        else:
-            if current_row.last_update is None or current_row.last_update <= price_date:
-                current_row.price = price_value
-                current_row.currency = currency_code
-                current_row.last_update = price_date
-
         self.session.flush()
 
-    def save_supplier_prices_batch(self, prices: Iterable[Mapping[str, object]]) -> int:
-        """Save history/current supplier prices with one lookup and one flush.
+        self.upsert_current_prices(
+            [{
+                "supplier_id": supplier_id,
+                "product_id": product_id,
+                "price": price_value,
+                "currency": currency_code,
+                "last_update": price_date,
+            }],
+            only_if_newer=True,
+        )
 
-        Rows are applied in the supplied order so duplicate supplier/product
-        pairs keep the same last-update behaviour as ``save_supplier_price``.
+    def upsert_current_prices(self, values: Iterable[Mapping[str, object]], *, only_if_newer: bool) -> None:
+        """Atomically insert/update current_supplier_prices rows.
+
+        A SELECT-then-INSERT let two users who saved the same new
+        supplier/product pair at the same time fail with a primary-key
+        violation, rolling back the whole save. ON CONFLICT resolves that
+        inside PostgreSQL.
+
+        only_if_newer=True keeps the date priority: an existing row is replaced
+        only when its last_update is empty or not newer than the new price.
+        """
+        rows = [dict(value) for value in values]
+        if not rows:
+            return
+        table = CurrentSupplierPrice.__table__
+        for offset in range(0, len(rows), 1000):
+            stmt = pg_insert(table).values(rows[offset:offset + 1000])
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[table.c.supplier_id, table.c.product_id],
+                set_={
+                    "price": stmt.excluded.price,
+                    "currency": stmt.excluded.currency,
+                    "last_update": stmt.excluded.last_update,
+                },
+                where=(
+                    or_(
+                        table.c.last_update.is_(None),
+                        table.c.last_update <= stmt.excluded.last_update,
+                    )
+                    if only_if_newer else None
+                ),
+            )
+            self.session.execute(stmt)
+
+        # The statement bypassed the ORM: drop stale CurrentSupplierPrice
+        # objects so later reads in this session see the stored values.
+        for obj in list(self.session.identity_map.values()):
+            if isinstance(obj, CurrentSupplierPrice):
+                self.session.expire(obj)
+
+    def save_supplier_prices_batch(self, prices: Iterable[Mapping[str, object]]) -> int:
+        """Write only new supplier-price observations to history.
+
+        History is compared by supplier/product/price type, not merely by date.
+        Reimporting unchanged prices never creates more history rows. Current
+        prices are still refreshed according to their existing date priority.
+        All reads are set based (no SELECT per imported row).
         """
         records = list(prices)
         if not records:
@@ -409,58 +445,102 @@ class PriceRepository:
             (int(record["supplier_id"]), int(record["product_id"]))
             for record in records
         }
-        current_rows = (
-            self.session.query(CurrentSupplierPrice)
-            .filter(
-                tuple_(
-                    CurrentSupplierPrice.supplier_id,
-                    CurrentSupplierPrice.product_id,
-                ).in_(pairs)
+        pair_filter = tuple_(
+            PriceHistory.supplier_id, PriceHistory.product_id,
+        ).in_(pairs)
+        # Final current-price candidate per pair within this batch. The
+        # comparison with the row already stored is done atomically by
+        # upsert_current_prices(only_if_newer=True).
+        current_by_pair: dict[tuple[int, int], dict] = {}
+
+        # Find the latest saved observation for each price type separately.
+        # A Window function avoids loading the entire price history into Python.
+        ranked = (
+            self.session.query(
+                PriceHistory.id.label("history_id"),
+                func.row_number().over(
+                    partition_by=(
+                        PriceHistory.supplier_id,
+                        PriceHistory.product_id,
+                        PriceHistory.price_type,
+                    ),
+                    order_by=(PriceHistory.price_date.desc(), PriceHistory.id.desc()),
+                ).label("row_rank"),
             )
+            .filter(pair_filter)
+            .subquery()
+        )
+        latest_rows = (
+            self.session.query(PriceHistory)
+            .join(ranked, PriceHistory.id == ranked.c.history_id)
+            .filter(ranked.c.row_rank == 1)
             .all()
         )
-        current_by_pair = {
-            (int(row.supplier_id), int(row.product_id)): row
-            for row in current_rows
+        last_by_type = {
+            (int(row.supplier_id), int(row.product_id), row.price_type or "Price List"):
+                (self._to_decimal(row.price), str(row.currency).strip().upper())
+            for row in latest_rows
+        }
+
+        # Reimporting an old-date file must not duplicate a price observation
+        # already present on that exact date, even if newer prices now exist.
+        dates = {record["price_date"] for record in records}
+        same_date_rows = (
+            self.session.query(PriceHistory)
+            .filter(pair_filter, PriceHistory.price_date.in_(dates))
+            .all()
+        )
+        existing_observations = {
+            (
+                int(row.supplier_id), int(row.product_id),
+                row.price_date, row.price_type or "Price List",
+                self._to_decimal(row.price), str(row.currency).strip().upper(),
+            )
+            for row in same_date_rows
         }
 
         history_rows: list[PriceHistory] = []
-        new_current_rows: list[CurrentSupplierPrice] = []
         for record in records:
             supplier_id = int(record["supplier_id"])
             product_id = int(record["product_id"])
             price_value = self._to_decimal(record["price"])
-            currency_code = str(record["currency_code"])
+            currency_code = str(record["currency_code"]).strip().upper()
             price_date = record["price_date"]
+            price_type = str(record.get("price_type") or "Price List").strip() or "Price List"
 
-            history_rows.append(PriceHistory(
-                supplier_id=supplier_id,
-                product_id=product_id,
-                price_date=price_date,
-                price=price_value,
-                currency=currency_code,
-                price_type=str(record.get("price_type") or "Price List"),
-            ))
-
-            key = (supplier_id, product_id)
-            current_row = current_by_pair.get(key)
-            if current_row is None:
-                current_row = CurrentSupplierPrice(
+            type_key = (supplier_id, product_id, price_type)
+            observation = (
+                supplier_id, product_id, price_date, price_type,
+                price_value, currency_code,
+            )
+            value = (price_value, currency_code)
+            if value != last_by_type.get(type_key) and observation not in existing_observations:
+                history_rows.append(PriceHistory(
                     supplier_id=supplier_id,
                     product_id=product_id,
+                    price_date=price_date,
                     price=price_value,
                     currency=currency_code,
-                    last_update=price_date,
-                )
-                current_by_pair[key] = current_row
-                new_current_rows.append(current_row)
-            elif current_row.last_update is None or current_row.last_update <= price_date:
-                current_row.price = price_value
-                current_row.currency = currency_code
-                current_row.last_update = price_date
+                    price_type=price_type,
+                ))
+                existing_observations.add(observation)
+                last_by_type[type_key] = value
+
+            # Preserve the previous current-price date-priority semantics even
+            # when the history record was skipped as an unchanged observation:
+            # a later record with the same or a newer date wins.
+            key = (supplier_id, product_id)
+            candidate = current_by_pair.get(key)
+            if candidate is None or candidate["last_update"] <= price_date:
+                current_by_pair[key] = {
+                    "supplier_id": supplier_id,
+                    "product_id": product_id,
+                    "price": price_value,
+                    "currency": currency_code,
+                    "last_update": price_date,
+                }
 
         self.session.add_all(history_rows)
-        if new_current_rows:
-            self.session.add_all(new_current_rows)
         self.session.flush()
-        return len(records)
+        self.upsert_current_prices(current_by_pair.values(), only_if_newer=True)
+        return len(history_rows)

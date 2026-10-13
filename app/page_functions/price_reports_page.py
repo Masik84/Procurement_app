@@ -1254,30 +1254,54 @@ class PriceReportsPage(QWidget):
         return row
 
     def _display_preview(self, headers: Sequence[str], rows: Sequence[Sequence[object]]):
-        # При построении отчета сохраняем рассчитанный порядок строк: основная
-        # позиция -> ее групповые аналоги. Сортировку пользователь сможет
-        # включить кликом по заголовку уже после заполнения таблицы.
+        # The preview has no unique DB row key (grouped product alternatives
+        # can repeat), so preserve navigation without guessing row identities.
+        # A new report type / changed columns starts in calculated order.
+        same_columns = (
+            self.preview_table.columnCount() == len(headers)
+            and self.preview_table.rowCount() > 0
+            and all(
+                self.preview_table.horizontalHeaderItem(i) is not None
+                and self.preview_table.horizontalHeaderItem(i).text() == str(header)
+                for i, header in enumerate(headers)
+            )
+        )
+        header = self.preview_table.horizontalHeader()
+        sort_column = header.sortIndicatorSection() if same_columns else -1
+        sort_order = header.sortIndicatorOrder()
+        vertical_scroll = self.preview_table.verticalScrollBar().value() if same_columns else 0
+        horizontal_scroll = self.preview_table.horizontalScrollBar().value() if same_columns else 0
+        # Fill without Qt sorting rows while inserting cells. The exporter uses
+        # the original report data, so no export or grouped-row order changes.
         self.preview_table.setSortingEnabled(False)
-        self.preview_table.clear()
-        self.preview_table.setColumnCount(len(headers))
-        self.preview_table.setHorizontalHeaderLabels(list(headers))
-        self.preview_table.setRowCount(len(rows))
+        try:
+            self.preview_table.clear()
+            self.preview_table.setColumnCount(len(headers))
+            self.preview_table.setHorizontalHeaderLabels(list(headers))
+            self.preview_table.setRowCount(len(rows))
 
-        for row_index, row in enumerate(rows):
-            for col_index, value in enumerate(row):
-                header = headers[col_index]
-                item = QTableWidgetItem(self._to_display_text(value, header))
-                if self._is_numeric_header(header):
-                    item.setTextAlignment(Qt.AlignCenter)
-                else:
-                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                if row_index in self._preview_gray_rows:
-                    item.setBackground(QColor("#E8E8E8"))
-                self.preview_table.setItem(row_index, col_index, item)
+            for row_index, row in enumerate(rows):
+                for col_index, value in enumerate(row):
+                    column_header = headers[col_index]
+                    item = QTableWidgetItem(self._to_display_text(value, column_header))
+                    if self._is_numeric_header(column_header):
+                        item.setTextAlignment(Qt.AlignCenter)
+                    else:
+                        item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                    if row_index in self._preview_gray_rows:
+                        item.setBackground(QColor("#E8E8E8"))
+                    self.preview_table.setItem(row_index, col_index, item)
 
-        resize_columns_for_multiline_headers(self.preview_table)
-        self.preview_table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
-        self.preview_table.setSortingEnabled(True)
+            resize_columns_for_multiline_headers(self.preview_table)
+            if not same_columns:
+                header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+        finally:
+            self.preview_table.setSortingEnabled(True)
+        if same_columns and 0 <= sort_column < len(headers):
+            self.preview_table.sortItems(sort_column, sort_order)
+        if same_columns:
+            self.preview_table.verticalScrollBar().setValue(vertical_scroll)
+            self.preview_table.horizontalScrollBar().setValue(horizontal_scroll)
 
     def clear_preview_table(self):
         self._preview_headers = []

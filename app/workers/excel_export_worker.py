@@ -18,15 +18,21 @@ def _set_owner_export_busy(owner: QObject, busy: bool) -> None:
     if not isinstance(owner, QWidget):
         return
     if busy:
-        if getattr(owner, "_excel_export_busy_widgets", None):
+        if getattr(owner, "_excel_export_busy_widgets", None) or getattr(
+            owner, "_excel_export_table_shield", None
+        ):
             return
         saved: list[tuple[object, bool]] = []
         seen: set[int] = set()
         ui = getattr(owner, "ui", None)
         roots = [ui] if isinstance(ui, QWidget) else [owner]
+        table = getattr(owner, "table", None)
         for root in roots:
             for widget in root.findChildren(QAbstractButton):
                 if id(widget) in seen:
+                    continue
+                if isinstance(table, QTableWidget) and table.isAncestorOf(widget):
+                    # Row checkboxes: the table shield below blocks them.
                     continue
                 seen.add(id(widget))
                 try:
@@ -34,15 +40,25 @@ def _set_owner_export_busy(owner: QObject, busy: bool) -> None:
                     widget.setEnabled(False)
                 except RuntimeError:
                     pass
-        table = getattr(owner, "table", None)
         if isinstance(table, QTableWidget) and id(table) not in seen:
             try:
-                saved.append((table, bool(table.isEnabled())))
-                table.setEnabled(False)
+                # table.setEnabled(False) recurses into every cell widget (one
+                # checkbox/combo per row) and repolishes each of them on the GUI
+                # thread. Block input with one shield widget instead.
+                from app.utils.page_background_integration import _SupplierTableBusyShield
+
+                owner._excel_export_table_shield = _SupplierTableBusyShield(table)
             except RuntimeError:
                 pass
         owner._excel_export_busy_widgets = saved
     else:
+        shield = getattr(owner, "_excel_export_table_shield", None)
+        owner._excel_export_table_shield = None
+        if shield is not None:
+            try:
+                shield.release()
+            except RuntimeError:
+                pass
         saved = list(getattr(owner, "_excel_export_busy_widgets", []) or [])
         owner._excel_export_busy_widgets = []
         for widget, enabled in saved:

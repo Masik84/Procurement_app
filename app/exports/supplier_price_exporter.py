@@ -263,14 +263,14 @@ class SupplierPriceExporter:
         return excel
 
     def _apply_font_to_all_cells(self, ws):
-        ws.Cells.Font.Name = "Aptos Narrow"
+        ws.Cells.Font.Name = "Calibri"
         ws.Cells.Font.Size = 11
 
     def _apply_header_common(self, ws, headers_count: int):
         self._apply_font_to_all_cells(ws)
         last_col = self._excel_column_letter(headers_count)
         header_range = ws.Range(f"A1:{last_col}1")
-        header_range.Font.Name = "Aptos Narrow"
+        header_range.Font.Name = "Calibri"
         header_range.Font.Size = 11
         header_range.Font.Bold = True
         header_range.WrapText = True
@@ -1538,7 +1538,7 @@ class SupplierPriceExporter:
         fill = PatternFill("solid", fgColor="153D64")
         for cell in worksheet[1]:
             cell.fill = fill
-            cell.font = Font(name="Aptos Narrow", size=11, bold=True, color="FFFFFF")
+            cell.font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
         widths = [12, 12, 42, 12, 18, 24, 28, 70]
@@ -1709,13 +1709,13 @@ class SupplierPriceExporter:
             ws.Range(f"A1:{self._excel_column_letter(len(headers))}1").AutoFilter(1)
 
             # Category is inserted after Pack; keep the same semantic frozen block.
-            apply_freeze_panes(ws, split_row=1, split_column=7, zoom=85)
+            apply_freeze_panes(ws, split_row=1, split_column=7, zoom=80)
 
             # Final authoritative Excel formatting pass. This re-applies the
             # shared rules immediately before SaveAs so CostCalc cannot leave
             # price/uC3/FX/date columns in General on localized Excel builds.
             self._add_costcalc_extra_sheets(wb, prepared_rows, supplier, price_type)
-            save_workbook_xlsx(wb, output_path.resolve())
+            save_workbook_xlsx(wb, output_path.resolve(), profile="costcalc")
             return output_path
         finally:
             try:
@@ -1776,12 +1776,18 @@ class SupplierPriceExporter:
             cell.WrapText = True
         master = wb.Worksheets.Add(After=wb.Worksheets(wb.Worksheets.Count))
         master.Name = "для Pricing Master"
-        master_headers = ["Артикул", "Продукт", "Pack", "Себ-ть, л (для Pricing Master)", "Полная себ-ть Мск"]
+        master_headers = ["Артикул", "Наименование продукта", "Упаковка", "Себ-ть, л (для Pricing Master)", "Полная себ-ть Мск"]
         for j, h in enumerate(master_headers, 1):
             cell = master.Cells(2, j); cell.Value = h
             cell.Font.Bold = True; cell.Interior.Color = self._rgb(205,205,205)
             cell.WrapText = True
-        for i, row in enumerate(rows):
+        # Leave unmatched records on "Анализ" for review, but do not offer
+        # products that have no resolved Our Product Name to customers/Pricing.
+        resolved_rows = [
+            row for row in rows
+            if str(row.get("Our Product Name") or "").strip()
+        ]
+        for i, row in enumerate(resolved_rows):
             r = 9 + i; m = 3 + i
             article = row.get("Supplier Article") or ""
             name = row.get("Our Product Name") or ""
@@ -1804,25 +1810,125 @@ class SupplierPriceExporter:
             master_values = [article, name, pack, row.get("Cost Novo with VAT"), cost]
             for j, value in enumerate(master_values, 1):
                 if value is not None and value != "": master.Cells(m, j).Value = value
-        for sheet, start, count in ((offer, 8, 9), (master, 2, 5)):
-            last = start + len(rows)
-            if rows:
-                rng = sheet.Range(sheet.Cells(start,1), sheet.Cells(last,count))
-                for edge in (7,8,9,10,11,12):
-                    rng.Borders(edge).LineStyle = 1
-            sheet.Rows(start).RowHeight = 32
-            sheet.Columns(1).ColumnWidth = 19
-            sheet.Columns(2).ColumnWidth = 46
-            if sheet.Name == "Предложение":
-                sheet.Columns("C:I").ColumnWidth = 16
-                if rows:
-                    sheet.Range(f"F9:I{last}").NumberFormat = "# ##0"
-            else:
-                sheet.Columns("C:E").ColumnWidth = 20
-                if rows:
-                    sheet.Range(f"D3:E{last}").NumberFormat = "# ##0,00"
-            sheet.Cells.Font.Name = "Calibri"
-            sheet.Cells.Font.Size = 11
+        # Preserve the exact layout of the supplied CostCalc template.  These
+        # sheets deliberately have two-level headings (offer: rows 7-8),
+        # unlike the Analysis sheet whose headings are on row 1.
+        self._format_costcalc_offer_sheet(offer, len(resolved_rows))
+        self._format_costcalc_pricing_master_sheet(master, len(resolved_rows))
+
+    @staticmethod
+    def _border_outline(rng, *, weight=2):
+        # Excel COM: xlContinuous=1; xlThin=2; xlMedium=-4138.
+        for edge in (7, 8, 9, 10):  # left, top, bottom, right
+            border = rng.Borders(edge)
+            border.LineStyle = 1
+            border.Weight = weight
+            border.Color = 0  # black
+
+    @classmethod
+    def _format_costcalc_offer_sheet(cls, sheet, row_count: int) -> None:
+        """Match the user's 'Предложение' template, including grouped headers."""
+        # Match template widths rather than using a blanket C:I width.
+        for column, width in (
+            ("A", 9.29), ("B", 40.57), ("C", 12.0),
+            ("D", 11.71), ("E", 11.14),
+            ("F", 13.29), ("G", 13.29), ("H", 13.29), ("I", 13.29),
+        ):
+            sheet.Columns(column).ColumnWidth = width
+        sheet.Rows(6).RowHeight = 15.75
+        sheet.Rows(7).RowHeight = 15.75
+        sheet.Rows(8).RowHeight = 30
+
+        sheet.Range("F7:G7").Merge()
+        sheet.Range("H7:I7").Merge()
+        for address in ("F7:G7", "H7:I7"):
+            group = sheet.Range(address)
+            group.Font.Bold = True
+            group.HorizontalAlignment = -4108  # center
+            group.VerticalAlignment = -4108
+            cls._border_outline(group, weight=-4138)
+
+        header = sheet.Range("A8:I8")
+        header.Interior.Color = cls._rgb(205, 205, 205)  # #CDCDCD
+        header.Font.Bold = True
+        header.HorizontalAlignment = -4108
+        header.VerticalAlignment = -4160  # top
+        header.WrapText = True
+        cls._border_outline(header)
+        header.Borders(11).LineStyle = 1  # internal vertical lines
+        header.Borders(11).Weight = 2
+        # Template uses medium borders at the edges of BOTH advance blocks.
+        last = 8 + row_count
+        for address in (f"F8:F{last}", f"H8:H{last}"):
+            rng = sheet.Range(address)
+            rng.Borders(7).LineStyle = 1
+            rng.Borders(7).Weight = -4138
+        for address in (f"G8:G{last}", f"I8:I{last}"):
+            rng = sheet.Range(address)
+            rng.Borders(10).LineStyle = 1
+            rng.Borders(10).Weight = -4138
+
+        if row_count:
+            data = sheet.Range(f"A9:I{last}")
+            cls._border_outline(data)
+            for edge in (11, 12):  # interior vertical/horizontal
+                data.Borders(edge).LineStyle = 1
+                data.Borders(edge).Weight = 2
+            # Reapply the strong group borders after the ordinary cell grid.
+            for address in (f"F9:F{last}", f"H9:H{last}"):
+                side = sheet.Range(address).Borders(7)
+                side.LineStyle = 1
+                side.Weight = -4138
+            for address in (f"G9:G{last}", f"I9:I{last}"):
+                side = sheet.Range(address).Borders(10)
+                side.LineStyle = 1
+                side.Weight = -4138
+        sheet.Cells.Font.Name = "Calibri"
+        sheet.Cells.Font.Size = 11
+
+    @staticmethod
+    def _set_column_width_pixels(sheet, column: str, pixels: int) -> None:
+        """Set the nominal Excel column width in pixels (at 100% zoom).
+
+        Excel COM's ColumnWidth is measured in font-dependent characters,
+        whereas Range.Width is measured in points. Calibrate from the actual
+        width so the result does not depend on the workstation's font metrics.
+        """
+        col = sheet.Columns(column)
+        col.ColumnWidth = 7.0
+        target_points = pixels * 72.0 / 96.0
+        for _ in range(3):
+            current_points = float(col.Width)
+            if current_points <= 0 or abs(current_points - target_points) <= 0.375:
+                break
+            col.ColumnWidth = max(0.1, min(255.0, float(col.ColumnWidth) * target_points / current_points))
+
+    @classmethod
+    def _format_costcalc_pricing_master_sheet(cls, sheet, row_count: int) -> None:
+        for column, width in (
+            ("A", 14.14), ("C", 9.14),
+            ("D", 11.57), ("E", 11),
+        ):
+            sheet.Columns(column).ColumnWidth = width
+        sheet.Columns("B:B").ColumnWidth = 53  # Excel column-width units, not 53 pixels
+        sheet.Rows(2).RowHeight = 46.5
+        header = sheet.Range("A2:E2")
+        header.Interior.Color = cls._rgb(205, 205, 205)
+        header.Font.Bold = True
+        header.WrapText = True
+        header.HorizontalAlignment = -4108
+        header.VerticalAlignment = -4160
+        cls._border_outline(header)
+        header.Borders(11).LineStyle = 1
+        header.Borders(11).Weight = 2
+        if row_count:
+            data = sheet.Range(f"A3:E{row_count + 2}")
+            cls._border_outline(data)
+            for edge in (11, 12):
+                data.Borders(edge).LineStyle = 1
+                data.Borders(edge).Weight = 2
+        sheet.Cells.Font.Name = "Calibri"
+        sheet.Cells.Font.Size = 11
 
     @staticmethod
     def _rgb(r: int, g: int, b: int) -> int:

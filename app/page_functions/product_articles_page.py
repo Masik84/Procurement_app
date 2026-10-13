@@ -26,6 +26,9 @@ from app.ui.table_style import *
 from app.imports.product_article_importer import ProductArticleImporter
 from app.exports.product_article_exporter import ProductArticleExporter
 from app.workers.excel_export_worker import start_excel_export
+from app.utils.table_view_context import capture_table_context, restore_table_context
+from app.utils.table_delta_update import reconcile_committed_rows
+from app.utils.gui_table_actions import commit_active_table_item_editors
 from app.utils.output_headers import display_headers, standardize_output_header
 from app.utils.excel_fast_writer import write_excel_table
 from app.utils.excel_format_rules import FORMATS, set_number_format_safe, save_workbook_xlsx
@@ -112,35 +115,103 @@ class ProductArticlesPage(QWidget):
     def get_session(self):
         return SessionLocal()
 
+    # Explicit column identities are stable even when a displayed header is
+    # wrapped or localized by table_headers.py.
+    _EDITABLE_ARTICLE_COLUMNS = {
+        1: ("Product name", "product_name"),
+        2: ("Article", "article"),
+        3: ("Product name (variant)", "variant_name"),
+    }
+
     def on_item_changed(self, item):
-        if not hasattr(self, "_updating_table") or self._updating_table:
+        if self._updating_table:
             return
-
         try:
-            row = item.row()
-            column = item.column()
-            header = table_header_name(self.table, column)
-            id_item = self.table.item(row, 0)
-
-            if not id_item:
+            field = self._EDITABLE_ARTICLE_COLUMNS.get(item.column())
+            if field is None:
                 return
-
-            row_id = self._row_id_from_item(id_item)
+            # All article cells carry the DB ID; never depend on the visual
+            # row index, which can move when a sorted field is edited.
+            row_id = self._row_id_from_item(item)
             if row_id is None:
                 return
-
-            if header == "id":
-                return
-
-            new_value = item.text()
-
-            if row_id not in self._pending_changes:
-                self._pending_changes[row_id] = {}
-
-            self._pending_changes[row_id][header] = new_value
-
+            self._pending_changes.setdefault(row_id, {})[field[0]] = item.text()
         except Exception as e:
-            self.show_error_message(f"Ошибка: {str(e)}")
+            self.show_error_message(f"Ошибка: {e}")
+
+    def _collect_visible_article_edits(self):
+        """Reconcile the edited cells with committed values before Save.
+
+        itemChanged is not a reliable source for a cell whose editor is still
+        open when Save is clicked.  Keep pending edits for off-screen records,
+        and compare *visible* records by their DB ID, not their row number.
+        """
+        for row in range(self.table.rowCount()):
+            id_item = self.table.item(row, 0)
+            if id_item is None:
+                continue
+            row_id = self._row_id_from_item(id_item)
+            if row_id is None or row_id in self._pending_deletes:
+                continue
+            if row_id in self._new_rows:
+                # Newly added rows have no committed baseline yet.
+                changes = self._pending_changes.setdefault(row_id, {})
+                for col, (field, _source) in self._EDITABLE_ARTICLE_COLUMNS.items():
+                    item = self.table.item(row, col)
+                    if item is not None:
+                        changes[field] = item.text()
+                continue
+            original = self._original_values.get(row_id)
+            if original is None:
+                continue
+            changes = self._pending_changes.setdefault(row_id, {})
+            for col, (field, source) in self._EDITABLE_ARTICLE_COLUMNS.items():
+                item = self.table.item(row, col)
+                if item is None:
+                    continue
+                value = self._normalize_text(item.text())
+                if value != self._normalize_text(original.get(source, "")):
+                    changes[field] = value
+                else:
+                    # An edit may have been undone since itemChanged fired.
+                    changes.pop(field, None)
+            if not changes:
+                self._pending_changes.pop(row_id, None)
+
+    def _snapshot_active_article_text_editors(self):
+        """Capture any still-open delegate editor before Save changes focus.
+
+        Normally Qt commits a QLineEdit on focus loss, but depending on the
+        delegate/button focus order its QTableWidgetItem may still hold the old
+        text when clicked Save is handled. Resolve by immutable DB ID, not row.
+        """
+        edits = {}
+        if not hasattr(self.table, "viewport"):
+            return edits
+        viewport = self.table.viewport()
+        for editor in viewport.findChildren(
+            QLineEdit, options=Qt.FindChildOption.FindDirectChildrenOnly
+        ):
+            if not editor.isVisible():
+                continue
+            index = self.table.indexAt(editor.geometry().center())
+            if not index.isValid() or index.column() not in self._EDITABLE_ARTICLE_COLUMNS:
+                continue
+            id_item = self.table.item(index.row(), 0)
+            row_id = self._row_id_from_item(id_item) if id_item is not None else None
+            if row_id is not None:
+                edits[(row_id, index.column())] = editor.text()
+        return edits
+
+    def _apply_active_article_text_edits(self, edits):
+        """Use captured editor text if Qt has not committed the item yet."""
+        for (row_id, column), text in edits.items():
+            row = self._find_row_by_id(row_id)
+            if row < 0:
+                continue
+            item = self.table.item(row, column)
+            if item is not None and item.text() != text:
+                item.setText(text)
 
     def on_cell_double_clicked(self, row, column):
         if self._updating_table:
@@ -342,10 +413,26 @@ class ProductArticlesPage(QWidget):
         return self.clean_multi_spaces(value)
 
     def apply_pending_changes(self):
+        # A sorted QTableWidget can move the edited row while Qt commits the
+        # active editor.  Freeze its visual order until the edited values have
+        # been reconciled against DB IDs.
+        sort_state = self._pause_sorting()
+        try:
+            active_edits = self._snapshot_active_article_text_editors()
+            commit_active_table_item_editors(self.table)
+            self._apply_active_article_text_edits(active_edits)
+            self._collect_visible_article_edits()
+        except Exception as e:
+            self.show_error_message(f"Не удалось получить изменения из таблицы: {e}")
+            return
+        finally:
+            self._restore_sorting(sort_state)
+
         if not self._pending_changes and not self._pending_deletes:
             self.show_message("Нет изменений для применения")
             return
 
+        committed = False
         try:
             with self.get_session() as session:
                 skipped_duplicates = []
@@ -458,10 +545,19 @@ class ProductArticlesPage(QWidget):
                             .first()
                         )
                         if existing_duplicate:
-                            skipped_duplicates.append(
-                                f"{product_name} | {article_value or ''} | {variant_value or ''}"
+                            # Never claim a successful Save for an existing row
+                            # that was not updated.  Previously this `continue`
+                            # silently discarded the user's new variant name;
+                            # the subsequent DB refresh then restored the old
+                            # value in the table.
+                            raise ValueError(
+                                "Изменение не сохранено: уже существует другая "
+                                f"строка базы артикулов (ID {existing_duplicate.id}) "
+                                "с такой комбинацией продукта, артикула и "
+                                "названия поставщика. "
+                                f"Изменяемая строка ID {row_id}. "
+                                "Проверьте дубликат или выберите другое название."
                             )
-                            continue
 
                         if "Product name" in changes:
                             product_article.product_id = final_product_id
@@ -472,19 +568,72 @@ class ProductArticlesPage(QWidget):
                         if "Product name (variant)" in changes:
                             product_article.name = variant_value
 
+                # Remember exactly what was sent to the database; a successful
+                # commit alone must not be followed by a misleading UI success
+                # if some row was skipped or modified by an external rule.
+                expected_updates = {
+                    int(row_id): dict(changes)
+                    for row_id, changes in self._pending_changes.items()
+                    if row_id not in self._new_rows
+                    and row_id not in self._pending_deletes
+                }
                 session.commit()
+                committed = True
 
+            # Check what a *new* DB session actually reads before clearing
+            # pending changes or repopulating the table with committed values.
+            # Single batched SELECT; no extra query per changed row.
+            if expected_updates:
+                with self.get_session() as verify_session:
+                    persisted = {
+                        int(row.id): row
+                        for row in verify_session.query(ProductArticle)
+                        .filter(ProductArticle.id.in_(expected_updates)).all()
+                    }
+                    verified_products = {
+                        int(product.id): product.name
+                        for product in verify_session.query(Product)
+                        .filter(Product.id.in_({row.product_id for row in persisted.values()})).all()
+                    } if any("Product name" in c for c in expected_updates.values()) else {}
+
+                    for record_id, expected in expected_updates.items():
+                        actual = persisted.get(record_id)
+                        if actual is None:
+                            raise RuntimeError(
+                                f"После сохранения запись базы артикулов ID {record_id} не найдена в БД."
+                            )
+                        for field, db_value in (
+                            ("Article", actual.article),
+                            ("Product name (variant)", actual.name),
+                            ("Product name", verified_products.get(actual.product_id)),
+                        ):
+                            if field not in expected:
+                                continue
+                            if self._normalize_text(expected[field]) != self._normalize_text(db_value):
+                                logger.error(
+                                    "ProductArticles SAVE readback mismatch: id=%s field=%s",
+                                    record_id, field,
+                                )
+                                raise RuntimeError(
+                                    f"База данных не подтвердила изменение поля '{field}' "
+                                    f"для строки ID {record_id}. "
+                                    "Новые данные не отображаются как сохранённые."
+                                )
+
+            changed_ids = {int(row_id) for row_id in self._pending_changes if row_id not in self._new_rows}
+            changed_ids.update(int(row_id) for row_id in self._pending_deletes)
+            had_new_rows = bool(self._new_rows)
             self._pending_changes.clear()
             self._pending_deletes.clear()
             self._new_rows.clear()
 
-            self.refresh_all_comboboxes()
-
-            if self.has_active_filters():
+            # Article changes do not change the product-brand reference list.
+            # Rebuilding its combo here would discard the user's brand choice.
+            self._refresh_filter_buttons()
+            if had_new_rows or self.table.columnCount() != 4:
                 self.find_product_articles()
             else:
-                self.table.clearContents()
-                self.table.setRowCount(0)
+                self._refresh_committed_articles(changed_ids)
 
             if skipped_duplicates:
                 self.show_message(
@@ -494,9 +643,15 @@ class ProductArticlesPage(QWidget):
                 self.show_message("Данные успешно сохранены")
 
         except SQLAlchemyError as e:
-            self.show_error_message(f"Ошибка сохранения в базу данных: {str(e)}")
+            if committed:
+                self.show_error_message(f"Изменения сохранены в БД, но не удалось обновить интерфейс: {e}")
+            else:
+                self.show_error_message(f"Ошибка сохранения в базу данных: {e}")
         except Exception as e:
-            self.show_error_message(f"Ошибка применения изменений: {str(e)}")
+            if committed:
+                self.show_error_message(f"Изменения сохранены в БД, но не удалось обновить интерфейс: {e}")
+            else:
+                self.show_error_message(f"Ошибка применения изменений: {e}")
 
     def refresh_all_comboboxes(self):
         self.fill_in_prod_brand_list()
@@ -744,8 +899,6 @@ class ProductArticlesPage(QWidget):
         return article_data
 
     def find_product_articles(self):
-        self.table.clearContents()
-        self.table.setRowCount(0)
 
         article_data = self.get_product_articles_from_db()
 
@@ -756,6 +909,7 @@ class ProductArticlesPage(QWidget):
             if not article_data:
                 self.show_message("Нет данных по заданным фильтрам")
         else:
+            self._display_data([])
             self.show_message("Нет данных для отображения")
 
     def get_filtered_product_articles(self):
@@ -1040,12 +1194,14 @@ class ProductArticlesPage(QWidget):
         return len(valid_rows), skipped_names
 
     def _display_data(self, data):
+        view_context = capture_table_context(self.table)
         sort_state = self._pause_sorting()
         self.table.clear()
         self.table.setColumnCount(0)
         self.table.setRowCount(0)
 
         if not data:
+            self._original_values.clear()
             self._restore_sorting(sort_state)
             self.show_message("Нет данных для отображения")
             return
@@ -1061,29 +1217,52 @@ class ProductArticlesPage(QWidget):
         self.table.setHorizontalHeaderLabels(display_headers(headers))
 
         for i, row_data in enumerate(data):
-            row_id = int(row_data["id"])
-            self._original_values[row_id] = {}
-
-            for j, col in enumerate(columns):
-                value = "" if row_data[col] is None else str(row_data[col])
-                item_class = NumericTableWidgetItem if col == "id" else QTableWidgetItem
-                item = item_class(value)
-                item.setData(Qt.UserRole, int(row_id))
-
-                if col == "id":
-                    item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-                    item.setTextAlignment(Qt.AlignCenter)
-                else:
-                    item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
-                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-
-                self._original_values[row_id][col] = value
-                self.table.setItem(i, j, item)
+            self._paint_article_row(i, row_data)
 
         resize_columns_for_multiline_headers(self.table)
 
         self._updating_table = False
         self._restore_sorting(sort_state)
+        restore_table_context(self.table, view_context)
+
+    def _paint_article_row(self, row_index, row_data):
+        row_id = int(row_data["id"])
+        self._original_values[row_id] = {}
+        for col_index, col in enumerate(("id", "product_name", "article", "variant_name")):
+            value = "" if row_data[col] is None else str(row_data[col])
+            item = NumericTableWidgetItem(value) if col == "id" else QTableWidgetItem(value)
+            item.setData(Qt.UserRole, row_id)
+            if col == "id":
+                item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                item.setTextAlignment(Qt.AlignCenter)
+            else:
+                item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable)
+                item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self._original_values[row_id][col] = value
+            self.table.setItem(row_index, col_index, item)
+
+    def _refresh_committed_articles(self, changed_ids: set[int]):
+        if not changed_ids:
+            return
+        with self.get_session() as session:
+            rows = (session.query(ProductArticle, Product)
+                    .join(Product, ProductArticle.product_id == Product.id)
+                    .filter(ProductArticle.id.in_(changed_ids)).all())
+            updated = [
+                {"id": article.id, "product_id": product.id,
+                 "product_name": product.name, "article": article.article,
+                 "variant_name": article.name, "family": product.family,
+                 "pack": product.pack, "brand": product.brand}
+                for article, product in rows
+            ]
+        matches = {int(row["id"]): row for row in self._apply_current_filters(updated)}
+        self._updating_table = True
+        try:
+            reconcile_committed_rows(self.table, changed_ids, matches, self._paint_article_row)
+            for removed_id in changed_ids - set(matches):
+                self._original_values.pop(removed_id, None)
+        finally:
+            self._updating_table = False
 
     def add_line(self):
         self.clear_message()

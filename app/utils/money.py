@@ -25,13 +25,20 @@ def to_decimal(value: object, default: Decimal = Decimal("0")) -> Decimal:
     """
     if value is None or value == "":
         return default
-    if isinstance(value, Decimal):
-        return value
     try:
-        text = str(value)
-        if isinstance(value, str):
-            text = text.strip().replace("\xa0", "").replace(" ", "").replace(",", ".")
-        return Decimal(text)
+        if isinstance(value, Decimal):
+            result = value
+        else:
+            text = str(value)
+            if isinstance(value, str):
+                text = text.strip().replace("\xa0", "").replace(" ", "").replace(",", ".")
+            result = Decimal(text)
+        # pandas encodes empty cells / unmatched merge columns as float NaN.
+        # Decimal("NaN") makes every later "> 0" comparison raise
+        # InvalidOperation, so treat NaN/Infinity like an empty value.
+        if not result.is_finite():
+            return default
+        return result
     except (InvalidOperation, ValueError, TypeError):
         logger.warning(
             "to_decimal: не удалось преобразовать %r в Decimal, возвращён default=%r",

@@ -736,6 +736,15 @@ class TargetPriceService:
                 via_novo=via_novo,
             )
             target_price_pack = self._round4(target_price_l * pack) if pack else Decimal("0")
+            # Record what reverse_calculate_target_price applied for the TARGET
+            # supplier (same convention as calculate_supplier_costs), not the
+            # donor option's values: RF / marks_for_us / via Novo can differ.
+            target_is_rf = bool(target_supplier.is_rf)
+            marking_used = (
+                Decimal("0")
+                if target_supplier.marks_for_us
+                else self.cost_calculation.get_marking_cost(row.selected_product_id)
+            )
             calc_row = TargetPriceCalculation(
                 calc_date=datetime.utcnow(),
                 batch_id=batch_id,
@@ -764,13 +773,13 @@ class TargetPriceService:
                 agent_fee_used=self._to_decimal(getattr(target_supplier, "agent_fee", None)),
                 has_customs_used=has_customs,
                 via_novo_used=via_novo,
-                bank_fee_used=option.bank_fee_used,
-                customs_fee_used=option.customs_fee_used,
-                additional_customs_used=option.additional_customs_used,
-                storage_used=option.storage_used,
-                move_used=option.move_used,
-                marking_used=option.marking_used,
-                is_excise_used=option.is_excise_used,
+                bank_fee_used=self._to_decimal(fixed.bank_fee),
+                customs_fee_used=Decimal("0") if target_is_rf else self._to_decimal(fixed.customs_fee),
+                additional_customs_used=self._to_decimal(fixed.additional_customs),
+                storage_used=self._to_decimal(fixed.storage),
+                move_used=self._to_decimal(fixed.move) if via_novo else Decimal("0"),
+                marking_used=marking_used,
+                is_excise_used=False if target_is_rf else bool(product.is_excise),
                 vat_used=self._to_decimal(fixed.vat),
                 money_used=self._to_decimal(fixed.money),
                 price_date_used=option.price_date_used,

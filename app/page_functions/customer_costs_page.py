@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from app.utils.table_view_context import (
+    capture_table_context, restore_table_context, tag_table_row_ids,
+    table_row_id, find_table_row_id,
+    stable_row_editor,
+)
+
 from datetime import datetime
 import uuid
 from pathlib import Path
@@ -378,7 +384,13 @@ class CustomerCostsPage(QWidget):
         self.display_rows(rows)
 
     def display_rows(self, rows: list[TempCustomerCostImport]):
+        view_context = capture_table_context(
+            self.table,
+            key_for_row=lambda index: table_row_id(self.table, index),
+        )
         self._updating_table = True
+        sorting_was_enabled = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
         try:
             self._table_row_ids = [row.id for row in rows]
 
@@ -458,8 +470,14 @@ class CustomerCostsPage(QWidget):
                         self.build_manual_price_item(row_id, block_index, ""),
                     )
 
+            tag_table_row_ids(self.table, self._table_row_ids)
             resize_columns_for_multiline_headers(self.table)
         finally:
+            self.table.setSortingEnabled(sorting_was_enabled)
+            restore_table_context(
+                self.table, view_context,
+                key_for_row=lambda index: table_row_id(self.table, index),
+            )
             self._updating_table = False
 
     def _clean_table_text(self, value) -> str:
@@ -561,10 +579,11 @@ class CustomerCostsPage(QWidget):
         if row < 0 or row >= len(self._table_row_ids):
             return
 
-        row_id = self._table_row_ids[row]
+        row_id = table_row_id(self.table, row)
 
         if manual_block is not None:
             combo = self._build_manual_supplier_combo(row, manual_block)
+            combo.setProperty("temp_row_id", row_id)
             combo.activated.connect(
                 lambda _, r=row, b=manual_block, c=combo: self.finish_manual_supplier_edit(r, b, c)
             )
@@ -619,16 +638,28 @@ class CustomerCostsPage(QWidget):
         return combo
 
     def finish_manual_supplier_edit(self, row: int, block_index: int, combo: QComboBox):
+        # The original visual row may have moved since the combo was opened.
+        row_id = combo.property("temp_row_id")
+        if row_id is None:
+            return
+        row = find_table_row_id(self.table, int(row_id))
+        if row < 0:
+            return
         supplier_id = combo.currentData()
         supplier_name = combo.currentText() if supplier_id is not None else "-"
 
-        self._updating_table = True
         col = self._manual_supplier_column(block_index)
-        self.table.removeCellWidget(row, col)
-        item = self.build_display_item(self._table_row_ids[row], f"manual_supplier_{block_index}", supplier_name)
-        item.setData(Qt.UserRole + 2, supplier_id)
-        self.table.setItem(row, col, item)
-        self._updating_table = False
+        sorting_enabled = self.table.isSortingEnabled()
+        self._updating_table = True
+        self.table.setSortingEnabled(False)
+        try:
+            self.table.removeCellWidget(row, col)
+            item = self.build_display_item(int(row_id), f"manual_supplier_{block_index}", supplier_name)
+            item.setData(Qt.UserRole + 2, supplier_id)
+            self.table.setItem(row, col, item)
+        finally:
+            self.table.setSortingEnabled(sorting_enabled)
+            self._updating_table = False
         resize_columns_for_multiline_headers(self.table)
 
     def _build_product_combo(self, row_id: int, selected_product_id: int | None) -> QComboBox:
@@ -756,6 +787,7 @@ class CustomerCostsPage(QWidget):
         combo.setCurrentText(brand_value)
         combo.blockSignals(False)
 
+    @stable_row_editor
     def finish_product_edit(self, row: int, row_id: int, combo: QComboBox):
         product_id = combo.currentData()
 
@@ -777,6 +809,7 @@ class CustomerCostsPage(QWidget):
         self._updating_table = False
         resize_columns_for_multiline_headers(self.table)
 
+    @stable_row_editor
     def finish_supplier_option_edit(self, row: int, row_id: int, combo: QComboBox):
         option_id = combo.currentData()
 
@@ -798,6 +831,7 @@ class CustomerCostsPage(QWidget):
         self._updating_table = False
         resize_columns_for_multiline_headers(self.table)
 
+    @stable_row_editor
     def finish_brand_edit(self, row: int, row_id: int, combo: QComboBox):
         brand_text = clean_multi_spaces(combo.currentText()) or None
         self.update_temp_field(row_id, "new_brand", brand_text)
@@ -913,7 +947,7 @@ class CustomerCostsPage(QWidget):
                     continue
                 if row < 0 or row >= len(self._table_row_ids):
                     continue
-                row_id = self._table_row_ids[row]
+                row_id = table_row_id(self.table, row)
                 if column == COL_SUPPLIER_OPTION:
                     self.finish_supplier_option_edit(row, row_id, widget)
                 elif column == COL_PRODUCT:
@@ -937,7 +971,7 @@ class CustomerCostsPage(QWidget):
         self.table.setHorizontalHeaderItem(price_col, QTableWidgetItem(f"Manual Price{suffix}"))
 
         for row in range(self.table.rowCount()):
-            row_id = self._table_row_ids[row]
+            row_id = table_row_id(self.table, row)
             self.table.setItem(row, supplier_col, self.build_display_item(row_id, f"manual_supplier_{self._manual_price_blocks - 1}", "-"))
             self.table.setItem(row, price_col, self.build_manual_price_item(row_id, self._manual_price_blocks - 1, ""))
 
@@ -952,7 +986,7 @@ class CustomerCostsPage(QWidget):
         for row in range(self.table.rowCount()):
             if row >= len(self._table_row_ids):
                 continue
-            row_id = self._table_row_ids[row]
+            row_id = table_row_id(self.table, row)
             product_name_item = self.table.item(row, COL_PRODUCT)
             product_name = product_name_item.text().strip() if product_name_item else f"строка {row + 1}"
 

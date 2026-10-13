@@ -227,7 +227,10 @@ class ProductUc3Page(QWidget):
             return pending["product_id"]
         if row_key.startswith("db::"):
             row_id = int(row_key.split("::", 1)[1])
-            with self.get_session() as session:
+            # Independent session: apply_pending_changes calls this while its
+            # own scoped session holds uncommitted deletes; closing the shared
+            # scoped session here would silently roll them back.
+            with SessionLocal.session_factory() as session:
                 obj = session.query(ProductUc3History).filter(ProductUc3History.id == row_id).first()
                 return int(obj.product_id) if obj else None
         return None

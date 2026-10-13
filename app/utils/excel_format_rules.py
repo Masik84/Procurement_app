@@ -674,6 +674,103 @@ def apply_central_workbook_rules(workbook: Any) -> None:
             logger.exception("Не удалось применить централизованные Excel-правила к листу %s", index)
 
 
+def apply_costcalc_workbook_presentation(workbook: Any) -> None:
+    """Final CostCalc-only presentation after all three sheets have been built.
+
+    The ordinary central pass inspects row 1.  CostCalc's secondary sheets have
+    their headings on rows 8 and 2, so they need an explicit semantic mapping.
+    No calculation values, formulas, or sheet order are changed here.
+    """
+    try:
+        analysis = workbook.Worksheets("Анализ")
+        offer = workbook.Worksheets("Предложение")
+        master = workbook.Worksheets("для Pricing Master")
+    except Exception:
+        logger.exception("Не найдены обязательные листы CostCalc для оформления")
+        raise
+
+    for sheet in (analysis, offer, master):
+        # Apply only to populated cells. This is one COM call per property,
+        # rather than millions of per-cell assignments, and preserves bold/fills.
+        sheet.UsedRange.Font.Name = "Calibri"
+        sheet.UsedRange.Font.Size = 11
+        sheet.Activate()
+        workbook.Application.ActiveWindow.Zoom = 80
+
+    def _format_columns(sheet: Any, logical_headers: tuple[str, ...]) -> None:
+        for col_index, logical_header in enumerate(logical_headers, 1):
+            fmt = number_format_for_header(logical_header)
+            if fmt:
+                # Format the entire column, as in the Analysis sheet; this
+                # also covers future new rows without depending on row count.
+                letter = _excel_column_letter(col_index)
+                set_number_format_safe(sheet.Columns(f"{letter}:{letter}"), fmt)
+
+    _format_columns(
+        offer,
+        ("Supplier Article", "Our Product Name", "Pack", "Qty, pcs",
+         "Volume, L", "Qty, pcs", "Qty, pcs", "Qty, pcs", "Qty, pcs"),
+    )
+    _format_columns(
+        master,
+        ("Supplier Article", "Our Product Name", "Pack",
+         "Cost Novo with VAT", "Full Cost Msk"),
+    )
+    # The source template's product-name width is 53 Excel ColumnWidth units,
+    # not 53 pixels. Make this the final authority after the central pass.
+    master.Columns("B:B").ColumnWidth = 53.0
+    # Offer prices must use exactly the same Excel number format as the
+    # "Cost Novo with VAT" / "Full Cost Msk" columns on "Анализ".  A
+    # separately constructed currency mask previously produced e.g. 1218,0 ₽
+    # rather than the cost column's established display format.
+    cost_local_format = number_format_for_header("Cost Novo with VAT") or FORMATS.MONEY_RUB_SIMPLE
+    cost_invariant_format = to_invariant_number_format(cost_local_format)
+    try:
+        for col_index in range(1, int(analysis.UsedRange.Columns.Count) + 1):
+            if str(analysis.Cells(1, col_index).Value or "").strip() == "Cost Novo with VAT":
+                cost_cell = analysis.Cells(2, col_index)
+                actual_local = cost_cell.NumberFormatLocal
+                actual_invariant = cost_cell.NumberFormat
+                if actual_local and str(actual_local).casefold() != "general":
+                    cost_local_format = str(actual_local)
+                if actual_invariant and str(actual_invariant).casefold() != "general":
+                    cost_invariant_format = str(actual_invariant)
+                break
+    except Exception:
+        logger.exception("Не удалось прочитать формат себестоимости из листа Анализ; использую общие правила")
+    for letter in ("F", "G", "H", "I"):
+        set_number_format_safe(
+            offer.Columns(f"{letter}:{letter}"),
+            format_en=cost_invariant_format,
+            format_local=cost_local_format,
+        )
+
+    # Purch-order cost columns inherit the exact background and text styling
+    # of the requested 'curr LPC' reference on the Analysis sheet.
+    try:
+        header_to_col = {}
+        for col_index in range(1, int(analysis.UsedRange.Columns.Count) + 1):
+            value = analysis.Cells(1, col_index).Value
+            if value is not None:
+                header_to_col[str(value)] = col_index
+        source = header_to_col.get("curr LPC")
+        if source:
+            for name in ("Cost Novo (Purch order)", "Full Cost Msk (Purch order)"):
+                target = header_to_col.get(name)
+                if target:
+                    src_cell = analysis.Cells(1, source)
+                    dst_cell = analysis.Cells(1, target)
+                    dst_cell.Interior.Color = src_cell.Interior.Color
+                    dst_cell.Font.Color = src_cell.Font.Color
+                    dst_cell.Font.Bold = src_cell.Font.Bold
+    except Exception:
+        logger.exception("Не удалось скопировать оформление curr LPC на Purchase Order")
+
+    # SaveAs stores the active tab/window. Set it AFTER visiting every sheet.
+    analysis.Activate()
+    workbook.Application.ActiveWindow.Zoom = 80
+
+
 # ---------------------------------------------------------------------------
 # CostCalc header order
 # ---------------------------------------------------------------------------
@@ -911,10 +1008,12 @@ def ensure_xlsx_path(file_path: str | Path) -> Path:
     return path
 
 
-def save_workbook_xlsx(workbook: Any, file_path: str | Path) -> Path:
+def save_workbook_xlsx(workbook: Any, file_path: str | Path, *, profile: str | None = None) -> Path:
     target_path = ensure_xlsx_path(file_path)
     # Final authoritative pass. This intentionally happens after exporter-local
     # layout code so common column rules cannot drift between reports.
     apply_central_workbook_rules(workbook)
+    if profile == "costcalc":
+        apply_costcalc_workbook_presentation(workbook)
     workbook.SaveAs(str(target_path))
     return target_path

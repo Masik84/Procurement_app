@@ -65,7 +65,7 @@ def _install_order_planning_exporter_no_is_compat() -> None:
             headers, rows = original(
                 self,
                 display_rows,
-                supplier_price_age_months=suppplier_price_age_months,
+                supplier_price_age_months=supplier_price_age_months,
                 quick_order_months=quick_order_months,
                 safe_stock_months=safe_stock_months,
             )
@@ -297,6 +297,7 @@ def _install_background_info_routing() -> None:
         write_resources=(),
         intro: str,
         use_progress: bool = False,
+        result_is_current=None,
     ) -> bool:
         manager = pbi.get_background_task_manager()
         state = getattr(page, "_procurement_background_message_router_state", None)
@@ -374,19 +375,10 @@ def _install_background_info_routing() -> None:
             except (AttributeError, RuntimeError):
                 pass
 
+        # The worker reports only milestone messages. Preserve them in the
+        # task center: suppressing every update except the final one made a
+        # responsive worker look frozen and hid the stage that was slow.
         work_to_start = work
-        if use_progress and title == "Сохранение и расчёт прайса поставщика":
-            original_work = work
-
-            def concise_supplier_price_work(progress):
-                def concise_progress(text: Any = "") -> None:
-                    message = str(text or "").strip()
-                    if message.startswith("Сохранение прайса завершено"):
-                        progress(message)
-
-                return original_work(concise_progress)
-
-            work_to_start = concise_supplier_price_work
 
         try:
             started = original_start(
@@ -398,6 +390,7 @@ def _install_background_info_routing() -> None:
                 write_resources=write_resources,
                 intro=intro,
                 use_progress=use_progress,
+                result_is_current=result_is_current,
             )
         except Exception:
             restore_show_message_if_idle()

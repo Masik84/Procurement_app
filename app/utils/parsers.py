@@ -50,6 +50,10 @@ def parse_loose_number(value: object) -> Optional[Decimal]:
             s = s.replace(",", ".")
         else:
             s = s.replace(",", "")
+    elif s.count(",") > 1 or s.count(".") > 1:
+        # "1.234.567" / "1,234,567": a repeated separator can only be a
+        # thousands separator. Previously this returned None (empty cell).
+        s = s.replace(",", "").replace(".", "")
     elif "," in s:
         s = s.replace(",", ".")
 

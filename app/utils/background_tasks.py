@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import sys
+import threading
+import time
 import traceback
 import uuid
 from dataclasses import dataclass, field
@@ -35,6 +38,17 @@ class _TaskWorker(QObject):
 
     @Slot()
     def run(self) -> None:
+        # Terminal state is also stored on the worker, synchronously in this
+        # thread, so BackgroundTaskManager can still deliver it from
+        # QThread.finished if the queued finished/failed callback is lost
+        # (see background_task_fixes._install_background_failure_delivery).
+        #
+        # Do NOT replace this method with an undecorated function: PySide6
+        # then invokes it in the GUI thread instead of the worker thread, and
+        # every "background" task freezes the whole application.
+        self._procurement_terminal_failure = None
+        self._procurement_terminal_result_ready = False
+        self._procurement_terminal_result = None
         logger.info("BACKGROUND | START | %s", self._title)
         try:
             if self._use_progress:
@@ -44,10 +58,16 @@ class _TaskWorker(QObject):
         except Exception as exc:  # pragma: no cover - GUI boundary
             details = traceback.format_exc()
             logger.exception("BACKGROUND | FAIL | %s", self._title)
-            self.failed.emit(str(exc).strip() or exc.__class__.__name__, details)
+            message = str(exc).strip() or exc.__class__.__name__
+            self._procurement_terminal_failure = (message, details)
+            self.failed.emit(message, details)
             return
         logger.info("BACKGROUND | FINISH | %s", self._title)
+        self._procurement_terminal_result = result
+        self._procurement_terminal_result_ready = True
         self.finished.emit(result)
+
+    run._procurement_terminal_delivery = True
 
 
 class BackgroundTaskHandle(QObject):
@@ -216,6 +236,14 @@ class BackgroundTaskManager(QObject):
         self._tasks: dict[str, _TaskRecord] = {}
         self._shutting_down = False
         self._task_center: BackgroundTaskCenterDialog | None = None
+        # Lightweight GUI event-loop watchdog. It does not interrupt workers
+        # or access their connections. If Qt stops processing events during a
+        # task, log the stall length for diagnosis on the user's machine.
+        self._gui_watchdog = QTimer(self)
+        self._gui_watchdog.setInterval(500)
+        self._gui_watchdog.timeout.connect(self._check_gui_responsiveness)
+        self._last_gui_heartbeat = 0.0
+        self._stall_sampler: threading.Thread | None = None
         app.installEventFilter(self)
         app.aboutToQuit.connect(self._final_shutdown)
 
@@ -225,6 +253,57 @@ class BackgroundTaskManager(QObject):
 
     def active_count(self) -> int:
         return sum(record.status == "running" for record in self._tasks.values())
+
+    def _check_gui_responsiveness(self) -> None:
+        now = time.perf_counter()
+        delay = now - self._last_gui_heartbeat
+        self._last_gui_heartbeat = now
+        # Avoid noisy scheduling jitter. A 2+ second delay while work is active
+        # is useful evidence of GUI starvation (including modal handlers).
+        if delay > 2.0 and self.active_count():
+            logger.warning(
+                "BACKGROUND | GUI EVENT LOOP STALLED | %.2f s | active=%s",
+                delay, ", ".join(self.active_titles()),
+            )
+
+    def _ensure_stall_sampler(self) -> None:
+        """Log the GUI thread's Python stack while it is stalled during a task.
+
+        The QTimer watchdog above can only report a stall after it is over.
+        This daemon thread looks at the same heartbeat from outside the GUI
+        thread and records *where* the GUI thread is stuck.
+        """
+        if self._stall_sampler is not None:
+            return
+        gui_thread_id = threading.main_thread().ident
+
+        def sample() -> None:
+            dumped_for = None
+            while True:
+                time.sleep(1.0)
+                heartbeat = self._last_gui_heartbeat
+                if not heartbeat or heartbeat == dumped_for:
+                    continue
+                stalled = time.perf_counter() - heartbeat
+                if stalled < 3.0:
+                    continue
+                dumped_for = heartbeat
+                frame = sys._current_frames().get(gui_thread_id)
+                stack = "".join(traceback.format_stack(frame)) if frame else "<нет стека>"
+                logger.warning(
+                    "BACKGROUND | GUI THREAD STUCK %.1f s | active=%s | stack:\n%s",
+                    stalled, ", ".join(self.active_titles()), stack,
+                )
+
+        self._stall_sampler = threading.Thread(
+            target=sample, name="gui-stall-sampler", daemon=True
+        )
+        self._stall_sampler.start()
+
+    def _stop_gui_watchdog_if_idle(self) -> None:
+        if not self.active_count() and self._gui_watchdog.isActive():
+            self._gui_watchdog.stop()
+            self._last_gui_heartbeat = 0.0
 
     def active_titles(self) -> list[str]:
         return [record.title for record in self._tasks.values() if record.status == "running"]
@@ -327,6 +406,10 @@ class BackgroundTaskManager(QObject):
         if intro:
             record.log.append(str(intro))
         self._tasks[task_id] = record
+        if not self._gui_watchdog.isActive():
+            self._last_gui_heartbeat = time.perf_counter()
+            self._gui_watchdog.start()
+        self._ensure_stall_sampler()
 
         thread.started.connect(worker.run)
         worker.progress.connect(
@@ -394,6 +477,21 @@ class BackgroundTaskManager(QObject):
         record.handle.progress.emit(message)
         self.task_progress.emit(task_id, message)
 
+    def mark_gui_refresh_failed(self, task_id: str, message: str) -> None:
+        """Mark a committed worker with a failed GUI completion callback.
+
+        The database operation itself is already over. This only corrects the
+        task center's final status; it never retries or rolls back the worker.
+        """
+        record = self._tasks.get(task_id)
+        if record is None or record.status != "finished":
+            return
+        record.status = "failed"
+        if record.log and record.log[-1] == "Готово.":
+            record.log.pop()
+        record.log.append(f"Ошибка обновления интерфейса: {message}")
+        self.task_progress.emit(task_id, message)
+
     @Slot(str, object)
     def _on_finished(self, task_id: str, result: object) -> None:
         record = self._tasks.get(task_id)
@@ -402,7 +500,10 @@ class BackgroundTaskManager(QObject):
         record.status = "finished"
         record.log.append("Готово.")
         record.handle.finished.emit(result)
-        self.task_done.emit(task_id, True)
+        # A page callback can report an error while applying the committed
+        # worker result. Do not present that outcome as a clean GUI success.
+        self.task_done.emit(task_id, record.status == "finished")
+        self._stop_gui_watchdog_if_idle()
 
     @Slot(str, str, str)
     def _on_failed(self, task_id: str, message: str, details: str) -> None:
@@ -417,6 +518,7 @@ class BackgroundTaskManager(QObject):
             record.log.append(details.rstrip())
         record.handle.failed.emit(message)
         self.task_done.emit(task_id, False)
+        self._stop_gui_watchdog_if_idle()
 
     def _on_thread_finished(self, task_id: str) -> None:
         # Do NOT pop the task here. QThread.finished may be delivered before the

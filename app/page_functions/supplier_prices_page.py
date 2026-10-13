@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from app.utils.table_view_context import (
+    capture_table_context, restore_table_context, tag_table_row_ids,
+    table_row_id, find_table_row_id,
+    stable_row_editor, ROW_ID_ROLE,
+)
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -41,6 +47,7 @@ from app.services.product_matching_service import MissingPackTypeError
 from app.utils.pack_type_prompt import resolve_missing_pack_for_temp_rows
 from app.utils.batch import get_current_username
 from app.utils.gui_table_actions import commit_active_table_item_editors
+from app.utils.staging_row_ids import validated_staging_ids
 from app.utils.parsers import parse_loose_number, parse_user_percent
 from app.utils.text import clean_multi_spaces
 from app.services.qty_in_box_service import normalize_qty_in_box
@@ -327,17 +334,20 @@ class SupplierPricesPage(QWidget):
         #     return None, None
         quick_months = None
 
-        safe_months, ok = QInputDialog.getInt(
-            self,
-            "Стандартный заказ",
-            "Кол-во месяцев к Стандартному заказу:",
-            value=5,
-            minValue=0,
-            maxValue=120,
-            step=1,
-        )
-        if not ok:
-            return None, None
+        # Диалог «Стандартный заказ» временно скрыт: стандарт — 5 месяцев.
+        # Оставляем код для возможного восстановления ручного выбора.
+        # safe_months, ok = QInputDialog.getInt(
+        #     self,
+        #     "Стандартный заказ",
+        #     "Кол-во месяцев к Стандартному заказу:",
+        #     value=5,
+        #     minValue=0,
+        #     maxValue=120,
+        #     step=1,
+        # )
+        # if not ok:
+        #     return None, None
+        safe_months = 5
 
         return quick_months, int(safe_months)
 
@@ -721,6 +731,19 @@ class SupplierPricesPage(QWidget):
         except Exception as e:
             self.show_error_message(str(e))
 
+    def choose_price_type_before_save(self) -> bool:
+        """Ask on Save; Cancel leaves the current import untouched."""
+        price_types = ["Stock", "Price Request", "Price List"]
+        current_type = self.price_type if self.price_type in price_types else "Price List"
+        choice, accepted = QInputDialog.getItem(
+            self, "Тип цен поставщика", "Признак сохраняемых цен:",
+            price_types, price_types.index(current_type), False,
+        )
+        if not accepted:
+            return False
+        self.price_type = choice
+        return True
+
     def import_file(self):
         try:
             supplier_id = self.ensure_supplier()
@@ -736,15 +759,6 @@ class SupplierPricesPage(QWidget):
         )
         if not file_path:
             return
-
-        choice, accepted = QInputDialog.getItem(
-            self, "Тип цен поставщика", "Признак прайс-листа:",
-            ["Stock", "Price Request", "Price List"],
-            ["Stock", "Price Request", "Price List"].index(self.price_type), False,
-        )
-        if not accepted:
-            return
-        self.price_type = choice
 
         try:
             importer = SupplierPriceImporter()
@@ -785,7 +799,13 @@ class SupplierPricesPage(QWidget):
         self.display_rows(rows)
 
     def display_rows(self, rows: list[TempPriceImport]):
+        view_context = capture_table_context(
+            self.table,
+            key_for_row=lambda index: table_row_id(self.table, index),
+        )
         self._updating_table = True
+        sorting_was_enabled = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
         self._table_row_ids = [row.id for row in rows]
         self._pending_deletes.clear()
         self._new_rows.clear()
@@ -846,7 +866,13 @@ class SupplierPricesPage(QWidget):
                         self.build_table_item(column_name, display_values[column_name]),
                     )
 
+        tag_table_row_ids(self.table, self._table_row_ids)
         resize_columns_for_multiline_headers(self.table)
+        self.table.setSortingEnabled(sorting_was_enabled)
+        restore_table_context(
+            self.table, view_context,
+            key_for_row=lambda index: table_row_id(self.table, index),
+        )
         self._updating_table = False
 
     def start_cell_edit(self, row: int, column: int):
@@ -863,7 +889,12 @@ class SupplierPricesPage(QWidget):
         if row < 0 or row >= len(self._table_row_ids):
             return
 
-        row_id = self._table_row_ids[row]
+        row_id = table_row_id(self.table, row)
+        if row_id is None:
+            self.show_error_message(
+                "Не удалось определить ID строки импорта. Обновите таблицу перед редактированием."
+            )
+            return
 
         if column_name == "selected_product_id":
             current_product_id = self._get_row_selected_product_id(row_id)
@@ -919,6 +950,7 @@ class SupplierPricesPage(QWidget):
             row = session.query(TempPriceImport).filter(TempPriceImport.id == row_id).first()
             return row.new_brand or "" if row else ""
 
+    @stable_row_editor
     def finish_product_edit(self, row: int, row_id: int, combo: QComboBox):
         product_column = self._column_index("selected_product_id")
         new_name_column = self._column_index("new_product_name")
@@ -957,11 +989,18 @@ class SupplierPricesPage(QWidget):
         self._pending_changes[row_id]["new_brand"] = None
         self._pending_changes[row_id]["new_pack"] = None
 
-        with self.get_session() as session:
-            product = session.query(Product).filter(Product.id == product_id).first()
-            product_name = product.name if product else ""
-            qty_in_box = product.qty_in_box if product else None
-            is_excise = bool(product.is_excise) if product else False
+        product_meta = combo.currentData(Qt.UserRole + 2)
+        if isinstance(product_meta, (tuple, list)) and len(product_meta) == 3:
+            product_name, qty_in_box, is_excise = product_meta
+            is_excise = bool(is_excise)
+        else:
+            # Legacy combos can lack cached metadata. Only those need a
+            # fallback read; new combos cache the values when opened.
+            with self.get_session() as session:
+                product = session.query(Product).filter(Product.id == product_id).first()
+                product_name = product.name if product else ""
+                qty_in_box = product.qty_in_box if product else None
+                is_excise = bool(product.is_excise) if product else False
 
         # Выбор существующего продукта НЕ является запросом на изменение его названия.
         # Product name (for new) остается пустым, пока пользователь сам явно не введет новое имя.
@@ -972,16 +1011,21 @@ class SupplierPricesPage(QWidget):
         # Сохраняем выбранный существующий продукт сразу в temp-строку.
         # Тогда даже если пользователь сразу нажмет «Сохранить», строка не попадет
         # в валидацию создания нового продукта и не потребует Brand / Pack.
-        with self.get_session() as session:
-            temp_row = session.query(TempPriceImport).filter(TempPriceImport.id == row_id).first()
-            if temp_row is not None:
-                temp_row.selected_product_id = product_id
-                temp_row.new_product_name = None
-                temp_row.new_brand = None
-                temp_row.new_pack = None
-                temp_row.new_qty_in_box = qty_in_box
-                temp_row.new_is_excise = is_excise
-                session.commit()
+        if not getattr(self, "_defer_supplier_save_editor_commit", False):
+            # Preserve existing immediate-selection behaviour everywhere
+            # except the Save preflight. In that preflight the pending values
+            # are committed atomically by _apply_pending_changes_bulk() in
+            # the background worker, not here on the Qt event loop.
+            with self.get_session() as session:
+                temp_row = session.query(TempPriceImport).filter(TempPriceImport.id == row_id).first()
+                if temp_row is not None:
+                    temp_row.selected_product_id = product_id
+                    temp_row.new_product_name = None
+                    temp_row.new_brand = None
+                    temp_row.new_pack = None
+                    temp_row.new_qty_in_box = qty_in_box
+                    temp_row.new_is_excise = is_excise
+                    session.commit()
 
         self._updating_table = True
         self.table.removeCellWidget(row, product_column)
@@ -1008,6 +1052,7 @@ class SupplierPricesPage(QWidget):
         self._updating_table = False
         resize_columns_for_multiline_headers(self.table)
 
+    @stable_row_editor
     def finish_brand_edit(self, row: int, row_id: int, combo: QComboBox):
         text = clean_multi_spaces(combo.currentText()).upper() or None
 
@@ -1057,6 +1102,10 @@ class SupplierPricesPage(QWidget):
         item = QTableWidgetItem(value)
         item.setData(Qt.UserRole, column_name)
         item.setData(Qt.UserRole + 1, row_id)
+        if column_name == "selected_product_id":
+            # Replacing the first cell after combo editing must retain the
+            # row's database identity for sorting and context-menu deletion.
+            item.setData(ROW_ID_ROLE, int(row_id))
         item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
         item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         return item
@@ -1097,12 +1146,22 @@ class SupplierPricesPage(QWidget):
 
         for product in products:
             combo.addItem(product.name, int(product.id))
+            combo.setItemData(
+                combo.count() - 1,
+                (product.name or "", product.qty_in_box, bool(product.is_excise)),
+                Qt.UserRole + 2,
+            )
 
         if current_id is not None and combo.findData(current_id) < 0:
             with self.get_session() as session:
                 product = session.query(Product).filter(Product.id == current_id).first()
                 if product:
                     combo.addItem(product.name, int(product.id))
+                    combo.setItemData(
+                        combo.count() - 1,
+                        (product.name or "", product.qty_in_box, bool(product.is_excise)),
+                        Qt.UserRole + 2,
+                    )
 
         idx = combo.findData(current_id)
         if idx >= 0:
@@ -1191,7 +1250,10 @@ class SupplierPricesPage(QWidget):
         if row < 0 or row >= len(self._table_row_ids):
             return
 
-        row_id = self._table_row_ids[row]
+        row_id = table_row_id(self.table, row)
+        if row_id is None:
+            # Never accumulate edits under a missing/column-name row key.
+            return
         column_name = item.data(Qt.UserRole)
         if not column_name:
             return
@@ -1275,28 +1337,36 @@ class SupplierPricesPage(QWidget):
     def _commit_open_editors(self):
         commit_active_table_item_editors(self.table)
 
-        for row in range(self.table.rowCount()):
-            for column in range(self.table.columnCount()):
-                widget = self.table.cellWidget(row, column)
-                if not isinstance(widget, QComboBox):
-                    continue
-                row_id = widget.property("row_id")
-                if row_id is None:
-                    continue
-                role = widget.property("combo_role")
-                if role == "product_combo":
-                    self.finish_product_edit(row, int(row_id), widget)
-                elif role == "brand_combo":
-                    self.finish_brand_edit(row, int(row_id), widget)
+        # Only active drop-down editors need committing. Scanning every
+        # cell (rows * columns) is extremely expensive for large imports.
+        # Each editor retains its stable database ID even after sorting.
+        for widget in self.table.findChildren(QComboBox):
+            row_id = widget.property("row_id")
+            role = widget.property("combo_role")
+            if row_id is None or role not in {"product_combo", "brand_combo"}:
+                continue
+            row_id = int(row_id)
+            row = find_table_row_id(self.table, row_id)
+            if row < 0:
+                continue
+            column_name = "selected_product_id" if role == "product_combo" else "new_brand"
+            column = self._column_index(column_name)
+            if self.table.cellWidget(row, column) is not widget:
+                continue
+            if role == "product_combo":
+                self.finish_product_edit(row, row_id, widget)
+            else:
+                self.finish_brand_edit(row, row_id, widget)
 
         self._snapshot_table_values()
 
     def _snapshot_table_values(self) -> None:
         """Read every visible Supplier Price field by logical key before save."""
         excise_column = self._column_index("new_is_excise")
-        for row, row_id in enumerate(self._table_row_ids):
-            if row >= self.table.rowCount():
-                break
+        for row in range(self.table.rowCount()):
+            row_id = table_row_id(self.table, row)
+            if row_id is None:
+                continue
             changes = self._pending_changes.setdefault(row_id, {})
             for column, column_name in enumerate(self.columns):
                 if column_name == "selected_product_id":
@@ -1319,12 +1389,27 @@ class SupplierPricesPage(QWidget):
         if not self._pending_changes and not self._pending_deletes:
             return
 
+        delete_ids = validated_staging_ids(self._pending_deletes)
         supplier_id = self.ensure_supplier()
         import_date = self.get_price_date()
 
         with self.get_session() as session:
+            # Load all edited staging rows in one SELECT, not one SELECT per
+            # visible row. Scope every ID to the current import and user.
+            changed_ids = [int(row_id) for row_id in self._pending_changes]
+            rows_by_id = {
+                int(row.id): row
+                for row in (
+                    session.query(TempPriceImport)
+                    .filter(
+                        TempPriceImport.id.in_(changed_ids),
+                        TempPriceImport.batch_id == self.batch_id,
+                        TempPriceImport.imported_by == self.imported_by,
+                    ).all() if changed_ids else []
+                )
+            }
             for row_id, changes in self._pending_changes.items():
-                row = session.query(TempPriceImport).filter(TempPriceImport.id == row_id).first()
+                row = rows_by_id.get(int(row_id))
                 if row is None:
                     continue
 
@@ -1364,7 +1449,7 @@ class SupplierPricesPage(QWidget):
 
             if self._pending_deletes:
                 session.query(TempPriceImport).filter(
-                    TempPriceImport.id.in_(self._pending_deletes),
+                    TempPriceImport.id.in_(delete_ids),
                     TempPriceImport.batch_id == self.batch_id,
                     TempPriceImport.imported_by == self.imported_by,
                 ).delete(synchronize_session=False)
@@ -1393,8 +1478,11 @@ class SupplierPricesPage(QWidget):
         if not self._pending_changes and not self._pending_deletes and not has_batch_rows:
             self.show_message("Нет изменений")
             return
+        if not self.choose_price_type_before_save():
+            return
 
         try:
+            delete_ids = validated_staging_ids(self._pending_deletes)
             supplier_id = self.ensure_supplier(save_existing_changes=True)
             currency_code = clean_multi_spaces(self.ui.cbo_Currency.currentText()).upper()
             if not currency_code or currency_code == "-":
@@ -1448,7 +1536,7 @@ class SupplierPricesPage(QWidget):
 
                 if self._pending_deletes:
                     session.query(TempPriceImport).filter(
-                        TempPriceImport.id.in_(self._pending_deletes),
+                        TempPriceImport.id.in_(delete_ids),
                         TempPriceImport.batch_id == self.batch_id,
                         TempPriceImport.imported_by == self.imported_by,
                     ).delete(synchronize_session=False)
@@ -1558,17 +1646,27 @@ class SupplierPricesPage(QWidget):
         with self.get_session() as session:
             return SupplierPriceExporter(session).export_qty_in_box_warnings(rows, output_path)
 
-    def cleanup_current_batch(self, start_new_batch_after: bool = False):
+    def cleanup_current_batch(
+        self,
+        start_new_batch_after: bool = False,
+        *,
+        database_cleanup: bool = True,
+        reload_table: bool = True,
+    ):
+        # The background supplier-price save now cleans staging in its worker.
+        # Keep the original defaults for Reset, Close and other callers, but
+        # never repeat those expensive DELETEs on the GUI thread after save.
         current_batch_id = self.batch_id
-        try:
-            if current_batch_id:
-                with self.get_session() as session:
-                    service = SupplierPriceService(session)
-                    service.delete_supplier_price_calculations(current_batch_id, self.imported_by)
-                    service.delete_temp_rows_for_user(self.imported_by)
-                    session.commit()
-        except Exception:
-            logger.exception("Подавленная ошибка (см. traceback выше)")
+        if database_cleanup:
+            try:
+                if current_batch_id:
+                    with self.get_session() as session:
+                        service = SupplierPriceService(session)
+                        service.delete_supplier_price_calculations(current_batch_id, self.imported_by)
+                        service.delete_temp_rows_for_user(self.imported_by)
+                        session.commit()
+            except Exception:
+                logger.exception("Подавленная ошибка (см. traceback выше)")
 
         self._pending_changes.clear()
         self._pending_deletes.clear()
@@ -1577,8 +1675,21 @@ class SupplierPricesPage(QWidget):
         self.selected_file_path = ""
 
         if start_new_batch_after:
-            self.start_new_batch()
-            self.load_table_rows()
+            if database_cleanup:
+                self.start_new_batch()
+            else:
+                # start_batch() only generates a UUID; avoid a DB session.
+                from app.utils.batch import generate_import_batch_id
+                self.batch_id = generate_import_batch_id()
+            if reload_table:
+                self.load_table_rows()
+            else:
+                previous = self._updating_table
+                self._updating_table = True
+                try:
+                    self.table.setRowCount(0)
+                finally:
+                    self._updating_table = previous
         else:
             self.batch_id = ""
 

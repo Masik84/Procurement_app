@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import copy
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from types import MethodType
 from typing import Any, Callable
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QEvent, Qt, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QAbstractButton, QFileDialog
+from PySide6.QtWidgets import QAbstractButton, QFileDialog, QInputDialog, QWidget
 
 from app.utils.background_tasks import TaskConflictError, get_background_task_manager
 from app.utils.text import clean_multi_spaces
@@ -61,6 +62,51 @@ def _ensure_tab_close_guard(page) -> None:
     tab_widget.tabCloseRequested.connect(guarded_close)
 
 
+class _SupplierTableBusyShield(QWidget):
+    """Block table interaction without recursively disabling thousands of widgets.
+
+    QTableWidget.setEnabled(False) propagates to every cell widget. On large
+    supplier-price imports this starves the GUI event loop immediately after
+    the task dialog is shown. A single lightweight child intercepts input.
+    """
+
+    _BLOCKED = {
+        QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonRelease,
+        QEvent.Type.MouseButtonDblClick, QEvent.Type.MouseMove,
+        QEvent.Type.Wheel, QEvent.Type.KeyPress, QEvent.Type.KeyRelease,
+        QEvent.Type.ContextMenu,
+    }
+
+    def __init__(self, table):
+        super().__init__(table)
+        self._table = table
+        self.setObjectName("supplier_price_busy_shield")
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAutoFillBackground(False)
+        self.setGeometry(table.rect())
+        table.installEventFilter(self)
+        self.show()
+        self.raise_()
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def eventFilter(self, watched, event):
+        if watched is self._table and event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+            self.setGeometry(self._table.rect())
+            self.raise_()
+        return super().eventFilter(watched, event)
+
+    def event(self, event):
+        if event.type() in self._BLOCKED:
+            event.accept()
+            return True
+        return super().event(event)
+
+    def release(self):
+        self._table.removeEventFilter(self)
+        self.hide()
+        self.deleteLater()
+
+
 def _set_page_busy(page, busy: bool, message: str | None = None) -> None:
     """Disable only controls of the page that owns the running task.
 
@@ -70,6 +116,7 @@ def _set_page_busy(page, busy: bool, message: str | None = None) -> None:
     revisions either disabled the whole page root or left every button active;
     both behaviours were wrong.
     """
+    started = time.perf_counter()
     page._procurement_background_busy = bool(busy)
     ui = getattr(page, "ui", None)
 
@@ -80,11 +127,30 @@ def _set_page_busy(page, busy: bool, message: str | None = None) -> None:
 
             # All page buttons (Import/Save/Reset/Add/Search/mode radio buttons
             # etc.) are unsafe to press while the page's own data task is active.
-            try:
-                buttons = ui.findChildren(QAbstractButton)
-            except Exception:
-                buttons = []
+            table = getattr(page, "table", None)
+            if page.__class__.__name__ == "SupplierPricesPage":
+                # Supplier Prices creates a checkbox for every staging row.
+                # Disabling thousands of those widgets individually blocks
+                # the GUI event loop (including the task-center buttons).
+                # Disable only fixed form actions. A lightweight input shield
+                # blocks the table without traversing all its cell widgets.
+                action_names = (
+                    "btn_AddLine", "btn_DownFile", "btn_Import",
+                    "btn_Reset", "btn_Save", "cbx_NewSupplier",
+                )
+                buttons = [
+                    widget for name in action_names
+                    if isinstance((widget := getattr(ui, name, None)), QAbstractButton)
+                ]
+            else:
+                try:
+                    buttons = ui.findChildren(QAbstractButton)
+                except Exception:
+                    buttons = []
             for widget in buttons:
+                if table is not None and table.isAncestorOf(widget):
+                    # Never disable one row checkbox at a time.
+                    continue
                 marker = id(widget)
                 if marker in seen:
                     continue
@@ -97,12 +163,16 @@ def _set_page_busy(page, busy: bool, message: str | None = None) -> None:
 
             # Editing the table while the worker is replacing/saving its temp
             # rows can create a race.  Block only that table, not the whole page.
-            table = getattr(page, "table", None)
             if table is not None and id(table) not in seen:
                 seen.add(id(table))
                 try:
-                    saved.append((table, bool(table.isEnabled())))
-                    table.setEnabled(False)
+                    if page.__class__.__name__ == "SupplierPricesPage":
+                        # Unlike setEnabled(False), this does NOT recurse into
+                        # one checkbox per imported row on the GUI thread.
+                        page._procurement_busy_table_shield = _SupplierTableBusyShield(table)
+                    else:
+                        saved.append((table, bool(table.isEnabled())))
+                        table.setEnabled(False)
                 except RuntimeError:
                     pass
 
@@ -132,6 +202,13 @@ def _set_page_busy(page, busy: bool, message: str | None = None) -> None:
 
             page._procurement_busy_widgets = saved
     else:
+        shield = getattr(page, "_procurement_busy_table_shield", None)
+        page._procurement_busy_table_shield = None
+        if shield is not None:
+            try:
+                shield.release()
+            except RuntimeError:
+                pass
         saved = list(getattr(page, "_procurement_busy_widgets", []) or [])
         page._procurement_busy_widgets = []
         for widget, was_enabled in saved:
@@ -142,6 +219,12 @@ def _set_page_busy(page, busy: bool, message: str | None = None) -> None:
 
     if message and hasattr(page, "show_message"):
         page.show_message(message)
+    elapsed = time.perf_counter() - started
+    if elapsed > 0.75:
+        logger.warning(
+            "BACKGROUND | SLOW GUI BUSY TOGGLE | page=%s busy=%s duration=%.2fs",
+            page.__class__.__name__, busy, elapsed,
+        )
 
 
 def _show_background_error(page, text: str) -> None:
@@ -160,11 +243,68 @@ def _start_page_task(
     write_resources=(),
     intro: str,
     use_progress: bool = False,
+    result_is_current: Callable[[], bool] | None = None,
 ) -> bool:
+    # A result belongs to the staging batch that existed when it was queued.
+    # Normally page-local controls prevent switching batches while busy, but
+    # a programmatic reset / reopened import can still change the page state.
+    # Never repaint a newer batch with an older worker's completion payload.
+    batch_attribute = next(
+        (name for name in ("_batch_id", "batch_id") if hasattr(page, name)),
+        None,
+    )
+    batch_at_start = getattr(page, batch_attribute) if batch_attribute else None
+    owner_attribute = next(
+        (name for name in ("_imported_by", "imported_by") if hasattr(page, name)),
+        None,
+    )
+    owner_at_start = getattr(page, owner_attribute) if owner_attribute else None
+
     def finished(result):
         page._procurement_background_handle = None
         _set_page_busy(page, False)
-        on_finished(result)
+        if (
+            (batch_attribute is not None and getattr(page, batch_attribute, None) != batch_at_start)
+            or (owner_attribute is not None and getattr(page, owner_attribute, None) != owner_at_start)
+        ):
+            logger.warning(
+                "BACKGROUND | STALE PAGE RESULT | %s | initial batch=%r | current batch=%r",
+                title,
+                batch_at_start,
+                getattr(page, batch_attribute, None) if batch_attribute else None,
+            )
+            if hasattr(page, "show_message"):
+                page.show_message(
+                    "Фоновая операция завершена, но вкладка уже открыла другой импорт. "
+                    "Устаревшие данные в таблицу не загружались."
+                )
+            return
+        try:
+            # Some pages leave filter/date controls editable while their query
+            # runs. A completed query must not overwrite a more recent choice.
+            # Batch/owner checks above cover staging; this optional predicate
+            # also covers non-staging operations such as Order Planning.
+            if result_is_current is not None and not result_is_current():
+                logger.info("BACKGROUND | STALE FILTER RESULT | %s", title)
+                if hasattr(page, "show_message"):
+                    page.show_message(
+                        "Расчёт завершён, но параметры вкладки изменились. "
+                        "Результат для предыдущих параметров не применён."
+                    )
+                return
+            on_finished(result)
+        except Exception as exc:
+            # Do not route GUI-refresh errors into the database worker: it has
+            # already finished. The page must remain usable, with a visible error.
+            logger.exception("BACKGROUND | GUI REFRESH FAILED | %s", title)
+            try:
+                manager.mark_gui_refresh_failed(handle.task_id, str(exc))
+            except Exception:
+                logger.exception("Не удалось отметить ошибку обновления GUI в журнале задач")
+            if hasattr(page, "show_error_message"):
+                page.show_error_message(
+                    f"Фоновая операция завершена, но обновить таблицу не удалось: {exc}"
+                )
 
     def failed(message: str):
         page._procurement_background_handle = None
@@ -482,8 +622,25 @@ def _supplier_apply_changes_in_worker(
             service = SupplierPriceService(session)
             try:
                 report("Прайс поставщика: сохраняю изменения строк...")
+                # display_rows() records a pending dictionary for every visible
+                # line, including untouched lines. Do not perform one SELECT for
+                # each of them; load by primary key in bounded batches instead.
+                from app.utils.staging_row_ids import validated_staging_ids
+
+                valid_change_ids = sorted(validated_staging_ids(pending_changes.keys()))
+                valid_delete_ids = validated_staging_ids(pending_deletes)
+                staged_rows = {}
+                for offset in range(0, len(valid_change_ids), 1000):
+                    chunk = valid_change_ids[offset:offset + 1000]
+                    for staged in session.query(TempPriceImport).filter(
+                        TempPriceImport.id.in_(chunk),
+                        TempPriceImport.batch_id == batch_id,
+                        TempPriceImport.imported_by == imported_by,
+                    ).all():
+                        staged_rows[int(staged.id)] = staged
+
                 for row_id, changes in pending_changes.items():
-                    row = session.query(TempPriceImport).filter(TempPriceImport.id == row_id).first()
+                    row = staged_rows.get(int(row_id))
                     if row is None:
                         continue
                     row.supplier_id = supplier_id
@@ -522,9 +679,9 @@ def _supplier_apply_changes_in_worker(
                         if has_new_product_data and row.new_is_excise is None:
                             row.new_is_excise = False
 
-                if pending_deletes:
+                if valid_delete_ids:
                     session.query(TempPriceImport).filter(
-                        TempPriceImport.id.in_(pending_deletes),
+                        TempPriceImport.id.in_(valid_delete_ids),
                         TempPriceImport.batch_id == batch_id,
                         TempPriceImport.imported_by == imported_by,
                     ).delete(synchronize_session=False)
@@ -607,8 +764,25 @@ def _supplier_apply_changes_in_worker(
                 except Exception as exc:
                     calculated_export_error = str(exc)
 
+            # The original GUI completion callback deleted the entire staging
+            # batch synchronously on the main Qt thread. With a large supplier
+            # price this freezes every window, including the task center.
+            # The export is already finished here, so do the exact same cleanup
+            # on this worker thread, AFTER every operation that needs staging.
+            cleanup_error = ""
+            try:
+                report("Прайс поставщика: очищаю временные данные...")
+                service.delete_supplier_price_calculations(batch_id, imported_by)
+                service.delete_temp_rows_for_user(imported_by)
+                session.commit()
+            except Exception as exc:
+                session.rollback()
+                cleanup_error = str(exc)
+                logger.exception("Не удалось очистить временные данные прайса поставщика")
+
             return {
                 "status": "success",
+                "cleanup_error": cleanup_error,
                 "saved_prices_count": saved_prices_count,
                 "saved_calculations_count": saved_calculations_count,
                 "warning_path": str(warning_path) if warning_path else "",
@@ -739,6 +913,8 @@ def _attach_supplier_prices(page) -> None:
         if not page._pending_changes and not page._pending_deletes and not has_batch_rows:
             page.show_message("Нет изменений")
             return
+        if not page.choose_price_type_before_save():
+            return
 
         try:
             supplier_id = page.ensure_supplier(save_existing_changes=True)
@@ -824,8 +1000,13 @@ def _attach_supplier_prices(page) -> None:
                 saved_calculations_count = int(payload.get("saved_calculations_count") or 0)
                 warning_error = payload.get("warning_error") or ""
                 export_error = payload.get("export_error") or ""
+                cleanup_error = payload.get("cleanup_error") or ""
 
-                page.cleanup_current_batch(start_new_batch_after=True)
+                page.cleanup_current_batch(
+                    start_new_batch_after=True,
+                    database_cleanup=False,
+                    reload_table=False,
+                )
                 page.reset_form_fields_after_successful_save()
 
                 if export_path:
@@ -836,6 +1017,11 @@ def _attach_supplier_prices(page) -> None:
                     page.show_message("Данные сохранены")
 
                 errors = []
+                if cleanup_error:
+                    errors.append(
+                        f"Не удалось очистить временные данные: {cleanup_error}. "
+                        "Сохранённые цены и расчёты не отменены."
+                    )
                 if warning_error:
                     errors.append(f"Warning-файл не удалось сохранить: {warning_error}")
                 if export_error:
@@ -1409,7 +1595,8 @@ def _attach_product_stock(page) -> None:
                 snapshots.clear()
             page.start_new_batch()
             page.clear_table()
-            page.refresh_counters()
+            # The next import has no rows; there is no need to query PostgreSQL.
+            page.refresh_counters(rows=[])
             page.show_message(payload.get("message") or "Данные сохранены.")
 
         _start_page_task(
@@ -2149,6 +2336,7 @@ def _attach_order_planning(page) -> None:
             work=work, on_finished=done,
             read_resources={"products", "product_stock", "sales_product_links"},
             intro="Планирование закупок: расчет выполняется в фоне.", use_progress=True,
+            result_is_current=lambda: page._selected_period() == (period_from, period_to),
         )
 
     def save_background():
@@ -2261,23 +2449,17 @@ def _attach_legacy_report_export(page) -> None:
         import app.page_functions.price_reports_page as report_module
         from app.workers.excel_export_worker import start_excel_export
 
-        def start_managed_export(
-            *, headers, rows, output_path, report_mode, quick_order_months, safe_stock_months
-        ):
+        # Pass every keyword through unchanged: the page's own _start_excel_export
+        # gains export options over time (e.g. gray_row_indexes), and a copied
+        # parameter list here broke the export with "unexpected keyword".
+        def start_managed_export(**export_kwargs):
             page.ui.btn_ExportExcel.setEnabled(False)
             page.ui.btn_ExportExcel.setText("Формируется...")
             page.show_message("Excel файл формируется в фоновом режиме. Можно продолжать работать в программе.")
             start_excel_export(
                 page,
                 report_module._export_price_report_file,
-                kwargs={
-                    "headers": headers,
-                    "rows": rows,
-                    "output_path": output_path,
-                    "report_mode": report_mode,
-                    "quick_order_months": quick_order_months,
-                    "safe_stock_months": safe_stock_months,
-                },
+                kwargs=export_kwargs,
                 on_finished=page._on_excel_export_finished,
                 on_error=page._on_excel_export_error,
                 button=page.ui.btn_ExportExcel,
@@ -2291,14 +2473,14 @@ def _attach_legacy_report_export(page) -> None:
         import app.page_functions.customer_costs_reports_page as report_module
         from app.workers.excel_export_worker import start_excel_export
 
-        def start_managed_export(*, headers, rows, output_path):
+        def start_managed_export(**export_kwargs):
             page.ui.btn_ExportExcel.setEnabled(False)
             page.ui.btn_ExportExcel.setText("Формируется...")
             page.show_message("Excel файл формируется в фоновом режиме. Можно продолжать работать в программе.")
             start_excel_export(
                 page,
                 report_module._export_customer_cost_report_file,
-                kwargs={"headers": headers, "rows": rows, "output_path": output_path},
+                kwargs=export_kwargs,
                 on_finished=page._on_excel_export_finished,
                 on_error=page._on_excel_export_error,
                 button=page.ui.btn_ExportExcel,
@@ -2319,6 +2501,13 @@ def attach_page_background_integration(page) -> None:
         return
     page._procurement_page_integration_attached = True
     _ensure_tab_close_guard(page)
+
+    # Background completion handlers clear these; not every page defines them
+    # (e.g. TargetPricesPage), which crashed the app after a finished task.
+    if not hasattr(page, "_pending_deletes"):
+        page._pending_deletes = set()
+    if not hasattr(page, "_deleted_row_snapshots"):
+        page._deleted_row_snapshots = []
 
     class_name = page.__class__.__name__
     if class_name == "ProductMappingPage":

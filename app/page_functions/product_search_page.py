@@ -1,6 +1,12 @@
 
 from __future__ import annotations
 
+from app.utils.table_view_context import (
+    capture_table_context, restore_table_context, tag_table_row_ids,
+    table_row_id, find_table_row_id,
+    stable_row_editor,
+)
+
 from datetime import datetime
 from pathlib import Path
 
@@ -260,7 +266,13 @@ class ProductSearchPage(QWidget):
         self.display_rows(rows)
 
     def display_rows(self, rows: list[TempProductSearchImport]):
+        view_context = capture_table_context(
+            self.table,
+            key_for_row=lambda index: table_row_id(self.table, index),
+        )
         self._updating_table = True
+        sorting_was_enabled = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
         self._table_row_ids = [row.id for row in rows]
         self._pending_deletes.clear()
 
@@ -314,7 +326,13 @@ class ProductSearchPage(QWidget):
                 self.build_checkbox_widget(row.id, bool(row.new_is_excise)),
             )
 
+        tag_table_row_ids(self.table, self._table_row_ids)
         resize_columns_for_multiline_headers(self.table)
+        self.table.setSortingEnabled(sorting_was_enabled)
+        restore_table_context(
+            self.table, view_context,
+            key_for_row=lambda index: table_row_id(self.table, index),
+        )
         self._updating_table = False
 
     def value_to_text(self, value: object) -> str:
@@ -345,7 +363,7 @@ class ProductSearchPage(QWidget):
         if row < 0 or row >= len(self._table_row_ids):
             return
 
-        row_id = self._table_row_ids[row]
+        row_id = table_row_id(self.table, row)
 
         if column == self.COL_PRODUCT:
             current_name = self._get_cell_text(row, column)
@@ -535,6 +553,7 @@ class ProductSearchPage(QWidget):
 
         return None, text
 
+    @stable_row_editor
     def finish_product_edit(self, row: int, row_id: int, combo: QComboBox):
         if self.table.cellWidget(row, self.COL_PRODUCT) is not combo:
             return
@@ -554,6 +573,7 @@ class ProductSearchPage(QWidget):
         self._updating_table = False
         resize_columns_for_multiline_headers(self.table)
 
+    @stable_row_editor
     def finish_brand_edit(self, row: int, row_id: int, combo: QComboBox):
         if self.table.cellWidget(row, self.COL_BRAND) is not combo:
             return
@@ -610,7 +630,7 @@ class ProductSearchPage(QWidget):
         if row < 0 or row >= len(self._table_row_ids):
             return
 
-        row_id = self._table_row_ids[row]
+        row_id = table_row_id(self.table, row)
         column_name = item.data(Qt.UserRole)
         if not column_name or column_name in {"selected_product_id", "new_brand"}:
             return
@@ -677,12 +697,20 @@ class ProductSearchPage(QWidget):
             return
 
         with self.get_session() as session:
-            for row_id, changes in self._pending_changes.items():
-                row = (
+            changed_ids = [int(row_id) for row_id in self._pending_changes]
+            rows_by_id = {
+                int(row.id): row
+                for row in (
                     session.query(TempProductSearchImport)
-                    .filter(TempProductSearchImport.id == row_id)
-                    .first()
+                    .filter(
+                        TempProductSearchImport.id.in_(changed_ids),
+                        TempProductSearchImport.batch_id == self.batch_id,
+                        TempProductSearchImport.imported_by == self.imported_by,
+                    ).all() if changed_ids else []
                 )
+            }
+            for row_id, changes in self._pending_changes.items():
+                row = rows_by_id.get(int(row_id))
                 if row is None:
                     continue
 
@@ -797,7 +825,7 @@ class ProductSearchPage(QWidget):
                     continue
                 if row < 0 or row >= len(self._table_row_ids):
                     continue
-                row_id = self._table_row_ids[row]
+                row_id = table_row_id(self.table, row)
                 if column == self.COL_PRODUCT:
                     self.finish_product_edit(row, row_id, widget)
                 elif column == self.COL_BRAND:

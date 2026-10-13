@@ -105,7 +105,7 @@ class PriceHistoryExporter:
             ws = wb.Worksheets(1)
             ws.Name = "Sheet1"
 
-            headers = ["Product name", "Supplier name", "Price date", "Price", "Currency"]
+            headers = ["Product name", "Supplier name", "Price date", "Price", "Currency", "Price Type"]
 
             def value_for_header(row, header, _col_index):
                 if header == "Product name":
@@ -124,25 +124,28 @@ class PriceHistoryExporter:
                         return ""
                 if header == "Currency":
                     return row.get("currency", "")
+                if header == "Price Type":
+                    return row.get("price_type", "")
                 return ""
 
             write_excel_table(ws, headers, rows, value_getter=value_for_header)
 
             self._apply_base_font(ws)
-            self._apply_header_range(ws, "A", "E", 0xCDCDCD, white_font=False)
+            self._apply_header_range(ws, "A", "F", 0xCDCDCD, white_font=False)
 
             if report_type == "current":
                 ws.Rows(1).RowHeight = 45
             else:
                 ws.Rows(1).RowHeight = 60
 
-            ws.Range("A1:E1").AutoFilter(1)
+            ws.Range("A1:F1").AutoFilter(1)
 
             ws.Columns("A:A").ColumnWidth = 31.8
             ws.Columns("B:B").ColumnWidth = 24
             ws.Columns("C:C").ColumnWidth = 13
             ws.Columns("D:D").ColumnWidth = 13
             ws.Columns("E:E").ColumnWidth = 13
+            ws.Columns("F:F").ColumnWidth = 18
 
             if rows:
                 last_row = len(rows) + 1

@@ -9,6 +9,8 @@ from pathlib import Path
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
+from sqlalchemy import select
+from sqlalchemy.orm import aliased
 from sqlalchemy.exc import SQLAlchemyError
 from PySide6.QtWidgets import (
     QMenu,
@@ -29,6 +31,7 @@ from app.ui.table_style import *
 from app.imports.price_history_importer import PriceHistoryImporter
 from app.exports.price_history_exporter import PriceHistoryExporter
 from app.services.product_matching_service import ProductMatchingService
+from app.services.price_repository import PriceRepository
 from app.utils.text import clean_multi_spaces, normalize_product_name
 from app.utils.batch import get_current_username
 from app.db.models import CurrentSupplierPrice, PriceHistory, Product, Supplier
@@ -104,8 +107,8 @@ class PriceHistoryPage(QWidget):
         self._selected_family_values: set[str] | None = None
         self._selected_product_ids: set[int] | None = None
 
-        self.columns = ["product_id", "supplier_id", "price_date", "price", "currency"]
-        self.headers = ["Product name", "Supplier name", "Price date", "Price", "Currency"]
+        self.columns = ["product_id", "supplier_id", "price_date", "price", "currency", "price_type"]
+        self.headers = ["Product name", "Supplier name", "Price date", "Price", "Currency", "Price Type"]
         self.header_to_column = dict(zip(self.headers, self.columns))
 
         self.setup_ui()
@@ -543,8 +546,24 @@ class PriceHistoryPage(QWidget):
             name_search = clean_multi_spaces(self.ui.line_NameSearch.text()) if hasattr(self.ui, "line_NameSearch") else ""
 
             if mode == MODE_CURRENT:
+                # CurrentSupplierPrice has no price_type field. Read the most
+                # recent historical price type for the same supplier/product.
+                last_history = aliased(PriceHistory)
+                current_price_type = (
+                    select(last_history.price_type)
+                    .where(
+                        last_history.product_id == CurrentSupplierPrice.product_id,
+                        last_history.supplier_id == CurrentSupplierPrice.supplier_id,
+                        last_history.price_date == CurrentSupplierPrice.last_update,
+                    )
+                    .order_by(last_history.id.desc())
+                    .limit(1)
+                    .correlate(CurrentSupplierPrice)
+                    .scalar_subquery()
+                )
                 query = (
                     session.query(
+                        current_price_type.label("price_type"),
                         CurrentSupplierPrice.product_id.label("product_id"),
                         CurrentSupplierPrice.supplier_id.label("supplier_id"),
                         CurrentSupplierPrice.last_update.label("price_date"),
@@ -589,6 +608,7 @@ class PriceHistoryPage(QWidget):
                         "price_date": row.price_date,
                         "price": row.price,
                         "currency": row.currency,
+                        "price_type": row.price_type or "",
                         "is_new": False,
                     }
                     for row in rows
@@ -603,6 +623,7 @@ class PriceHistoryPage(QWidget):
                         PriceHistory.price_date.label("price_date"),
                         PriceHistory.price.label("price"),
                         PriceHistory.currency.label("currency"),
+                        PriceHistory.price_type.label("price_type"),
                         Product.name.label("product_name"),
                         Supplier.name.label("supplier_name"),
                     )
@@ -643,6 +664,7 @@ class PriceHistoryPage(QWidget):
                         "price_date": row.price_date,
                         "price": row.price,
                         "currency": row.currency,
+                        "price_type": row.price_type or "",
                         "is_new": False,
                     }
                     for row in rows
@@ -780,6 +802,10 @@ class PriceHistoryPage(QWidget):
                 row_index, 4,
                 self._build_item(row_data["currency"], row_key, align_left=True)
             )
+            price_type_item = self._build_item(row_data.get("price_type", ""), row_key, align_left=True)
+            # Set in the supplier-price Save dialog, not edited in history.
+            price_type_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            self.table.setItem(row_index, 5, price_type_item)
 
         resize_columns_for_multiline_headers(self.table)
 
@@ -824,7 +850,7 @@ class PriceHistoryPage(QWidget):
 
         header = self.headers[item.column()]
         field_name = self.header_to_column.get(header)
-        if not field_name:
+        if not field_name or field_name == "price_type":
             return
 
         value = item.text().strip()
@@ -963,16 +989,18 @@ class PriceHistoryPage(QWidget):
                 session.delete(current_row)
             return
 
-        if current_row is None:
-            current_row = CurrentSupplierPrice(
-                supplier_id=int(supplier_id),
-                product_id=int(product_id),
-            )
-            session.add(current_row)
-
-        current_row.last_update = latest_history.price_date
-        current_row.price = latest_history.price
-        current_row.currency = str(latest_history.currency or "").strip().upper()
+        # Atomic upsert: a concurrent save of the same pair by another user
+        # must not fail this save with a primary-key violation.
+        PriceRepository(session).upsert_current_prices(
+            [{
+                "supplier_id": int(supplier_id),
+                "product_id": int(product_id),
+                "price": latest_history.price,
+                "currency": str(latest_history.currency or "").strip().upper(),
+                "last_update": latest_history.price_date,
+            }],
+            only_if_newer=False,
+        )
 
     def apply_pending_changes(self):
         mode = self.get_mode()

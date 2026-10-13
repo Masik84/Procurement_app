@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from app.utils.table_view_context import (
+    capture_table_context, restore_table_context, tag_table_row_ids,
+    table_row_id, find_table_row_id,
+    stable_row_editor,
+)
+
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -469,15 +475,25 @@ class TargetPricesPage(QWidget):
                 int(option.id): (int(option.temp_import_id), option.supplier_name or "")
                 for option in option_rows
             }
-            self._display_manual_costs = {
+            # Include rows *without* a Manual option in the cache: otherwise
+            # rendering an empty Manual Full Cost cell executes a SELECT per row.
+            # The options have already been loaded in one batch above.
+            self._display_manual_costs = {int(row.id): None for row in rows}
+            self._display_manual_costs.update({
                 int(option.temp_import_id): option.full_cost_msk
                 for option in option_rows
                 if option.supplier_name == "Manual"
-            }
+            })
         self.display_rows(rows)
 
     def display_rows(self, rows: list[TempTargetPriceImport]):
+        view_context = capture_table_context(
+            self.table,
+            key_for_row=lambda index: table_row_id(self.table, index),
+        )
         self._updating_table = True
+        sorting_was_enabled = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
         try:
             self._table_row_ids = [r.id for r in rows]
             headers = list(self.calc_headers if self._showing_options else self.import_headers)
@@ -509,8 +525,14 @@ class TargetPricesPage(QWidget):
                     self.table.setItem(row_index, 5, self.build_table_item(row_id, "new_pack", self._format_number_text(row.new_pack), False))
                     self.table.setItem(row_index, 6, self.build_table_item(row_id, "new_qty_in_box", self._format_number_text(row.new_qty_in_box), False))
                     self.table.setCellWidget(row_index, 7, self.build_checkbox_widget(row_id, bool(row.new_is_excise) if row.new_is_excise is not None else False))
+            tag_table_row_ids(self.table, self._table_row_ids)
             resize_columns_for_multiline_headers(self.table)
         finally:
+            self.table.setSortingEnabled(sorting_was_enabled)
+            restore_table_context(
+                self.table, view_context,
+                key_for_row=lambda index: table_row_id(self.table, index),
+            )
             self._updating_table = False
 
     def _clean_table_text(self, value) -> str:
@@ -607,7 +629,7 @@ class TargetPricesPage(QWidget):
     def start_cell_edit(self, row: int, column: int):
         if self._updating_table or row < 0 or row >= len(self._table_row_ids):
             return
-        row_id = self._table_row_ids[row]
+        row_id = table_row_id(self.table, row)
         if self._showing_options and column == COL_SUPPLIER_OPTION:
             combo = self._build_supplier_option_combo(row_id, self._get_row_selected_option_id(row_id))
             combo.activated.connect(lambda _, r=row, rid=row_id, c=combo: self.finish_supplier_option_edit(r, rid, c))
@@ -668,6 +690,7 @@ class TargetPricesPage(QWidget):
         if brand_name and combo.findText(brand_name) < 0: combo.addItem(brand_name)
         combo.setCurrentText(brand_name); return combo
 
+    @stable_row_editor
     def finish_product_edit(self, row: int, row_id: int, combo: QComboBox):
         product_id = combo.currentData()
         try: product_id = int(product_id)
@@ -679,6 +702,7 @@ class TargetPricesPage(QWidget):
         self._updating_table = False
         resize_columns_for_multiline_headers(self.table)
 
+    @stable_row_editor
     def finish_supplier_option_edit(self, row: int, row_id: int, combo: QComboBox):
         option_id = combo.currentData()
         try: option_id = int(option_id)
@@ -690,6 +714,7 @@ class TargetPricesPage(QWidget):
         self._updating_table = False
         resize_columns_for_multiline_headers(self.table)
 
+    @stable_row_editor
     def finish_brand_edit(self, row: int, row_id: int, combo: QComboBox):
         brand = clean_multi_spaces(combo.currentText()) or None
         self.update_temp_field(row_id, "new_brand", brand)
@@ -734,7 +759,7 @@ class TargetPricesPage(QWidget):
                 service.apply_manual_full_costs(self.batch_id, self.imported_by, {int(row_id): value})
                 session.commit()
             if self._showing_options and row_id in self._table_row_ids:
-                table_row = self._table_row_ids.index(row_id)
+                table_row = find_table_row_id(self.table, row_id)
                 self._updating_table = True
                 self.table.setItem(table_row, COL_SUPPLIER_OPTION, self.build_display_item(row_id, "selected_option_id", "Manual"))
                 self._updating_table = False
@@ -782,7 +807,7 @@ class TargetPricesPage(QWidget):
                 widget = self.table.cellWidget(row, column)
                 if not isinstance(widget, QComboBox) or row >= len(self._table_row_ids):
                     continue
-                row_id = self._table_row_ids[row]
+                row_id = table_row_id(self.table, row)
                 role = widget.property("combo_role")
                 if role == "supplier_option_combo": self.finish_supplier_option_edit(row, row_id, widget)
                 elif role == "product_combo": self.finish_product_edit(row, row_id, widget)
@@ -813,7 +838,7 @@ class TargetPricesPage(QWidget):
         for row in range(self.table.rowCount()):
             if row >= len(self._table_row_ids):
                 continue
-            row_id = int(self._table_row_ids[row])
+            row_id = int(table_row_id(self.table, row))
             for col in range(self.table.columnCount()):
                 item = self.table.item(row, col)
                 if item is None or item.data(Qt.UserRole) != "manual_full_cost_msk":

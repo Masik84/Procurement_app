@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
 )
 
+from app.utils.table_view_context import ROW_ID_ROLE, table_row_id
+
 DELETE_MESSAGE = "Полное удаление строк будет сделано при сохранении"
 
 
@@ -99,29 +101,45 @@ def _copy_rows(table: QTableWidget, rows: list[int]) -> None:
     QGuiApplication.clipboard().setText("\n".join(lines))
 
 
+# These pages remove database rows whose primary keys are strictly integer.
+# Some of their first-column items use Qt.UserRole for a field name, such as
+# "selected_product_id".  That string must never be treated as a row ID.
+_NUMERIC_STAGING_PAGES = frozenset({
+    "SupplierPricesPage", "ProductSearchPage", "CustomerCostsPage",
+    "TargetPricesPage", "ProductStockPage",
+})
+
+
+def _numeric_staging_page(owner: Any) -> bool:
+    return type(owner).__name__ in _NUMERIC_STAGING_PAGES
+
+
 def _row_key(owner: Any, table: QTableWidget, row: int) -> Any:
-    row_ids = getattr(owner, "_table_row_ids", None)
-    if isinstance(row_ids, list) and 0 <= row < len(row_ids):
-        return row_ids[row]
+    """Identify the displayed row without confusing Qt roles and row indices."""
+    if _numeric_staging_page(owner):
+        # Never use the import-order _table_row_ids list after sorting, and
+        # never fall back to the first cell's nonnumeric column-name role.
+        record_id = table_row_id(table, row)
+        return record_id if record_id is not None and record_id > 0 else None
 
     first_item = table.item(row, 0)
     if first_item is not None:
-        # Prefer Qt.UserRole because reference pages store the real row key there
-        # (for example: "history::<id>" / "current::<product_id>::<supplier_id>").
-        # Qt.UserRole + 1 is often used for sorting values, so using it first can
-        # put a date/number into _pending_deletes instead of the DB row key.
-        for role in (Qt.UserRole, Qt.UserRole + 1):
+        for role in (ROW_ID_ROLE, Qt.UserRole, Qt.UserRole + 1):
             value = first_item.data(role)
             if value is not None:
                 return value
 
-    text = _cell_text(table, row, 0).strip()
-    if not text:
+    row_ids = getattr(owner, "_table_row_ids", None)
+    if isinstance(row_ids, list) and 0 <= row < len(row_ids):
+        return row_ids[row]
+
+    value = _cell_text(table, row, 0).strip()
+    if not value:
         return None
     try:
-        return int(text)
+        return int(value)
     except ValueError:
-        return text
+        return value
 
 
 def _qt_enum_int(value: Any) -> int:
@@ -168,15 +186,24 @@ def _snapshot_row(owner: Any, table: QTableWidget, row: int) -> dict[str, Any]:
         elif isinstance(widget, QCheckBox):
             cell["widget"] = {"type": "check", "checked": widget.isChecked(), "enabled": widget.isEnabled()}
         cells.append(cell)
-    return {"row": row, "key": _row_key(owner, table, row), "cells": cells}
+    key = _row_key(owner, table, row)
+    row_ids = getattr(owner, "_table_row_ids", None)
+    try:
+        list_index = row_ids.index(key) if isinstance(row_ids, list) else None
+    except ValueError:
+        list_index = None
+    return {"row": row, "key": key, "list_index": list_index, "cells": cells}
 
 
 def _restore_snapshot(owner: Any, table: QTableWidget, snapshot: dict[str, Any]) -> None:
     row = min(int(snapshot["row"]), table.rowCount())
     key = snapshot.get("key")
     row_ids = getattr(owner, "_table_row_ids", None)
-    if isinstance(row_ids, list):
-        row_ids.insert(row, key)
+    if isinstance(row_ids, list) and key not in row_ids:
+        list_index = snapshot.get("list_index")
+        if not isinstance(list_index, int):
+            list_index = row
+        row_ids.insert(min(max(list_index, 0), len(row_ids)), key)
 
     table.insertRow(row)
     for col, cell in enumerate(snapshot["cells"]):
@@ -186,7 +213,7 @@ def _restore_snapshot(owner: Any, table: QTableWidget, snapshot: dict[str, Any])
             item.setCheckState(Qt.CheckState(cell["check_state"]))
         item.setTextAlignment(cell.get("alignment", Qt.AlignLeft | Qt.AlignVCenter))
         for role_int, value in cell.get("user_roles", {}).items():
-            item.setData(Qt.ItemDataRole(_qt_enum_int(role_int)), value)
+            item.setData(_qt_enum_int(role_int), value)
         table.setItem(row, col, item)
 
         widget_data = cell.get("widget")
@@ -216,37 +243,61 @@ def delete_selected_rows_visual(owner: Any, table: QTableWidget, rows: list[int]
     if not hasattr(owner, "_deleted_row_snapshots"):
         owner._deleted_row_snapshots = []
 
-    rows = [row for row in rows if 0 <= row < table.rowCount()]
-    snapshots = [_snapshot_row(owner, table, row) for row in rows]
+    rows = sorted({row for row in rows if 0 <= row < table.rowCount()})
+    if not rows:
+        return
+    # Removing rows while Qt is sorting can shift later target indices.
+    was_sorting = table.isSortingEnabled()
+    table.setSortingEnabled(False)
+    try:
+        snapshots = [_snapshot_row(owner, table, row) for row in rows]
+        if _numeric_staging_page(owner) and any(
+            not isinstance(snap["key"], int) or isinstance(snap["key"], bool)
+            or snap["key"] <= 0 for snap in snapshots
+        ):
+            error = (
+                "Не удалось определить ID одной из выбранных строк. "
+                "Удаление отменено. Обновите таблицу текущего импорта и повторите."
+            )
+            show_error = getattr(owner, "show_error_message", None)
+            if callable(show_error):
+                show_error(error)
+            else:
+                _message(owner, error)
+            return
+        before_hook = getattr(owner, "before_standard_table_rows_deleted", None)
+        if callable(before_hook):
+            before_hook(table, rows, snapshots)
 
-    before_hook = getattr(owner, "before_standard_table_rows_deleted", None)
-    if callable(before_hook):
-        before_hook(table, rows, snapshots)
+        owner._deleted_row_snapshots.extend(snapshots)
+        new_rows = getattr(owner, "_new_rows", set())
+        pending_changes = getattr(owner, "_pending_changes", None)
+        for snapshot in snapshots:
+            key = snapshot.get("key")
+            if key is None:
+                continue
+            if isinstance(new_rows, set) and key in new_rows:
+                new_rows.discard(key)
+            else:
+                owner._pending_deletes.add(key)
+            if isinstance(pending_changes, dict):
+                pending_changes.pop(key, None)
 
-    owner._deleted_row_snapshots.extend(snapshots)
+        row_ids = getattr(owner, "_table_row_ids", None)
+        for row in reversed(rows):
+            key = next((snap["key"] for snap in snapshots if snap["row"] == row), None)
+            if isinstance(row_ids, list):
+                if key in row_ids:
+                    row_ids.remove(key)
+                elif 0 <= row < len(row_ids):
+                    row_ids.pop(row)
+            table.removeRow(row)
 
-    new_rows = getattr(owner, "_new_rows", set())
-    pending_changes = getattr(owner, "_pending_changes", None)
-    for snapshot in snapshots:
-        key = snapshot.get("key")
-        if key is None:
-            continue
-        if isinstance(new_rows, set) and key in new_rows:
-            new_rows.discard(key)
-        else:
-            owner._pending_deletes.add(key)
-        if isinstance(pending_changes, dict):
-            pending_changes.pop(key, None)
-
-    row_ids = getattr(owner, "_table_row_ids", None)
-    for row in sorted(rows, reverse=True):
-        if isinstance(row_ids, list) and 0 <= row < len(row_ids):
-            row_ids.pop(row)
-        table.removeRow(row)
-
-    after_hook = getattr(owner, "after_standard_table_rows_deleted", None)
-    if callable(after_hook):
-        after_hook(table, rows, snapshots)
+        after_hook = getattr(owner, "after_standard_table_rows_deleted", None)
+        if callable(after_hook):
+            after_hook(table, rows, snapshots)
+    finally:
+        table.setSortingEnabled(was_sorting)
 
     _message(owner, getattr(owner, "TABLE_DELETE_MESSAGE", DELETE_MESSAGE))
 
@@ -257,18 +308,24 @@ def undo_visual_delete(owner: Any, table: QTableWidget) -> None:
         _message(owner, "Нет строк для восстановления")
         return
     restored_snapshots = []
-    while snapshots:
-        snapshot = snapshots.pop()
-        restored_snapshots.append(snapshot)
-        key = snapshot.get("key")
-        pending_deletes = getattr(owner, "_pending_deletes", None)
-        if isinstance(pending_deletes, set) and key in pending_deletes:
-            pending_deletes.discard(key)
-        _restore_snapshot(owner, table, snapshot)
+    # Keep each restored row intact while all its cell items/widgets are built.
+    was_sorting = table.isSortingEnabled()
+    table.setSortingEnabled(False)
+    try:
+        while snapshots:
+            snapshot = snapshots.pop()
+            restored_snapshots.append(snapshot)
+            key = snapshot.get("key")
+            pending_deletes = getattr(owner, "_pending_deletes", None)
+            if isinstance(pending_deletes, set) and key in pending_deletes:
+                pending_deletes.discard(key)
+            _restore_snapshot(owner, table, snapshot)
 
-    after_hook = getattr(owner, "after_standard_table_rows_restored", None)
-    if callable(after_hook):
-        after_hook(table, restored_snapshots)
+        after_hook = getattr(owner, "after_standard_table_rows_restored", None)
+        if callable(after_hook):
+            after_hook(table, restored_snapshots)
+    finally:
+        table.setSortingEnabled(was_sorting)
 
     _message(owner, "Удаление строк отменено")
 

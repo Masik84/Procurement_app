@@ -414,8 +414,9 @@ class OrderPlanningService:
             safe_st_tr_month = self._round4(free_st_tr / avg_sales) if avg_sales > 0 else Decimal("0")
             safe_ord_month = self._round4(free_ord / avg_sales) if avg_sales > 0 else Decimal("0")
 
-            std_l_raw = (safe_m - safe_ord_month) * avg_sales
-            quick_l_raw = (quick_m - safe_st_tr_month) * avg_sales
+            # Exact liters; rounded month coverage is for display only.
+            std_l_raw = safe_m * avg_sales - free_ord
+            quick_l_raw = quick_m * avg_sales - free_st_tr
             std_l_raw = Decimal("0") if std_l_raw < 0 else std_l_raw
             quick_l_raw = Decimal("0") if quick_l_raw < 0 else quick_l_raw
 

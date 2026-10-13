@@ -538,7 +538,13 @@ class ProductMappingPage(QWidget):
         self._show_ignored = False
         self._reset_visual_delete_state()
         self._refresh_filter_buttons()
-        self.apply_filters()
+        if self._mode == "search":
+            # Search may have loaded ignored mappings while the toggle was on.
+            # Resetting the toggle must also reload the DB-only saved view;
+            # apply_filters() alone cannot remove those records from _all_rows.
+            self.search_saved()
+        else:
+            self.apply_filters()
         self.show_message("Фильтры и поля сброшены")
 
     def search_saved(self):

@@ -368,10 +368,26 @@ class MyWindow(QMainWindow):
             self.ui.tabWidget.setVisible(True)
 
     def close_tab(self, index):
+        page = self.ui.tabWidget.widget(index)
         self.ui.tabWidget.removeTab(index)
+        # removeTab() only detaches the page: without deleting it every
+        # open/close of a section left a hidden page (thousands of table
+        # widgets, timers, filters) alive until the application exit.
+        if page is not None and not self._page_owns_running_thread(page):
+            page.deleteLater()
         if self.ui.tabWidget.count() == 0:
             self.ui.toolBox.setCurrentIndex(0)
             self.show_home_window()
+
+    @staticmethod
+    def _page_owns_running_thread(page) -> bool:
+        # Legacy report pages may still run their own QThread(self) export;
+        # destroying a QThread that is running aborts the process.
+        thread = getattr(page, "_excel_export_thread", None)
+        try:
+            return thread is not None and thread.isRunning()
+        except RuntimeError:
+            return False
 
     def open_tab_flag(self, tab):
         open_tab_count = self.ui.tabWidget.count()
@@ -612,6 +628,14 @@ if __name__ == "__main__":
     log_startup_stage(logger, "initialising table scale manager")
     initialise_table_scale_manager(app)
     log_startup_stage(logger, "table scale manager initialised")
+
+    # Background save/import integrations attach to pages through an app-wide
+    # event filter. message_dialogs is first imported before QApplication
+    # exists, so its import-time install is a no-op - install it here.
+    from app.utils.message_dialogs import install_page_integration_event_filter
+
+    install_page_integration_event_filter()
+    log_startup_stage(logger, "page integration event filter installed")
 
     style_path = Path(__file__).resolve().parent / "app" / "ui" / "styles" / "app_styles.qss"
     PAGE_STYLESHEET = style_path.read_text(encoding="utf-8") if style_path.exists() else ""

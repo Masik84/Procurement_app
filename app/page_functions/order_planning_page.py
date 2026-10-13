@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import Counter
+
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
@@ -33,6 +35,7 @@ from app.workers.excel_export_worker import start_excel_export
 from app.utils.output_headers import display_headers
 from app.utils.money import to_decimal
 from app.utils.message_dialogs import ask_yes_no, show_error, show_info
+from app.utils.table_view_context import capture_table_context, restore_table_context
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -472,97 +475,145 @@ class OrderPlanningPage(QWidget):
     # Display
     # ------------------------------------------------------------------
     def display_rows(self, rows: list[dict], mode: str):
-        self._mode = mode
-        self._rows = rows
-        columns = self.CHECK_COLUMNS if mode == "check" else self.CALC_COLUMNS
-        headers = self.CHECK_HEADERS if mode == "check" else self._calc_headers()
+        old_rows = self._rows
+        # Preserve selection by the original product/sales identity, never by
+        # the visual row number which changes when Qt sorts the table.
+        old_keys = [self._order_row_identity(item) for item in old_rows]
+        old_counts = Counter(key for key in old_keys if key is not None)
+        new_keys = [self._order_row_identity(item) for item in rows]
+        new_counts = Counter(key for key in new_keys if key is not None)
 
+        def old_key(visual_row):
+            source_index = self._row_index_from_table_row(visual_row)
+            if source_index is None or not 0 <= source_index < len(old_keys):
+                return None
+            value = old_keys[source_index]
+            return value if value is not None and old_counts[value] == 1 else None
+
+        def new_key(visual_row):
+            source_index = self._row_index_from_table_row(visual_row)
+            if source_index is None or not 0 <= source_index < len(new_keys):
+                return None
+            value = new_keys[source_index]
+            return value if value is not None and new_counts[value] == 1 else None
+
+        # A new mode is a new dataset: only retain context for repeated builds
+        # of the same report/check view. No attempt to match ambiguous rows.
+        same_mode = mode == self._mode
+        context = capture_table_context(self.table, key_for_row=old_key) if same_mode else None
+        sorting_enabled = self.table.isSortingEnabled()
         self._updating_table = True
         self.table.setSortingEnabled(False)
-        self.table.clear()
-        self.table.setColumnCount(len(headers))
-        self.table.setRowCount(len(rows))
-        self.table.setHorizontalHeaderLabels(display_headers(headers))
+        try:
+            self._mode = mode
+            self._rows = rows
+            columns = self.CHECK_COLUMNS if mode == "check" else self.CALC_COLUMNS
+            headers = self.CHECK_HEADERS if mode == "check" else self._calc_headers()
 
-        for row_index, row in enumerate(rows):
-            for col_index, key in enumerate(columns):
-                value = row.get(key, "")
+            self.table.clear()
+            self.table.setColumnCount(len(headers))
+            self.table.setRowCount(len(rows))
+            self.table.setHorizontalHeaderLabels(display_headers(headers))
 
-                if key == "sales_product_name" and mode != "check" and row.get("product_id"):
-                    value = ""
+            for row_index, row in enumerate(rows):
+                for col_index, key in enumerate(columns):
+                    value = row.get(key, "")
 
-                if key in {"sales_is_excise", "new_is_excise"}:
-                    placeholder = QTableWidgetItem("")
-                    placeholder.setData(Qt.UserRole, key)
-                    placeholder.setData(Qt.UserRole + 1, row_index)
-                    placeholder.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-                    placeholder.setTextAlignment(Qt.AlignCenter)
-                    self.table.setItem(row_index, col_index, placeholder)
-                    self.table.setCellWidget(
-                        row_index,
-                        col_index,
-                        self.build_checkbox_widget(row_index, bool(value), key),
-                    )
-                    continue
+                    if key == "sales_product_name" and mode != "check" and row.get("product_id"):
+                        value = ""
 
-                if key in self.NUMERIC_COLUMNS:
-                    show_zero_columns = {
-                        "quick_order_pcs",
-                        "quick_order_l",
-                        "std_order_pcs",
-                        "std_order_l",
-                    }
-                    text = self._format_decimal(
-                        value,
-                        digits=2 if key.startswith("safe_stock") or key == "avg_sales_month" else 0,
-                        blank_zero=key not in show_zero_columns,
-                    )
-                else:
-                    text = str(value or "")
+                    if key in {"sales_is_excise", "new_is_excise"}:
+                        placeholder = QTableWidgetItem("")
+                        placeholder.setData(Qt.UserRole, key)
+                        placeholder.setData(Qt.UserRole + 1, row_index)
+                        placeholder.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                        placeholder.setTextAlignment(Qt.AlignCenter)
+                        self.table.setItem(row_index, col_index, placeholder)
+                        self.table.setCellWidget(
+                            row_index,
+                            col_index,
+                            self.build_checkbox_widget(row_index, bool(value), key),
+                        )
+                        continue
 
-                item = QTableWidgetItem(text)
-                item.setData(Qt.UserRole, key)
-                item.setData(Qt.UserRole + 1, row_index)
-                flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
-                if mode == "check" and key in {"new_product_name", "new_brand", "new_pack", "new_qty_in_box"}:
-                    flags |= Qt.ItemIsEditable
-                item.setFlags(flags)
-                item.setTextAlignment(Qt.AlignCenter if key in self.NUMERIC_COLUMNS else Qt.AlignLeft | Qt.AlignVCenter)
+                    if key in self.NUMERIC_COLUMNS:
+                        show_zero_columns = {
+                            "quick_order_pcs",
+                            "quick_order_l",
+                            "std_order_pcs",
+                            "std_order_l",
+                        }
+                        text = self._format_decimal(
+                            value,
+                            digits=2 if key.startswith("safe_stock") or key == "avg_sales_month" else 0,
+                            blank_zero=key not in show_zero_columns,
+                        )
+                    else:
+                        text = str(value or "")
 
-                if row.get("is_auto_matched") and key == "product_name":
-                    item.setBackground(QColor(255, 242, 204))
-                if not row.get("product_id") and key == "product_name":
-                    item.setBackground(QColor(255, 199, 206))
-                if key == "product_qty_in_box":
-                    if row.get("qty_in_box_mismatch"):
-                        item.setBackground(QColor(255, 199, 206))
-                    elif row.get("qty_in_box_missing"):
+                    item = QTableWidgetItem(text)
+                    item.setData(Qt.UserRole, key)
+                    item.setData(Qt.UserRole + 1, row_index)
+                    flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
+                    if mode == "check" and key in {"new_product_name", "new_brand", "new_pack", "new_qty_in_box"}:
+                        flags |= Qt.ItemIsEditable
+                    item.setFlags(flags)
+                    item.setTextAlignment(Qt.AlignCenter if key in self.NUMERIC_COLUMNS else Qt.AlignLeft | Qt.AlignVCenter)
+
+                    if row.get("is_auto_matched") and key == "product_name":
                         item.setBackground(QColor(255, 242, 204))
-                if mode == "check" and not row.get("product_id") and key.startswith("new_"):
-                    item.setBackground(QColor(226, 239, 218))
+                    if not row.get("product_id") and key == "product_name":
+                        item.setBackground(QColor(255, 199, 206))
+                    if key == "product_qty_in_box":
+                        if row.get("qty_in_box_mismatch"):
+                            item.setBackground(QColor(255, 199, 206))
+                        elif row.get("qty_in_box_missing"):
+                            item.setBackground(QColor(255, 242, 204))
+                    if mode == "check" and not row.get("product_id") and key.startswith("new_"):
+                        item.setBackground(QColor(226, 239, 218))
 
-                self.table.setItem(row_index, col_index, item)
+                    self.table.setItem(row_index, col_index, item)
 
-        resize_columns_for_multiline_headers(self.table)
+            resize_columns_for_multiline_headers(self.table)
 
-        if mode != "check" and "sales_product_name" in columns:
-            sales_name_col = columns.index("sales_product_name")
-            show_sales_name_col = any(
-                (not row.get("product_id"))
-                or bool(row.get("is_auto_matched"))
-                or bool(row.get("is_new"))
-                for row in rows
-            )
-            self.table.setColumnHidden(sales_name_col, not show_sales_name_col)
+            if mode != "check" and "sales_product_name" in columns:
+                sales_name_col = columns.index("sales_product_name")
+                show_sales_name_col = any(
+                    (not row.get("product_id"))
+                    or bool(row.get("is_auto_matched"))
+                    or bool(row.get("is_new"))
+                    for row in rows
+                )
+                self.table.setColumnHidden(sales_name_col, not show_sales_name_col)
 
-        if mode == "check":
-            show_new_product_columns = any(not row.get("product_id") for row in rows)
-            for key in {"new_product_name", "new_brand", "new_pack", "new_qty_in_box", "new_is_excise"}:
-                self.table.setColumnHidden(columns.index(key), not show_new_product_columns)
+            if mode == "check":
+                show_new_product_columns = any(not row.get("product_id") for row in rows)
+                for key in {"new_product_name", "new_brand", "new_pack", "new_qty_in_box", "new_is_excise"}:
+                    self.table.setColumnHidden(columns.index(key), not show_new_product_columns)
 
-        self.table.setSortingEnabled(True)
-        self._updating_table = False
+        finally:
+            self.table.setSortingEnabled(sorting_enabled)
+            self._updating_table = False
+        if context is not None:
+            restore_table_context(self.table, context, key_for_row=new_key)
         self.update_volume_labels()
+
+    @staticmethod
+    def _order_row_identity(row: dict):
+        """Unique source key for preserving selection between calculations.
+
+        OrderPlanningService groups matching rows by Product.id; unmatched
+        source records are keyed by their 1C sales code. Duplicate keys are
+        explicitly excluded by display_rows rather than selecting the wrong row.
+        """
+        product_id = row.get("product_id")
+        if product_id not in (None, ""):
+            try:
+                return ("product", int(product_id))
+            except (ValueError, TypeError):
+                pass
+        sales_code = clean_multi_spaces(str(row.get("sales_code") or ""))
+        return ("sales", sales_code) if sales_code else None
 
     def _row_index_from_table_row(self, table_row: int) -> int | None:
         for col in range(self.table.columnCount()):

@@ -374,7 +374,13 @@ class _PageIntegrationEventFilter(QObject):
         return super().eventFilter(watched, event)
 
 
-def _install_page_integration_event_filter() -> None:
+def install_page_integration_event_filter() -> None:
+    """Install the lazy-page integration filter on the running QApplication.
+
+    The module-level call below is a no-op when this module is imported before
+    QApplication exists (app/__init__.py runtime installers do exactly that), so
+    main.py must call this again once QApplication has been created.
+    """
     app = QApplication.instance()
     if app is None:
         return
@@ -386,4 +392,5 @@ def _install_page_integration_event_filter() -> None:
     app.installEventFilter(event_filter)
 
 
-_install_page_integration_event_filter()
+_install_page_integration_event_filter = install_page_integration_event_filter
+install_page_integration_event_filter()
