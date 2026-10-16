@@ -1783,9 +1783,12 @@ class SupplierPriceExporter:
             cell.WrapText = True
         # Leave unmatched records on "Анализ" for review, but do not offer
         # products that have no resolved Our Product Name to customers/Pricing.
+        # Group-expanded rows from the DB stay on "Анализ" only: these sheets
+        # list exactly what the supplier sent.
         resolved_rows = [
             row for row in rows
-            if str(row.get("Our Product Name") or "").strip()
+            if not row.get("_group_generated")
+            and str(row.get("Our Product Name") or "").strip()
         ]
         for i, row in enumerate(resolved_rows):
             r = 9 + i; m = 3 + i

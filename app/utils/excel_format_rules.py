@@ -581,12 +581,16 @@ def _apply_abc_highlighting_com(ws: Any, column_letter: str, last_row: int) -> N
         logger.exception("Не удалось центрировать колонку кат. ABC")
 
     # Conditional formatting is much faster than cell-by-cell COM formatting.
+    # Cell-value rule without cell references: an xlExpression with "$F2" is
+    # parsed in the application's reference style and fails with E_INVALIDARG
+    # when Excel is switched to R1C1.
     try:
         data_range.FormatConditions.Delete()
         for value, color in ABC_VALUE_FILLS.items():
             condition = data_range.FormatConditions.Add(
-                Type=2,  # xlExpression
-                Formula1=f'=${column_letter}2="{value}"',
+                Type=1,  # xlCellValue
+                Operator=3,  # xlEqual
+                Formula1=f'="{value}"',
             )
             condition.Interior.Color = rgb_to_excel(color)
         return

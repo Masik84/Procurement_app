@@ -51,6 +51,18 @@ MODE_NONE = "-"
 MODE_CURRENT = "Последние цены"
 MODE_HISTORY = "История цен (вся)"
 
+PRICE_TYPES = ["Price List", "Stock", "Price Request"]
+DEFAULT_PRICE_TYPE = "Price List"
+
+
+def _compact_combo(combo: QComboBox) -> QComboBox:
+    """Не даём комбобоксу в ячейке раздувать колонку до самого длинного
+    элемента списка: ширину задают общие правила по содержимому таблицы,
+    а выпадающий список всё равно раскрывается на всю длину названий."""
+    combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+    combo.setMinimumContentsLength(1)
+    return combo
+
 
 class SortableTableWidgetItem(QTableWidgetItem):
     def __lt__(self, other):
@@ -709,7 +721,7 @@ class PriceHistoryPage(QWidget):
         return item
 
     def _build_product_combo(self, row_key, selected_product_id, products):
-        combo = QComboBox()
+        combo = _compact_combo(QComboBox())
         combo.addItem("", None)
 
         for product in products:
@@ -731,7 +743,7 @@ class PriceHistoryPage(QWidget):
         return combo
 
     def _build_supplier_combo(self, row_key, selected_supplier_id, suppliers):
-        combo = QComboBox()
+        combo = _compact_combo(QComboBox())
         combo.addItem("", None)
 
         for supplier in suppliers:
@@ -752,6 +764,18 @@ class PriceHistoryPage(QWidget):
         )
         return combo
 
+    def _build_price_type_combo(self, row_key, selected_price_type):
+        combo = _compact_combo(QComboBox())
+        combo.addItems(PRICE_TYPES)
+
+        idx = combo.findText(selected_price_type or DEFAULT_PRICE_TYPE)
+        combo.setCurrentIndex(idx if idx >= 0 else PRICE_TYPES.index(DEFAULT_PRICE_TYPE))
+
+        combo.currentTextChanged.connect(
+            lambda text, rk=row_key: self.on_combo_changed(rk, "price_type", text)
+        )
+        return combo
+
     def _display_data(self, data):
         self.table.clear()
         self.table.setColumnCount(0)
@@ -765,6 +789,7 @@ class PriceHistoryPage(QWidget):
 
         products = self.get_filtered_products()
         suppliers = self.get_filtered_suppliers()
+        is_history_mode = self.get_mode() == MODE_HISTORY
 
         for row_index, row_data in enumerate(data):
             row_key = row_data["row_key"]
@@ -802,10 +827,18 @@ class PriceHistoryPage(QWidget):
                 row_index, 4,
                 self._build_item(row_data["currency"], row_key, align_left=True)
             )
-            price_type_item = self._build_item(row_data.get("price_type", ""), row_key, align_left=True)
-            # Set in the supplier-price Save dialog, not edited in history.
-            price_type_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            self.table.setItem(row_index, 5, price_type_item)
+            if row_key.startswith("new::") and is_history_mode:
+                # A new history row needs its own type; existing rows keep the
+                # one set in the supplier-price Save dialog.
+                self.table.setCellWidget(
+                    row_index,
+                    5,
+                    self._build_price_type_combo(row_key, row_data.get("price_type")),
+                )
+            else:
+                price_type_item = self._build_item(row_data.get("price_type", ""), row_key, align_left=True)
+                price_type_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                self.table.setItem(row_index, 5, price_type_item)
 
         resize_columns_for_multiline_headers(self.table)
 
@@ -895,6 +928,7 @@ class PriceHistoryPage(QWidget):
             "price_date": None,
             "price": None,
             "currency": "",
+            "price_type": DEFAULT_PRICE_TYPE,
             "is_new": True,
         }
         data.insert(0, new_row)
@@ -908,6 +942,7 @@ class PriceHistoryPage(QWidget):
             "price_date": None,
             "price": None,
             "currency": "",
+            "price_type": DEFAULT_PRICE_TYPE,
         }
 
         self._display_data(data)
@@ -959,6 +994,7 @@ class PriceHistoryPage(QWidget):
             price_date=price_date,
             price=price_value,
             currency=currency,
+            price_type=values.get("price_type") or DEFAULT_PRICE_TYPE,
         )
         session.add(row)
         return supplier_id, product_id
@@ -1024,6 +1060,7 @@ class PriceHistoryPage(QWidget):
                             "price_date": None,
                             "price": None,
                             "currency": "",
+                            "price_type": DEFAULT_PRICE_TYPE,
                         })
 
                         if not values["product_id"]:
@@ -1289,6 +1326,7 @@ class PriceHistoryPage(QWidget):
                         "price_date": price_date,
                         "price": price_value,
                         "currency": currency,
+                        "price_type": DEFAULT_PRICE_TYPE,
                         "is_new": True,
                     }
                     preview_data.append(preview_row)
@@ -1298,6 +1336,7 @@ class PriceHistoryPage(QWidget):
                         "price_date": price_date,
                         "price": price_value,
                         "currency": currency,
+                        "price_type": DEFAULT_PRICE_TYPE,
                     }
 
             self._import_preview_active = True
